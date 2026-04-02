@@ -4,25 +4,35 @@
   "created": "2026-04-02",
   "last_updated": "2026-04-02",
   "plan": [
-    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)",
-    "Phase 2: Perturbation generation framework (Days 4-6)",
-    "Phase 3: Judge API integration (Claude Bedrock + GPT-OSS 120B) (Days 7-9)",
-    "Phase 4: Annotation tools + CCG metric computation (Days 10-12)",
-    "Phase 5: Experiment runner + visualization (Days 13-15)",
-    "Write tests for all modules",
-    "Update README with setup and usage instructions",
-    "Human validation: Run pre-requisite checks and pilot perturbations"
+    "Phase 1: Infrastructure setup (loaders, storage, prereq checks, tests)",
+    "Phase 2: Load real trajectories from HuggingFace → MongoDB (ToolBench + GAIA)",
+    "Phase 3: Perturbation generation framework (9 conditions)",
+    "Phase 4: Judge API integration (Claude Bedrock + GPT-OSS)",
+    "Phase 5: Annotation tools + CCG metric computation",
+    "Phase 6: Experiment runner + visualization",
+    "Phase 7: End-to-end validation and documentation"
   ],
   "completed_steps": [
-    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)",
-    "Fixed all test cases - 53 tests passing (mocked HF datasets, no MongoDB required)"
+    "Phase 1: Infrastructure setup - COMPLETE",
+    "- Pre-requisite verification system (6 checks)",
+    "- Dataset loaders (HuggingFace integration)",
+    "- MongoDB storage backend (5 collections)",
+    "- Unified trajectory schema",
+    "- Complete test suite (53 tests passing)",
+    "- All tests use mocks (no real DB/API required)"
   ],
   "pending_steps": [
-    "Phase 2: Perturbation generation framework (Days 4-6)",
-    "Phase 3: Judge API integration (Claude Bedrock + GPT-OSS 120B) (Days 7-9)",
-    "Phase 4: Annotation tools + CCG metric computation (Days 10-12)",
-    "Phase 5: Experiment runner + visualization (Days 13-15)",
-    "Human validation: Run pre-requisite checks and pilot perturbations"
+    "Phase 2: Load real trajectories",
+    "- Configure .env (MongoDB URI, HF token, AWS Bedrock)",
+    "- Run prereq checks until 6/6 passing",
+    "- Load 25 ToolBench trajectories → MongoDB",
+    "- Load 25 GAIA trajectories → MongoDB",
+    "- Verify data stored correctly",
+    "Phase 3: Perturbation generation framework",
+    "Phase 4: Judge API integration",
+    "Phase 5: Annotation tools + CCG metrics",
+    "Phase 6: Experiment runner + visualization",
+    "Phase 7: Validation and documentation"
   ],
   "artifacts_created": [
     "agent_tasks/02_poc_implementation/Requirements.MD",
@@ -33,9 +43,9 @@
     "src/prereq_check.py",
     "src/storage/mongodb.py",
     "tests/__init__.py",
-    "tests/test_loaders.py (fixed - 16 tests)",
-    "tests/test_prerequisites.py (fixed - 13 tests)",
-    "tests/test_storage.py (fixed - 9 tests)",
+    "tests/test_loaders.py (16 tests)",
+    "tests/test_prerequisites.py (13 tests)",
+    "tests/test_storage.py (9 tests)",
     "tests/test_integration_pipeline.py (7 tests)",
     "tests/test_mongodb_schema.py (6 tests)",
     "tests/test_mongodb_atlas.py (5 skipped)",
@@ -44,6 +54,12 @@
     "data/README.md",
     "README.md (updated)"
   ],
-  "blockers": [],
-  "notes": "Phase 1 complete (2026-04-02). All 53 tests passing! REFACTORED based on feedback: (1) HuggingFace datasets integration (no manual JSON), (2) MongoDB storage backend for all results, (3) Proper .env management, (4) All tests use mocks - no real DB/API required. Implemented: unified trajectory schema, HF dataset loaders (ToolBench/GAIA), MongoDB storage with 5 collections, pre-requisite verification (6 checks including MongoDB/HF), comprehensive test suite. Ready for Phase 2: Perturbation generation."
+  "blockers": [
+    "Phase 2 blocked: Need .env configuration",
+    "- MONGODB_URI not set",
+    "- HUGGINGFACE_TOKEN not set",
+    "- AWS_BEDROCK_CLAUDE model version outdated (end of life)",
+    "- AWS_BEDROCK_GPT_OSS not set (can skip for now)"
+  ],
+  "notes": "Phase 1 complete (2026-04-02). Infrastructure ready, all tests passing. Current blocker: .env configuration needed. Pre-req checks show 2/6 passing (Directory + Python deps OK, need MongoDB/HF/AWS config). Once .env is configured, can proceed to load 50 trajectories (25 ToolBench + 25 GAIA) and store in MongoDB for Phase 3 perturbation work."
 }
