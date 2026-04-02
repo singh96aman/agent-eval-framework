@@ -1,8 +1,8 @@
 {
   "task_name": "01_research_foundation",
-  "status": "not_started",
+  "status": "in_progress",
   "created": "2026-04-01",
-  "last_updated": "2026-04-01",
+  "last_updated": "2026-04-02",
   "plan": [
     "Conduct literature review on LLM judges, agent evaluation, and error propagation",
     "Identify novelty gaps and positioning",
@@ -12,19 +12,28 @@
     "Write POC_REQUIREMENTS.MD",
     "Get human researcher approval"
   ],
-  "completed_steps": [],
-  "pending_steps": [
+  "completed_steps": [
     "Conduct literature review on LLM judges, agent evaluation, and error propagation",
     "Identify novelty gaps and positioning",
+    "Write LITERATURE_REVIEW.MD",
     "Design minimal POC scope (dataset, perturbations, metrics)",
     "Define success criteria and experimental protocol",
-    "Write LITERATURE_REVIEW.MD",
-    "Write POC_REQUIREMENTS.MD",
+    "Write POC_REQUIREMENTS.MD"
+  ],
+  "pending_steps": [
     "Get human researcher approval"
   ],
   "artifacts_created": [
-    "agent_tasks/01_research_foundation/Requirements.MD"
+    "agent_tasks/01_research_foundation/Requirements.MD",
+    "agent_tasks/01_research_foundation/plan.MD",
+    "paper/LITERATURE_REVIEW.MD",
+    "paper/references.bib",
+    "paper/literature_review_summary.md",
+    "paper/paper_quick_reference.md",
+    "paper/research_roadmap.md",
+    "paper/README.md",
+    "paper/POC_REQUIREMENTS.MD"
   ],
   "blockers": [],
-  "notes": "Task created. Waiting for human researcher to initiate work."
+  "notes": "Literature review complete with 25 papers surveyed. POC requirements document complete and revised (2026-04-02): (1) Dual benchmarks: ToolBench + GAIA (25 each, 50 total for POC), (2) 3 perturbation types × 3 positions = 9 conditions, (3) Claude-3.5-Sonnet (Bedrock) + GPT-OSS 120B judges, (4) Pre-requisite verification system for datasets/APIs, (5) CCG metric defined, (6) Success criteria: Early CCG < -0.3, Late CCG > +0.2, p < 0.05, (7) Timeline: 2-3 weeks (12-17 hours annotation), (8) Budget: $30-80 (POC), scales to $80-200, (9) Human researcher as annotator, (10) POC-first strategy: validate system with 50, scale to 150+ if promising. Ready for human approval to proceed to implementation."
 }

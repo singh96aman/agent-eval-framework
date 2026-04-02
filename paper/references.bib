@@ -1,0 +1,403 @@
+% Literature Review References - Judge Blindness to Trajectory Criticality
+% Generated: April 2, 2026
+% Total: 25+ papers
+
+% ========================================
+% CATEGORY 1: LLM-as-Judge Evaluation Methods
+% ========================================
+
+@article{liu2023geval,
+  title={G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment},
+  author={Liu, Yang and Iter, Dan and Xu, Yichong and Wang, Shuohang and Xu, Ruochen and Zhu, Chenguang},
+  journal={arXiv preprint arXiv:2303.16634},
+  year={2023},
+  note={Foundational LLM-as-judge paper; identifies self-preference bias}
+}
+
+@article{wang2023fair,
+  title={Large Language Models are not Fair Evaluators},
+  author={Wang, Peiyi and Li, Lei and Chen, Liang and others},
+  journal={arXiv preprint arXiv:2305.17926},
+  year={2023},
+  note={Demonstrates position bias in judge rankings}
+}
+
+@article{wang2026dual,
+  title={Dual Optimal: Make Your LLM Peer-like with Dignity},
+  author={Wang, Xiangqi and Huang, Yue and Zhuang, Haomin and Guo, Kehan and Zhang, Xiangliang},
+  journal={arXiv preprint arXiv:2604.00979},
+  year={2026},
+  note={Item Response Theory for judge calibration}
+}
+
+@article{daynauth2025slmeval,
+  title={SLMEval: Entropy-Based Calibration},
+  author={Daynauth, Roland and Clarke, Christopher and Flautner, Krisztian and Tang, Lingjia and Mars, Jason},
+  journal={arXiv preprint arXiv:2505.16003},
+  year={2025},
+  note={Shows G-Eval negative correlation on some tasks}
+}
+
+@article{xing2025reliable,
+  title={Are LLMs Reliable Rankers? Rank Manipulation via Two-Stage Token Optimization},
+  author={Xing and Li and Du and Hu},
+  journal={arXiv preprint arXiv:2510.06732},
+  year={2025},
+  note={Adversarial manipulation of LLM judges}
+}
+
+@article{gameiro2024detectors,
+  title={LLM Detectors Still Fall Short of Real World},
+  author={Gameiro and Kucharavy and Dolamic},
+  journal={arXiv preprint arXiv:2409.03291},
+  year={2024},
+  note={Temperature sensitivity in evaluation systems}
+}
+
+@article{ghosh2026dunning,
+  title={The Dunning-Kruger Effect in Large Language Models},
+  author={Ghosh, Sudipta and Panday, Mrityunjoy},
+  journal={arXiv preprint arXiv:2603.09985},
+  year={2026},
+  note={Confidence miscalibration in weak models (ECE 0.726 at 23.3\% accuracy)}
+}
+
+@article{rao2026autorubric,
+  title={Autorubric: A Unified Framework for Rubric-Based LLM Evaluation},
+  author={Rao, Delip and Callison-Burch, Chris},
+  journal={arXiv preprint arXiv:2603.00077},
+  year={2026},
+  note={Mitigations for position and verbosity bias}
+}
+
+% ========================================
+% CATEGORY 2: Agent Trajectory Evaluation
+% ========================================
+
+@article{liu2023agentbench,
+  title={AgentBench: Evaluating LLMs as Agents},
+  author={Liu, Xiao and Yu, Hao and Zhang, Hanchen and Xu, Yifan and Lei, Xuanyu and Lai, Hanyu and Gu, Yu and Ding, Hangliang and Men, Kaiwen and Yang, Kejuan and Zhang, Shudan and Deng, Xiang and Zeng, Aohan and Du, Zhengxiao and Zhang, Chenhui and Shen, Sheng and Zhang, Tianjun and Su, Yu and Sun, Huan and Huang, Minlie and Dong, Yuxiao and Tang, Jie},
+  journal={arXiv preprint arXiv:2308.03688},
+  year={2023},
+  note={8 environments for agent evaluation; outcome-focused}
+}
+
+@article{mcpagentbench2025,
+  title={MCP-AgentBench: Evaluating Tool-Use Agents with Model Context Protocol},
+  author={others},
+  journal={arXiv preprint arXiv:2509.09734},
+  year={2025},
+  note={188 tools across 33 MCP servers; outcome-oriented}
+}
+
+@article{bjarnason2026randomness,
+  title={On Randomness in Agentic Evals},
+  author={Bjarnason, Bjarni Haukur and Silva, André and Monperrus, Martin},
+  journal={arXiv preprint arXiv:2602.07150},
+  year={2026},
+  note={60k trajectories; 2.2-6.0pp variance on SWE-Bench}
+}
+
+@article{yu2026sweabs,
+  title={SWE-ABS: Adversarial Benchmark Strengthening},
+  author={Yu, Boxi and others},
+  journal={arXiv preprint arXiv:2603.00520},
+  year={2026},
+  note={19.71\% of passing patches semantically incorrect}
+}
+
+@article{ding2026adarubric,
+  title={AdaRubric: Task-Adaptive Rubrics for Agent Evaluation},
+  author={Ding, Liang},
+  journal={arXiv preprint arXiv:2603.21362},
+  year={2026},
+  note={Step-wise scoring; Pearson r=0.79; no position weighting}
+}
+
+@article{mehta2026consistency,
+  title={Consistency Amplifies: How Behavioral Variance Shapes Agent Accuracy},
+  author={Mehta, Aman},
+  journal={arXiv preprint arXiv:2603.25764},
+  year={2026},
+  note={Consistency amplifies both correct and incorrect patterns}
+}
+
+@article{qin2023toolllm,
+  title={ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs},
+  author={Qin, Yujia and Liang, Shihao and Ye, Yining and others},
+  journal={arXiv preprint arXiv:2307.16789},
+  year={2023},
+  note={Depth-first search for multi-tool scenarios}
+}
+
+@article{guo2024stabletoolbench,
+  title={StableToolBench: Towards Stable Large-Scale Benchmarking on Tool Learning},
+  author={Guo, Zhicheng and Cheng, Sijie and Wang, Hao and others},
+  journal={arXiv preprint arXiv:2403.07714},
+  year={2024},
+  note={Virtual API server with GPT-4 as evaluator}
+}
+
+% ========================================
+% CATEGORY 3: Error Propagation in Sequential Systems
+% ========================================
+
+@article{fan2026information,
+  title={Information Fidelity in Tool-Using LLM Agents},
+  author={Fan, Flint Xiaofeng and Tan, Cheston and Wattenhofer, Roger and Ong, Yew-Soon},
+  journal={arXiv preprint arXiv:2602.13320},
+  year={2026},
+  note={CRITICAL: Linear distortion growth bounded by O(sqrt(T)); semantic weighting reduces 80\%}
+}
+
+@article{zhang2026fllm,
+  title={F-LLM: Feedback-driven LLM},
+  author={Zhang, Xingyu and Du, Hanyun and Song, Zeen and others},
+  journal={arXiv preprint arXiv:2602.12756},
+  year={2026},
+  note={CRITICAL: Minor early deviations cascade into significant trajectory drift}
+}
+
+@article{zhang2026coficot,
+  title={CoFiCot: Confidence-Guided Fine-Grained Chain-of-Thought},
+  author={Zhang, Dongxu and Lin, Hongqiang and Sun, Yiding and others},
+  journal={arXiv preprint arXiv:2603.08251},
+  year={2026},
+  note={Stateful sequential propagation; context fragmentation problem}
+}
+
+@article{yang2025dynamic,
+  title={Dynamic Adjudication Template for Multi-Step Reasoning},
+  author={Yang, Zhihao and Xu, Ancheng and others},
+  journal={arXiv preprint arXiv:2510.05134},
+  year={2025},
+  note={Three-stage framework reduces error propagation}
+}
+
+@article{jiao2026doctor,
+  title={Doctor-RAG: Failure-Aware Repair for Agentic RAG},
+  author={Jiao, Shuguang and Huang, Chengkai and Qi, Shuhan and others},
+  journal={arXiv preprint arXiv:2604.00865},
+  year={2026},
+  note={Coverage-gated taxonomy; error localization + prefix reuse}
+}
+
+% ========================================
+% CATEGORY 4: Criticality Metrics
+% ========================================
+
+@article{li2025firm,
+  title={Firm or Fickle? Evaluating Large Language Models Consistency in Sequential Interactions},
+  author={Li, Yubo and Miao, Yidi and Ding, Xueying and Krishnan, Ramayya and Padman, Rema},
+  journal={arXiv preprint arXiv:2503.22353},
+  year={2025},
+  note={CRITICAL: Position-Weighted Consistency (PWC) metric; early-stage stability emphasis}
+}
+
+@article{kaul2026effort,
+  title={Effort-Based Criticality Metrics for Evaluating 3D Perception Errors in Autonomous Driving},
+  author={Kaul, Sharang and Bultmann, Simon and Berk, Mario and Valada, Abhinav},
+  journal={arXiv preprint arXiv:2603.28029},
+  year={2026},
+  note={CRITICAL: FSR/MDR/LEA metrics; criticality = downstream effort; 65-93\% errors non-critical}
+}
+
+@article{royer2026process,
+  title={Process Supervision for Chain-of-Thought Reasoning via Monte Carlo Net Information Gain},
+  author={Royer, Corentin and Bhattacharjya, Debarun and Rossiello, Gaetano and Giovannini, Andrea and El-Assady, Mennatallah},
+  journal={arXiv preprint arXiv:2603.17815},
+  year={2026},
+  note={Information-theoretic step importance via information gain}
+}
+
+@article{fan2026agentprocess,
+  title={AgentProcessBench: Diagnosing Step-Level Process Quality in Tool-Using Agents},
+  author={Fan, Shengda and Ye, Xuyan and Huo, Yupeng and others},
+  journal={arXiv preprint arXiv:2603.14465},
+  year={2026},
+  note={Ternary labeling; error propagation rules; no criticality weighting}
+}
+
+% ========================================
+% CATEGORY 5: Surveys and Gap Analysis
+% ========================================
+
+@article{mohammadi2026evaluation,
+  title={Evaluation and Benchmarking of LLM Agents: A Survey},
+  author={Mohammadi, Mahmoud and Li, Yipeng and Lo, Jane and Yip, Wendy},
+  journal={arXiv preprint arXiv:2603.07670},
+  year={2026},
+  note={Comprehensive taxonomy; confirms trajectory-criticality gap}
+}
+
+@article{guo2025comprehensive,
+  title={A Comprehensive Survey on Benchmarks and Solutions in Software Engineering of LLM-Empowered Agentic System},
+  author={Guo, Jiale and others},
+  journal={arXiv preprint arXiv:2510.09721},
+  year={2025},
+  note={150+ papers, 50+ benchmarks; limited trajectory analysis}
+}
+
+@article{xu2025memory,
+  title={Memory in the Age of AI Agents: A Survey},
+  author={Hu, Yuyang and others},
+  journal={arXiv preprint arXiv:2512.13564},
+  year={2025},
+  note={Memory benchmarks and evaluation protocols}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Outcome vs Process
+% ========================================
+
+@article{lee2025rethinking,
+  title={Rethinking Reward Models for Multi-Domain Test-Time Scaling},
+  author={Lee, Dong Bok and Lee, Seanie and Park, Sangwoo and others},
+  journal={arXiv preprint arXiv:2510.00492},
+  year={2025},
+  note={ORM performs on par with PRM across 14 domains}
+}
+
+@article{nie2026stop,
+  title={Stop Rewarding Hallucinated Steps: Faithfulness-Aware Step-Level Reinforcement Learning},
+  author={Nie, Shuo and Deng, Hexuan and Wang, Chao and others},
+  journal={arXiv preprint arXiv:2602.05897},
+  year={2026},
+  note={Outcome-based rewards inadvertently reinforce unfaithful reasoning}
+}
+
+@article{lee2026process,
+  title={Process-Supervised Multi-Agent Reinforcement Learning for Reliable Clinical Reasoning},
+  author={Lee, Chaeeun and Yates, T. Michael and Minervini, Pasquale and Simpson, T. Ian},
+  journal={arXiv preprint arXiv:2602.14160},
+  year={2026},
+  note={Process+outcome: 0.750 accuracy, 0.520 F1; outcome-only: 0.732 accuracy, 0.392 F1}
+}
+
+@article{xu2026beyond,
+  title={Beyond Correctness: Rewarding Faithful Reasoning in Retrieval-Augmented Generation},
+  author={Xu, Zhichao and Wu, Zongyu and Zhou, Yun and others},
+  journal={arXiv preprint arXiv:2510.13272},
+  year={2025},
+  note={Faithfulness rewards improve over pure outcome-based}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Structural Errors
+% ========================================
+
+@article{banerjee2026apex,
+  title={APEX-EM: Memory Persistence in LLM Agents},
+  author={Banerjee, Pratyay and Moshtaghi, Masud and Chadha, Ankit},
+  journal={arXiv preprint arXiv:2603.29093},
+  year={2026},
+  note={Agents re-derive solutions despite structural similarity}
+}
+
+@article{feng2026environment,
+  title={Environment Maps for Long-Horizon Planning in LLM Agents},
+  author={Feng, Yenchia and Sharma, Chirag and Maamari, Karime},
+  journal={arXiv preprint arXiv:2603.23610},
+  year={2026},
+  note={Agents suffer cascading errors; persistent representation doubles performance}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Causal & Counterfactual
+% ========================================
+
+@article{lin2026better,
+  title={Better Think Thrice: Learning to Reason Causally with Double Counterfactual Consistency},
+  author={Lin, Victoria and Xu, Xinnuo and Lawrence, Rachel and Ueno, Risa and Sharma, Amit and Gonzalez, Javier and Prasad, Niranjani},
+  journal={arXiv preprint arXiv:2602.16787},
+  year={2026},
+  note={Double counterfactual consistency for causal reasoning}
+}
+
+@article{vashishtha2025executable,
+  title={Executable Counterfactuals: Improving LLMs' Causal Reasoning Through Code},
+  author={Vashishtha, Aniket and Dai, Qirun and Mei, Hongyuan and Sharma, Amit and Tan, Chenhao and Peng, Hao},
+  journal={arXiv preprint arXiv:2510.01539},
+  year={2025},
+  note={25-40\% accuracy drop from intervention to counterfactual reasoning}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Test-Time Compute
+% ========================================
+
+@article{chen2026unit,
+  title={UniT: Unified Multimodal Chain-of-Thought Test-time Scaling},
+  author={Chen, Leon Liangyu and Ma, Haoyu and Fan, Zhipeng and others},
+  journal={arXiv preprint arXiv:2602.12279},
+  year={2026},
+  note={Sequential CoT more scalable than parallel sampling}
+}
+
+@article{zhu2026scaling,
+  title={Scaling Test-time Compute for LLM Agents},
+  author={Zhu, King and Li, Hanhao and Wu, Siwei and others},
+  journal={arXiv preprint arXiv:2506.12928},
+  year={2026},
+  note={Knowing when to reflect is important for agents}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Multi-Hop Reasoning
+% ========================================
+
+@article{gu2026omanic,
+  title={Omanic: Step-wise Evaluation of Multi-Hop Reasoning},
+  author={Gu, Xiaojie and Tong, Sherry T. and Feng, Aosong and others},
+  journal={arXiv preprint arXiv:2603.16654},
+  year={2026},
+  note={Errors amplifying in later hops when knowledge gaps exist}
+}
+
+@article{wang2019dreams,
+  title={Do Multi-Hop Readers Dream of Reasoning Chains?},
+  author={Wang, Haoyu and Yu, Mo and Guo, Xiaoxiao and others},
+  journal={arXiv preprint arXiv:1910.14520},
+  year={2019},
+  note={Limited improvements from explicit reasoning chains}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Step Verification
+% ========================================
+
+@article{khalifa2025process,
+  title={Process Reward Models That Think},
+  author={Khalifa, Muhammad and Agarwal, Rishabh and Logeswaran, Lajanugen and others},
+  journal={arXiv preprint arXiv:2504.16828},
+  year={2025},
+  note={Verbalized step-wise rewards with verification CoT}
+}
+
+@article{liu2026safe,
+  title={Safe: Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification},
+  author={Liu, Chengwu and Yuan, Ye and Yin, Yichun and others},
+  journal={arXiv preprint arXiv:2506.04592},
+  year={2026},
+  note={Lean 4 formal verification of each reasoning step}
+}
+
+% ========================================
+% SUPPORTING PAPERS: Self-Consistency
+% ========================================
+
+@article{feng2025optimal,
+  title={Optimal Self-Consistency for Efficient Reasoning with Large Language Models},
+  author={Feng, Austin and Alonso, Marius and Odonnat, Ambroise},
+  journal={arXiv preprint arXiv:2511.12309},
+  year={2025},
+  note={Blend-ASC: 6.8x fewer samples than vanilla SC}
+}
+
+@article{sharma2025sequential,
+  title={The Sequential Edge: Inverse-Entropy Voting Beats Parallel Self-Consistency},
+  author={Sharma, Aman and Chopra, Paras},
+  journal={arXiv preprint arXiv:2511.02309},
+  year={2025},
+  note={Sequential scaling outperforms parallel self-consistency}
+}
