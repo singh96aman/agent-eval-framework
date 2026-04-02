@@ -31,6 +31,7 @@ class MongoDBStorage:
         self,
         uri: Optional[str] = None,
         database: Optional[str] = None,
+        test_connection: bool = True,
     ):
         """
         Initialize MongoDB connection.
@@ -38,6 +39,10 @@ class MongoDBStorage:
         Args:
             uri: MongoDB connection URI (default: from env MONGODB_URI)
             database: Database name (default: from env MONGODB_DATABASE)
+            test_connection: Whether to test connection on init (default: True)
+
+        Raises:
+            ConnectionFailure: If test_connection=True and connection fails
         """
         self.uri = uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         self.database_name = database or os.getenv(
@@ -45,8 +50,22 @@ class MongoDBStorage:
             "agent_judge_experiment"
         )
 
+        # Detect if using MongoDB Atlas
+        self.is_atlas = "mongodb+srv://" in self.uri
+
+        print(f"🔌 Connecting to MongoDB {'Atlas' if self.is_atlas else 'local'}...")
+        print(f"   Database: {self.database_name}")
+
         self.client = MongoClient(self.uri)
         self.db = self.client[self.database_name]
+
+        # Test connection
+        if test_connection:
+            if not self.test_connection():
+                raise ConnectionFailure(
+                    f"Failed to connect to MongoDB at {self.uri}"
+                )
+            print(f"✅ Connected to MongoDB {'Atlas' if self.is_atlas else 'local'}")
 
         # Collection references
         self.trajectories = self.db["trajectories"]

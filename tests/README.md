@@ -44,9 +44,23 @@ This directory contains tests for the MongoDB schema implementation with foreign
 
 ### Prerequisites
 
-**Integration tests DO NOT require MongoDB!** All outputs are saved to JSON files in `tests/data/results/`.
+**Tests DO NOT require MongoDB!** All tests use JSON files or in-memory mocks.
 
-Unit tests (`test_mongodb_schema.py`) require MongoDB for testing database operations.
+- `test_integration_pipeline.py` - Uses JSON files in `tests/data/results/`
+- `test_mongodb_schema.py` - Uses in-memory mock storage
+- `test_storage.py` - Uses mocked MongoDB client
+
+### Production vs Tests
+
+**Production (experiments):**
+- Uses MongoDB Atlas via `.env` configuration
+- Real database with persistence
+- Connection verified on startup
+
+**Tests:**
+- Use JSON files or in-memory mocks
+- No MongoDB required
+- Fast and reproducible
 
 ### Run Unit Tests
 

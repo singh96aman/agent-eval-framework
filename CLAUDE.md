@@ -3,6 +3,20 @@
 # When starting a new conversation
 When user starts a new conversation, first check whether you are using AWS Bedrock to talk to Claude or not. If not, please give the user a heads up. It's non-blocking so you continue with the rest of your tasks.
 
+Note - PLEASE DO NOT CREATE TOO MANY FILES OR FILES THAT ARE NOT ORGANIZED AS PER INSTRUCTIONS
+
+### Instructions to the agent
+
+1. Read README.md, Agents.MD, and the task’s Requirements.MD before starting.
+2. Follow the repo structure strictly.
+3. Put implementation code in src/ only.
+4. Add or update tests in tests/ for behavior changes.
+5. For long tasks, keep state.json updated.
+6. Do not mark a task complete unless outputs exist and tests pass.
+7. Save important reasoning, notes, and drafts under paper/, not only in chat.
+8. Prefer simple, readable, restartable code over clever code.
+9. Keep the repo clean.
+
 ## Goal
 This repo implements research on whether LLM judges miss the errors in agent trajectories that matter most, especially early planning and tool-selection failures that propagate downstream.
 
@@ -19,18 +33,6 @@ We will use AI heavily for:
 - paper writing.
 
 The human researcher is the final authority on scientific correctness, interpretation, and final acceptance.
-
-### Instructions to the agent
-
-1. Read README.md, Agents.MD, and the task’s Requirements.MD before starting.
-2. Follow the repo structure strictly.
-3. Put implementation code in src/ only.
-4. Add or update tests in tests/ for behavior changes.
-5. For long tasks, keep state.json updated.
-6. Do not mark a task complete unless outputs exist and tests pass.
-7. Save important reasoning, notes, and drafts under paper/, not only in chat.
-8. Prefer simple, readable, restartable code over clever code.
-9. Keep the repo clean.
 
 ---
 
