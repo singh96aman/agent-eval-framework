@@ -51,7 +51,7 @@ class TestMongoDBStorage:
         from pymongo.errors import ConnectionFailure
         mock_client.return_value.admin.command.side_effect = ConnectionFailure()
 
-        storage = MongoDBStorage()
+        storage = MongoDBStorage(test_connection=False)
         result = storage.test_connection()
 
         assert result is False

@@ -5,7 +5,7 @@ Tests for pre-requisite verification system.
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from src.prereq_check import PrerequisiteChecker, CheckResult
 
 
@@ -19,10 +19,6 @@ def temp_project_dir():
         (tmpdir / "src").mkdir()
         (tmpdir / "tests").mkdir()
         (tmpdir / "data").mkdir()
-        (tmpdir / "data" / "toolbench").mkdir()
-        (tmpdir / "data" / "gaia").mkdir()
-        (tmpdir / "data" / "perturbed").mkdir()
-        (tmpdir / "data" / "annotations").mkdir()
         (tmpdir / "results").mkdir()
         (tmpdir / "paper").mkdir()
 
@@ -85,25 +81,27 @@ class TestPrerequisiteChecker:
             result = checker.check_directory_structure()
 
             assert result.passed is False
-            assert "Missing directories" in result.message
+            assert "Missing" in result.message
             assert result.details is not None
             assert "missing" in result.details
 
-    def test_check_toolbench_dataset_missing(self, temp_project_dir):
-        """Test ToolBench check with no files."""
+    @patch.dict('os.environ', {}, clear=True)
+    def test_check_mongodb_connection_no_uri(self, temp_project_dir):
+        """Test MongoDB check with no URI configured."""
         checker = PrerequisiteChecker(temp_project_dir)
-        result = checker.check_toolbench_dataset()
+        result = checker.check_mongodb_connection()
 
         assert result.passed is False
-        assert "No JSON/JSONL files found" in result.message
+        assert "MONGODB_URI" in result.message
 
-    def test_check_gaia_dataset_missing(self, temp_project_dir):
-        """Test GAIA check with no files."""
+    @patch.dict('os.environ', {}, clear=True)
+    def test_check_huggingface_no_token(self, temp_project_dir):
+        """Test HuggingFace check with no token."""
         checker = PrerequisiteChecker(temp_project_dir)
-        result = checker.check_gaia_dataset()
+        result = checker.check_huggingface_access()
 
         assert result.passed is False
-        assert "No JSON/JSONL files found" in result.message
+        assert "HUGGINGFACE_TOKEN" in result.message
 
     @patch('boto3.Session')
     def test_check_claude_bedrock_no_credentials(self, mock_session, temp_project_dir):
@@ -116,41 +114,61 @@ class TestPrerequisiteChecker:
         assert result.passed is False
         assert "credentials not found" in result.message.lower()
 
-    @patch('boto3.Session')
     @patch('boto3.client')
-    def test_check_claude_bedrock_success(self, mock_client, mock_session, temp_project_dir):
-        """Test Claude Bedrock check with valid credentials."""
+    @patch('boto3.Session')
+    def test_check_claude_bedrock_success(self, mock_session, mock_client, temp_project_dir):
+        """Test Claude Bedrock check with successful API call."""
         # Mock credentials
         mock_credentials = MagicMock()
         mock_session.return_value.get_credentials.return_value = mock_credentials
 
-        # Mock Bedrock client
-        mock_bedrock_client = MagicMock()
-        mock_client.return_value = mock_bedrock_client
+        # Mock Bedrock client response
+        mock_bedrock_runtime = MagicMock()
+        mock_response = {
+            'body': MagicMock()
+        }
+        mock_response['body'].read.return_value = b'{"content": [{"text": "Hello"}]}'
+        mock_bedrock_runtime.invoke_model.return_value = mock_response
+        mock_client.return_value = mock_bedrock_runtime
 
         checker = PrerequisiteChecker(temp_project_dir)
         result = checker.check_claude_bedrock_api()
 
         assert result.passed is True
-        assert "credentials found" in result.message.lower()
+        assert "successful" in result.message.lower()
 
     @patch.dict('os.environ', {}, clear=True)
-    def test_check_gpt_oss_no_endpoint(self, temp_project_dir):
-        """Test GPT-OSS check with no endpoint configured."""
+    def test_check_gpt_oss_no_model_id(self, temp_project_dir):
+        """Test GPT-OSS check with no model ID configured."""
         checker = PrerequisiteChecker(temp_project_dir)
         result = checker.check_gpt_oss_api()
 
         assert result.passed is False
-        assert "GPT_OSS_ENDPOINT" in result.message
+        assert "AWS_BEDROCK_GPT_OSS" in result.message
 
-    @patch.dict('os.environ', {'GPT_OSS_ENDPOINT': 'http://localhost:8000', 'GPT_OSS_API_KEY': 'test_key'})
-    def test_check_gpt_oss_with_endpoint(self, temp_project_dir):
-        """Test GPT-OSS check with endpoint configured."""
+    @patch.dict('os.environ', {'AWS_BEDROCK_GPT_OSS': 'test-model-id'})
+    @patch('boto3.client')
+    @patch('boto3.Session')
+    def test_check_gpt_oss_with_model(self, mock_session, mock_client, temp_project_dir):
+        """Test GPT-OSS check with model ID configured."""
+        # Mock credentials
+        mock_credentials = MagicMock()
+        mock_session.return_value.get_credentials.return_value = mock_credentials
+
+        # Mock Bedrock client response
+        mock_bedrock_runtime = MagicMock()
+        mock_response = {
+            'body': MagicMock()
+        }
+        mock_response['body'].read.return_value = b'{"generation": "Hello"}'
+        mock_bedrock_runtime.invoke_model.return_value = mock_response
+        mock_client.return_value = mock_bedrock_runtime
+
         checker = PrerequisiteChecker(temp_project_dir)
         result = checker.check_gpt_oss_api()
 
         assert result.passed is True
-        assert "Endpoint configured" in result.message
+        assert "successful" in result.message.lower()
 
     def test_check_python_dependencies(self, temp_project_dir):
         """Test Python dependencies check."""
@@ -180,12 +198,12 @@ class TestPrerequisiteChecker:
         assert isinstance(summary["results"], list)
         assert len(summary["results"]) == 2
 
-    def test_run_all_checks(self, temp_project_dir):
+    @patch.dict('os.environ', {}, clear=True)
+    @patch('sys.stdout')
+    def test_run_all_checks(self, mock_stdout, temp_project_dir):
         """Test running all checks."""
         checker = PrerequisiteChecker(temp_project_dir)
-
-        with patch('sys.stdout'):  # Suppress output
-            all_passed = checker.run_all_checks()
+        all_passed = checker.run_all_checks()
 
         assert isinstance(all_passed, bool)
         assert len(checker.results) > 0
@@ -193,10 +211,10 @@ class TestPrerequisiteChecker:
         # Verify all expected checks were run
         check_names = [r.check_name for r in checker.results]
         assert "Directory Structure" in check_names
-        assert "ToolBench Dataset" in check_names
-        assert "GAIA Dataset" in check_names
-        assert "Claude Bedrock API" in check_names
-        assert "GPT-OSS 120B API" in check_names
+        assert "MongoDB Connection" in check_names
+        assert "HuggingFace Access" in check_names
+        assert "Claude 3.5 Sonnet (Bedrock)" in check_names
+        assert "GPT-OSS 120B (Bedrock)" in check_names
         assert "Python Dependencies" in check_names
 
 

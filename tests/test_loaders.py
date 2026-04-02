@@ -3,23 +3,23 @@ Tests for dataset loaders (ToolBench and GAIA).
 """
 
 import pytest
-import json
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 from src.data.loaders import (
     load_toolbench_trajectories,
     load_gaia_trajectories,
     save_trajectories,
     load_trajectories_from_json,
 )
-from src.data.schema import Trajectory, Step, StepType, GroundTruth
+from src.data.schema import Trajectory
 
 
 @pytest.fixture
 def sample_toolbench_data():
     """Sample ToolBench trajectory data."""
     return {
-        "task": "Find the population of Tokyo in 2023",
+        "query": "Find the population of Tokyo in 2023",
         "steps": [
             {
                 "thought": "I need to search for Tokyo population data",
@@ -34,7 +34,7 @@ def sample_toolbench_data():
                 "observation": "Task completed"
             }
         ],
-        "final_answer": "14.09 million",
+        "answer": "14.09 million",
         "success": True,
         "domain": "geography"
     }
@@ -44,62 +44,37 @@ def sample_toolbench_data():
 def sample_gaia_data():
     """Sample GAIA trajectory data."""
     return {
-        "question": "What is the capital of France?",
-        "final_answer": "Paris",
-        "Level": "Level 1",
-        "trajectory": [
-            {
-                "type": "search",
-                "query": "capital of France",
-                "result": "Paris is the capital of France"
-            },
-            {
-                "type": "answer",
-                "content": "Paris"
-            }
-        ]
+        "Question": "What is the capital of France?",
+        "Final answer": "Paris",
+        "Level": "Level 1"
     }
 
 
 @pytest.fixture
-def temp_toolbench_dir(sample_toolbench_data):
-    """Create temporary directory with ToolBench data."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-
-        # Create JSON file
-        json_file = tmpdir / "sample.json"
-        with open(json_file, "w") as f:
-            json.dump([sample_toolbench_data], f)
-
-        # Create JSONL file
-        jsonl_file = tmpdir / "sample.jsonl"
-        with open(jsonl_file, "w") as f:
-            f.write(json.dumps(sample_toolbench_data) + "\n")
-
-        yield str(tmpdir)
+def mock_toolbench_dataset(sample_toolbench_data):
+    """Mock HuggingFace dataset for ToolBench."""
+    dataset = Mock()
+    dataset.__iter__ = Mock(return_value=iter([sample_toolbench_data] * 5))
+    return dataset
 
 
 @pytest.fixture
-def temp_gaia_dir(sample_gaia_data):
-    """Create temporary directory with GAIA data."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-
-        # Create JSON file
-        json_file = tmpdir / "sample.json"
-        with open(json_file, "w") as f:
-            json.dump([sample_gaia_data], f)
-
-        yield str(tmpdir)
+def mock_gaia_dataset(sample_gaia_data):
+    """Mock HuggingFace dataset for GAIA."""
+    dataset = Mock()
+    dataset.__iter__ = Mock(return_value=iter([sample_gaia_data] * 5))
+    return dataset
 
 
 class TestToolBenchLoader:
     """Tests for ToolBench dataset loader."""
 
-    def test_load_from_json(self, temp_toolbench_dir):
-        """Test loading from JSON file."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=10)
+    @patch('datasets.load_dataset')
+    def test_load_from_json(self, mock_load_dataset, mock_toolbench_dataset):
+        """Test loading from HuggingFace dataset."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=10)
 
         assert len(trajectories) > 0
         traj = trajectories[0]
@@ -110,17 +85,22 @@ class TestToolBenchLoader:
         assert traj.ground_truth.expected_answer == "14.09 million"
         assert traj.ground_truth.task_success is True
 
-    def test_load_from_jsonl(self, temp_toolbench_dir):
-        """Test loading from JSONL file."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=10)
-        # Should load from both JSON and JSONL files
+    @patch('datasets.load_dataset')
+    def test_load_from_jsonl(self, mock_load_dataset, mock_toolbench_dataset):
+        """Test loading from HuggingFace dataset."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=10)
+        # Should load successfully
         assert len(trajectories) >= 1
 
-    def test_filter_by_step_count(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_filter_by_step_count(self, mock_load_dataset, mock_toolbench_dataset):
         """Test filtering by min/max steps."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
         # Load with restrictive filter
         trajectories = load_toolbench_trajectories(
-            temp_toolbench_dir,
             min_steps=5,
             max_steps=10
         )
@@ -128,78 +108,107 @@ class TestToolBenchLoader:
         for traj in trajectories:
             assert 5 <= len(traj.steps) <= 10
 
-    def test_filter_successful_only(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_filter_successful_only(self, mock_load_dataset, mock_toolbench_dataset):
         """Test filtering for successful trajectories only."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
         trajectories = load_toolbench_trajectories(
-            temp_toolbench_dir,
             filter_successful=True
         )
         for traj in trajectories:
             assert traj.ground_truth.task_success is not False
 
-    def test_max_trajectories_limit(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_max_trajectories_limit(self, mock_load_dataset, mock_toolbench_dataset):
         """Test limiting number of loaded trajectories."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
         trajectories = load_toolbench_trajectories(
-            temp_toolbench_dir,
             max_trajectories=1
         )
         assert len(trajectories) <= 1
 
-    def test_missing_directory(self):
-        """Test handling of missing directory."""
-        with pytest.raises(FileNotFoundError):
-            load_toolbench_trajectories("/nonexistent/path")
+    @patch('datasets.load_dataset')
+    def test_missing_directory(self, mock_load_dataset):
+        """Test handling of dataset loading failure."""
+        mock_load_dataset.side_effect = Exception("Dataset not found")
 
-    def test_empty_directory(self):
-        """Test handling of empty directory."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with pytest.raises(ValueError, match="No JSON/JSONL files"):
-                load_toolbench_trajectories(tmpdir)
+        # Should return empty list on failure
+        trajectories = load_toolbench_trajectories()
+        assert trajectories == []
+
+    @patch('datasets.load_dataset')
+    def test_empty_directory(self, mock_load_dataset):
+        """Test handling of empty dataset."""
+        empty_dataset = Mock()
+        empty_dataset.__iter__ = Mock(return_value=iter([]))
+        mock_load_dataset.return_value = empty_dataset
+
+        trajectories = load_toolbench_trajectories()
+        assert len(trajectories) == 0
 
 
 class TestGAIALoader:
     """Tests for GAIA dataset loader."""
 
-    def test_load_from_json(self, temp_gaia_dir):
-        """Test loading from JSON file."""
-        trajectories = load_gaia_trajectories(temp_gaia_dir, max_trajectories=10)
+    @patch('datasets.load_dataset')
+    def test_load_from_json(self, mock_load_dataset, mock_gaia_dataset):
+        """Test loading from HuggingFace dataset."""
+        mock_load_dataset.return_value = mock_gaia_dataset
+
+        trajectories = load_gaia_trajectories(max_trajectories=10)
 
         assert len(trajectories) > 0
         traj = trajectories[0]
         assert isinstance(traj, Trajectory)
         assert traj.benchmark == "gaia"
         assert len(traj.steps) >= 1
-        assert traj.ground_truth.task_description == "What is the capital of France?"
+        assert "capital of France" in traj.ground_truth.task_description
         assert traj.ground_truth.expected_answer == "Paris"
         assert traj.ground_truth.difficulty == "Level 1"
 
-    def test_filter_by_difficulty(self, temp_gaia_dir):
+    @patch('datasets.load_dataset')
+    def test_filter_by_difficulty(self, mock_load_dataset, mock_gaia_dataset):
         """Test filtering by difficulty level."""
+        mock_load_dataset.return_value = mock_gaia_dataset
+
         trajectories = load_gaia_trajectories(
-            temp_gaia_dir,
             difficulty="Level 1"
         )
         for traj in trajectories:
             assert traj.ground_truth.difficulty == "Level 1"
 
-    def test_missing_directory(self):
-        """Test handling of missing directory."""
-        with pytest.raises(FileNotFoundError):
-            load_gaia_trajectories("/nonexistent/path")
+    @patch('datasets.load_dataset')
+    def test_missing_directory(self, mock_load_dataset):
+        """Test handling of dataset loading failure."""
+        mock_load_dataset.side_effect = Exception("Dataset not found")
+
+        # Should return empty list on failure
+        trajectories = load_gaia_trajectories()
+        assert trajectories == []
 
 
 class TestTrajectorySchema:
     """Tests for Trajectory schema methods."""
 
-    def test_trajectory_length(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_trajectory_length(self, mock_load_dataset, mock_toolbench_dataset):
         """Test trajectory length."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=1)
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=1)
         traj = trajectories[0]
         assert len(traj) == len(traj.steps)
 
-    def test_get_step_by_number(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_get_step_by_number(
+        self, mock_load_dataset, mock_toolbench_dataset
+    ):
         """Test retrieving step by number."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=1)
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=1)
         traj = trajectories[0]
 
         step = traj.get_step_by_number(1)
@@ -210,9 +219,14 @@ class TestTrajectorySchema:
         step = traj.get_step_by_number(999)
         assert step is None
 
-    def test_get_position_label(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_get_position_label(
+        self, mock_load_dataset, mock_toolbench_dataset
+    ):
         """Test position labeling (early/middle/late)."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=1)
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=1)
         traj = trajectories[0]
 
         assert traj.get_position_label(1) == "early"
@@ -222,9 +236,14 @@ class TestTrajectorySchema:
         assert traj.get_position_label(6) == "late"
         assert traj.get_position_label(10) == "late"
 
-    def test_get_text_representation(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_get_text_representation(
+        self, mock_load_dataset, mock_toolbench_dataset
+    ):
         """Test text representation generation."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=1)
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=1)
         traj = trajectories[0]
 
         text = traj.get_text_representation()
@@ -232,9 +251,14 @@ class TestTrajectorySchema:
         assert "Tokyo" in text
         assert "Step 1" in text
 
-    def test_to_dict_and_from_dict(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_to_dict_and_from_dict(
+        self, mock_load_dataset, mock_toolbench_dataset
+    ):
         """Test serialization and deserialization."""
-        trajectories = load_toolbench_trajectories(temp_toolbench_dir, max_trajectories=1)
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
+        trajectories = load_toolbench_trajectories(max_trajectories=1)
         original = trajectories[0]
 
         # Convert to dict
@@ -253,16 +277,20 @@ class TestTrajectorySchema:
 class TestSaveLoad:
     """Tests for saving and loading trajectories."""
 
-    def test_save_and_load(self, temp_toolbench_dir):
+    @patch('datasets.load_dataset')
+    def test_save_and_load(self, mock_load_dataset, mock_toolbench_dataset):
         """Test saving trajectories to JSON and loading back."""
+        mock_load_dataset.return_value = mock_toolbench_dataset
+
         # Load original trajectories
         original_trajectories = load_toolbench_trajectories(
-            temp_toolbench_dir,
             max_trajectories=2
         )
 
         # Save to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False
+        ) as tmp:
             tmp_path = tmp.name
 
         try:
@@ -273,7 +301,9 @@ class TestSaveLoad:
 
             # Verify
             assert len(loaded_trajectories) == len(original_trajectories)
-            for orig, loaded in zip(original_trajectories, loaded_trajectories):
+            for orig, loaded in zip(
+                original_trajectories, loaded_trajectories
+            ):
                 assert orig.trajectory_id == loaded.trajectory_id
                 assert len(orig.steps) == len(loaded.steps)
 

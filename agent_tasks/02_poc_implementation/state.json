@@ -14,7 +14,8 @@
     "Human validation: Run pre-requisite checks and pilot perturbations"
   ],
   "completed_steps": [
-    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)"
+    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)",
+    "Fixed all test cases - 53 tests passing (mocked HF datasets, no MongoDB required)"
   ],
   "pending_steps": [
     "Phase 2: Perturbation generation framework (Days 4-6)",
@@ -30,14 +31,19 @@
     "src/data/schema.py",
     "src/data/loaders.py",
     "src/prereq_check.py",
+    "src/storage/mongodb.py",
     "tests/__init__.py",
-    "tests/test_loaders.py",
-    "tests/test_prerequisites.py",
+    "tests/test_loaders.py (fixed - 16 tests)",
+    "tests/test_prerequisites.py (fixed - 13 tests)",
+    "tests/test_storage.py (fixed - 9 tests)",
+    "tests/test_integration_pipeline.py (7 tests)",
+    "tests/test_mongodb_schema.py (6 tests)",
+    "tests/test_mongodb_atlas.py (5 skipped)",
     "requirements.txt",
     ".env.example",
     "data/README.md",
     "README.md (updated)"
   ],
   "blockers": [],
-  "notes": "Phase 1 complete (2026-04-02). REFACTORED based on feedback: (1) HuggingFace datasets integration (no manual JSON), (2) MongoDB storage backend for all results, (3) Proper .env management. Implemented: unified trajectory schema, HF dataset loaders (ToolBench/GAIA), MongoDB storage with 5 collections, pre-requisite verification (6 checks including MongoDB/HF), comprehensive test suite (40 tests passing). Ready for Phase 2: Perturbation generation."
+  "notes": "Phase 1 complete (2026-04-02). All 53 tests passing! REFACTORED based on feedback: (1) HuggingFace datasets integration (no manual JSON), (2) MongoDB storage backend for all results, (3) Proper .env management, (4) All tests use mocks - no real DB/API required. Implemented: unified trajectory schema, HF dataset loaders (ToolBench/GAIA), MongoDB storage with 5 collections, pre-requisite verification (6 checks including MongoDB/HF), comprehensive test suite. Ready for Phase 2: Perturbation generation."
 }
