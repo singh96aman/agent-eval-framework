@@ -133,6 +133,20 @@ class PrerequisiteChecker:
             return result
 
         try:
+            # First check if pymongo is installed
+            try:
+                import pymongo
+            except ImportError:
+                result = CheckResult(
+                    check_name="MongoDB Connection",
+                    passed=False,
+                    message="pymongo not installed. Run: pip install pymongo",
+                    details={"error": "pymongo module not found"}
+                )
+                self.results.append(result)
+                return result
+
+            # Now try to import and use MongoDBStorage
             from src.storage.mongodb import MongoDBStorage
 
             storage = MongoDBStorage()
@@ -154,12 +168,12 @@ class PrerequisiteChecker:
                     details={"uri": mongodb_uri}
                 )
 
-        except ImportError:
+        except ImportError as e:
             result = CheckResult(
                 check_name="MongoDB Connection",
                 passed=False,
-                message="pymongo not installed. Run: pip install pymongo",
-                details={"error": "ImportError"}
+                message=f"Import error: {str(e)}",
+                details={"error": str(e), "type": "ImportError"}
             )
         except Exception as e:
             result = CheckResult(
@@ -534,6 +548,12 @@ class PrerequisiteChecker:
 
 def main():
     """Run pre-requisite checks from command line."""
+    # Add project root to Python path so imports work
+    # when running as: python src/prereq_check.py
+    project_root = Path(__file__).parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
     # Load .env file
     try:
         from dotenv import load_dotenv
