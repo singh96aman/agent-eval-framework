@@ -1,147 +1,141 @@
 # Dataset Setup Instructions
 
-This directory contains the datasets used for the POC experiment.
+## Overview
 
-## Directory Structure
+This project uses **Hugging Face datasets** for loading ToolBench and GAIA benchmarks. You don't need to manually download JSON files - datasets are loaded programmatically via the `datasets` library.
 
-```
-data/
-├── toolbench/       # ToolBench dataset
-├── gaia/            # GAIA benchmark dataset
-├── perturbed/       # Generated perturbed trajectories (created by experiment)
-└── annotations/     # Human annotations (created during experiment)
-```
+## Setup Instructions
 
-## Setting Up ToolBench Dataset
+### 1. Get HuggingFace Token
 
-### Option 1: Use Official ToolBench Dataset
-
-1. Download ToolBench dataset from the official repository:
+1. Go to https://huggingface.co/settings/tokens
+2. Create a new token (read access is sufficient)
+3. Add to your `.env` file:
    ```bash
-   # Clone or download from https://github.com/OpenBMB/ToolBench
+   HUGGINGFACE_TOKEN=your_token_here
    ```
 
-2. Place trajectory files in `data/toolbench/`:
-   - Files should be in JSON or JSONL format
-   - Each file should contain trajectory data with:
-     - `task` or `question`: Task description
-     - `steps` or `trajectory`: List of steps
-     - `final_answer`: Expected answer
-     - `success` (optional): Whether trajectory succeeded
+### 2. Datasets Used
 
-3. Example format:
-   ```json
-   {
-     "task": "Find the population of Tokyo in 2023",
-     "steps": [
-       {
-         "thought": "I need to search for this",
-         "action": "Search",
-         "action_input": {"query": "Tokyo population 2023"},
-         "observation": "14.09 million"
-       }
-     ],
-     "final_answer": "14.09 million",
-     "success": true
-   }
-   ```
+**ToolBench:**
+- HuggingFace: `OpenBMB/ToolBench`
+- Used for: Multi-step tool-using agent trajectories
+- Access: May require authentication
 
-### Option 2: Use Custom Trajectory Data
+**GAIA:**
+- HuggingFace: `gaia-benchmark/GAIA`
+- Used for: Multi-hop question-answering trajectories
+- Access: Public dataset
 
-If using custom agent trajectories:
+### 3. Loading Datasets
 
-1. Convert your trajectories to the expected format (see example above)
-2. Save as JSON or JSONL files in `data/toolbench/`
-3. Ensure trajectories have 5-10 steps for optimal POC results
+Datasets are loaded automatically by the experiment code:
 
-## Setting Up GAIA Dataset
+```python
+from src.data.loaders import load_toolbench_trajectories, load_gaia_trajectories
 
-### Option 1: Use Official GAIA Benchmark
+# Load ToolBench (automatically fetches from HuggingFace)
+toolbench_trajs = load_toolbench_trajectories(
+    max_trajectories=25,
+    min_steps=5,
+    max_steps=10,
+    filter_successful=True
+)
 
-1. Download GAIA validation set from Hugging Face:
+# Load GAIA
+gaia_trajs = load_gaia_trajectories(
+    max_trajectories=25,
+    min_steps=4,
+    max_steps=8,
+    difficulty="Level 1"
+)
+```
+
+### 4. Data Storage
+
+**Trajectories**: Stored in MongoDB (not in this directory)
+- Original trajectories
+- Perturbed trajectories
+- Metadata
+
+**Results**: Stored in MongoDB
+- Annotations
+- Judge evaluations
+- CCG scores
+- Experiment metadata
+
+See `src/storage/mongodb.py` for storage implementation.
+
+## MongoDB Setup
+
+### Option 1: Local MongoDB
+
+```bash
+# Install MongoDB (macOS)
+brew install mongodb-community
+
+# Start MongoDB
+brew services start mongodb-community
+
+# Set in .env
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=agent_judge_experiment
+```
+
+### Option 2: MongoDB Atlas (Cloud)
+
+1. Create free cluster at https://www.mongodb.com/cloud/atlas
+2. Get connection string
+3. Add to `.env`:
    ```bash
-   # Download from https://huggingface.co/datasets/gaia-benchmark/GAIA
+   MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
+   MONGODB_DATABASE=agent_judge_experiment
    ```
 
-2. Place files in `data/gaia/`:
-   - Files should be in JSON or JSONL format
-   - Each file should contain:
-     - `question` or `Question`: The question
-     - `final_answer` or `Final answer`: Expected answer
-     - `Level` or `level`: Difficulty level
-     - `trajectory` or `steps` (optional): Reasoning steps
+## Verifying Setup
 
-3. Example format:
-   ```json
-   {
-     "question": "What is the capital of France?",
-     "final_answer": "Paris",
-     "Level": "Level 1",
-     "trajectory": [
-       {
-         "type": "search",
-         "query": "capital of France",
-         "result": "Paris"
-       }
-     ]
-   }
-   ```
-
-### Option 2: Create Minimal Test Dataset
-
-For testing or development:
-
-1. Create a few sample trajectories manually
-2. Save in `data/gaia/sample.json`
-3. Verify with pre-requisite checker
-
-## Verifying Dataset Setup
-
-After placing datasets, run the pre-requisite check:
+Run the pre-requisite checker:
 
 ```bash
 python src/prereq_check.py
 ```
 
-This will verify:
-- ✓ Directories exist
-- ✓ Files are present and parseable
-- ✓ Sample trajectories load successfully
-- ✓ File formats are correct
-
-## Dataset Requirements for POC
-
-For the initial POC (50 trajectories):
-- **ToolBench**: 30 successful trajectories (allows 5 for pilot + 25 for main)
-  - Length: 5-10 steps
-  - Success rate: >60%
-  - Domain: Mixed (search, computation, APIs)
-
-- **GAIA**: 30 trajectories from validation set (allows 5 for pilot + 25 for main)
-  - Length: 4-8 steps
-  - Difficulty: Level 1-2 preferred
-  - Clear answer correctness criteria
+This verifies:
+- ✓ MongoDB connection
+- ✓ HuggingFace token and dataset access
+- ✓ AWS Bedrock (Claude API)
+- ✓ GPT-OSS endpoint
+- ✓ Python dependencies
 
 ## Troubleshooting
 
-### "No JSON/JSONL files found"
+### "HuggingFace token not set"
 
-- Check that files have `.json` or `.jsonl` extension
-- Verify files are in correct directory (`data/toolbench/` or `data/gaia/`)
-- Ensure directories exist
+Make sure you:
+1. Created token at https://huggingface.co/settings/tokens
+2. Added `HUGGINGFACE_TOKEN=...` to `.env`
+3. `.env` file is in project root
 
-### "No valid trajectories loaded"
+### "Could not connect to MongoDB"
 
-- Check file format matches examples above
-- Verify JSON is valid (use `json.tool` or online validator)
-- Check that required fields are present (`task`, `steps`, etc.)
-- Review loader code in `src/data/loaders.py` for expected format
+- Check MongoDB is running: `brew services list`
+- Verify URI in `.env` is correct
+- For Atlas: check network access and credentials
 
-### "Trajectory too short/long"
+### "Dataset not accessible"
 
-- Adjust `min_steps` and `max_steps` parameters in loader
-- Or filter your dataset to meet length requirements (5-10 steps for ToolBench, 4-8 for GAIA)
+Some datasets may require:
+- Accepting terms of use on HuggingFace
+- Requesting access from dataset owners
+- Different authentication
 
-## Contact
+## Directory Structure
 
-If you have questions about dataset setup or need assistance with format conversion, contact the research team or refer to `paper/POC_REQUIREMENTS.MD` for detailed specifications.
+```
+data/
+├── README.md           # This file
+├── (no JSON files)     # Loaded from HuggingFace
+└── (no local storage)  # Results stored in MongoDB
+```
+
+All experiment data is stored in MongoDB, not in local files.

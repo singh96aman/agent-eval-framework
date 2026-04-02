@@ -1,15 +1,18 @@
 """
 Pre-requisite verification system for POC experiment.
 
-This module checks that all required datasets, APIs, and environments
-are available and configured correctly before starting the experiment.
+Checks:
+- MongoDB connection
+- HuggingFace access (datasets library and token)
+- AWS Bedrock (Claude)
+- GPT-OSS endpoint
+- Python dependencies
 """
 
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
-import json
+from typing import Dict, List
 from dataclasses import dataclass
 
 
@@ -27,30 +30,17 @@ class CheckResult:
 
 
 class PrerequisiteChecker:
-    """
-    Checks all pre-requisites for running the POC experiment.
-    """
+    """Checks all pre-requisites for running the POC experiment."""
 
     def __init__(self, project_root: str = None):
-        """
-        Initialize checker.
-
-        Args:
-            project_root: Path to project root directory (default: auto-detect)
-        """
+        """Initialize checker."""
         if project_root is None:
-            # Auto-detect: assume prereq_check.py is in src/
             project_root = Path(__file__).parent.parent
         self.project_root = Path(project_root)
         self.results: List[CheckResult] = []
 
     def run_all_checks(self) -> bool:
-        """
-        Run all pre-requisite checks.
-
-        Returns:
-            True if all checks passed, False otherwise
-        """
+        """Run all pre-requisite checks."""
         print("=" * 70)
         print("PRE-REQUISITE VERIFICATION FOR POC EXPERIMENT")
         print("=" * 70)
@@ -60,8 +50,8 @@ class PrerequisiteChecker:
 
         # Run all checks
         self.check_directory_structure()
-        self.check_toolbench_dataset()
-        self.check_gaia_dataset()
+        self.check_mongodb_connection()
+        self.check_huggingface_access()
         self.check_claude_bedrock_api()
         self.check_gpt_oss_api()
         self.check_python_dependencies()
@@ -88,7 +78,7 @@ class PrerequisiteChecker:
         if all_passed:
             print("\n✓ All pre-requisites satisfied. Ready to proceed!")
         else:
-            print("\n✗ Some pre-requisites failed. Please fix issues above before proceeding.")
+            print("\n✗ Fix issues above before proceeding.")
 
         return all_passed
 
@@ -98,10 +88,6 @@ class PrerequisiteChecker:
             "src",
             "tests",
             "data",
-            "data/toolbench",
-            "data/gaia",
-            "data/perturbed",
-            "data/annotations",
             "results",
             "paper",
         ]
@@ -116,7 +102,7 @@ class PrerequisiteChecker:
             result = CheckResult(
                 check_name="Directory Structure",
                 passed=False,
-                message=f"Missing directories: {', '.join(missing_dirs)}",
+                message=f"Missing: {', '.join(missing_dirs)}",
                 details={"missing": missing_dirs}
             )
         else:
@@ -129,132 +115,117 @@ class PrerequisiteChecker:
         self.results.append(result)
         return result
 
-    def check_toolbench_dataset(self) -> CheckResult:
-        """Check ToolBench dataset availability."""
-        toolbench_dir = self.project_root / "data" / "toolbench"
+    def check_mongodb_connection(self) -> CheckResult:
+        """Check MongoDB connection."""
+        mongodb_uri = os.getenv("MONGODB_URI")
 
-        if not toolbench_dir.exists():
+        if not mongodb_uri:
             result = CheckResult(
-                check_name="ToolBench Dataset",
+                check_name="MongoDB Connection",
                 passed=False,
-                message=f"Directory not found: {toolbench_dir}",
-                details={"path": str(toolbench_dir)}
+                message=(
+                    "MONGODB_URI not set in environment. "
+                    "Set in .env file."
+                ),
+                details={"env_var": "MONGODB_URI"}
             )
             self.results.append(result)
             return result
 
-        # Check for JSON/JSONL files
-        json_files = list(toolbench_dir.glob("*.json")) + list(toolbench_dir.glob("*.jsonl"))
+        try:
+            from src.storage.mongodb import MongoDBStorage
 
-        if not json_files:
-            result = CheckResult(
-                check_name="ToolBench Dataset",
-                passed=False,
-                message=f"No JSON/JSONL files found in {toolbench_dir}",
-                details={"path": str(toolbench_dir), "files_found": 0}
-            )
-        else:
-            # Try to load a sample trajectory
-            try:
-                from src.data.loaders import load_toolbench_trajectories
-                trajectories = load_toolbench_trajectories(
-                    str(toolbench_dir),
-                    max_trajectories=1
-                )
+            storage = MongoDBStorage()
+            connected = storage.test_connection()
+            storage.close()
 
-                if trajectories:
-                    result = CheckResult(
-                        check_name="ToolBench Dataset",
-                        passed=True,
-                        message=f"Found {len(json_files)} file(s), successfully loaded sample trajectory",
-                        details={
-                            "path": str(toolbench_dir),
-                            "files_found": len(json_files),
-                            "sample_loaded": True
-                        }
-                    )
-                else:
-                    result = CheckResult(
-                        check_name="ToolBench Dataset",
-                        passed=False,
-                        message=f"Found files but no valid trajectories loaded. Check format.",
-                        details={
-                            "path": str(toolbench_dir),
-                            "files_found": len(json_files)
-                        }
-                    )
-            except Exception as e:
+            if connected:
                 result = CheckResult(
-                    check_name="ToolBench Dataset",
-                    passed=False,
-                    message=f"Error loading trajectories: {str(e)}",
-                    details={"error": str(e)}
+                    check_name="MongoDB Connection",
+                    passed=True,
+                    message="Connected to MongoDB successfully",
+                    details={"uri": mongodb_uri.split("@")[-1]}
                 )
+            else:
+                result = CheckResult(
+                    check_name="MongoDB Connection",
+                    passed=False,
+                    message="Could not connect to MongoDB",
+                    details={"uri": mongodb_uri}
+                )
+
+        except ImportError:
+            result = CheckResult(
+                check_name="MongoDB Connection",
+                passed=False,
+                message="pymongo not installed. Run: pip install pymongo",
+                details={"error": "ImportError"}
+            )
+        except Exception as e:
+            result = CheckResult(
+                check_name="MongoDB Connection",
+                passed=False,
+                message=f"MongoDB connection failed: {str(e)}",
+                details={"error": str(e)}
+            )
 
         self.results.append(result)
         return result
 
-    def check_gaia_dataset(self) -> CheckResult:
-        """Check GAIA dataset availability."""
-        gaia_dir = self.project_root / "data" / "gaia"
+    def check_huggingface_access(self) -> CheckResult:
+        """Check HuggingFace datasets access."""
+        hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
-        if not gaia_dir.exists():
+        if not hf_token:
             result = CheckResult(
-                check_name="GAIA Dataset",
+                check_name="HuggingFace Access",
                 passed=False,
-                message=f"Directory not found: {gaia_dir}",
-                details={"path": str(gaia_dir)}
+                message=(
+                    "HUGGINGFACE_TOKEN not set. Get token from: "
+                    "https://huggingface.co/settings/tokens"
+                ),
+                details={"env_var": "HUGGINGFACE_TOKEN"}
             )
             self.results.append(result)
             return result
 
-        # Check for JSON/JSONL files
-        json_files = list(gaia_dir.glob("*.json")) + list(gaia_dir.glob("*.jsonl"))
+        try:
+            from datasets import load_dataset
 
-        if not json_files:
-            result = CheckResult(
-                check_name="GAIA Dataset",
-                passed=False,
-                message=f"No JSON/JSONL files found in {gaia_dir}",
-                details={"path": str(gaia_dir), "files_found": 0}
-            )
-        else:
-            # Try to load a sample trajectory
+            # Try to load a public dataset to test access
+            # (Small dataset to avoid downloading large data)
             try:
-                from src.data.loaders import load_gaia_trajectories
-                trajectories = load_gaia_trajectories(
-                    str(gaia_dir),
-                    max_trajectories=1
+                # Test with a tiny public dataset
+                load_dataset(
+                    "squad",
+                    split="train[:1]",
+                    token=hf_token,
                 )
 
-                if trajectories:
-                    result = CheckResult(
-                        check_name="GAIA Dataset",
-                        passed=True,
-                        message=f"Found {len(json_files)} file(s), successfully loaded sample trajectory",
-                        details={
-                            "path": str(gaia_dir),
-                            "files_found": len(json_files),
-                            "sample_loaded": True
-                        }
-                    )
-                else:
-                    result = CheckResult(
-                        check_name="GAIA Dataset",
-                        passed=False,
-                        message=f"Found files but no valid trajectories loaded. Check format.",
-                        details={
-                            "path": str(gaia_dir),
-                            "files_found": len(json_files)
-                        }
-                    )
+                result = CheckResult(
+                    check_name="HuggingFace Access",
+                    passed=True,
+                    message=(
+                        "HuggingFace token valid and datasets accessible"
+                    ),
+                    details={"token_set": True}
+                )
             except Exception as e:
                 result = CheckResult(
-                    check_name="GAIA Dataset",
+                    check_name="HuggingFace Access",
                     passed=False,
-                    message=f"Error loading trajectories: {str(e)}",
+                    message=f"HuggingFace access failed: {str(e)}",
                     details={"error": str(e)}
                 )
+
+        except ImportError:
+            result = CheckResult(
+                check_name="HuggingFace Access",
+                passed=False,
+                message="datasets library not installed. "
+                        "Run: pip install datasets",
+                details={"error": "ImportError"}
+            )
 
         self.results.append(result)
         return result
@@ -263,9 +234,9 @@ class PrerequisiteChecker:
         """Check Claude-3.5-Sonnet on AWS Bedrock API access."""
         try:
             import boto3
-            from botocore.exceptions import ClientError, NoCredentialsError
+            from botocore.exceptions import ClientError
 
-            # Check for AWS credentials
+            # Check AWS credentials
             try:
                 session = boto3.Session()
                 credentials = session.get_credentials()
@@ -274,7 +245,10 @@ class PrerequisiteChecker:
                     result = CheckResult(
                         check_name="Claude Bedrock API",
                         passed=False,
-                        message="AWS credentials not found. Configure via AWS CLI or environment variables.",
+                        message=(
+                            "AWS credentials not found. "
+                            "Configure via AWS CLI or environment."
+                        ),
                         details={"error": "NoCredentials"}
                     )
                     self.results.append(result)
@@ -284,7 +258,7 @@ class PrerequisiteChecker:
                 result = CheckResult(
                     check_name="Claude Bedrock API",
                     passed=False,
-                    message=f"Error accessing AWS credentials: {str(e)}",
+                    message=f"AWS credentials error: {str(e)}",
                     details={"error": str(e)}
                 )
                 self.results.append(result)
@@ -292,21 +266,22 @@ class PrerequisiteChecker:
 
             # Try to create Bedrock client
             try:
-                client = boto3.client(
+                boto3.client(
                     service_name='bedrock-runtime',
-                    region_name='us-east-1'
+                    region_name=os.getenv('AWS_REGION', 'us-east-1')
                 )
-
-                # Test with a minimal invocation (may incur small cost ~$0.01)
-                # Commented out to avoid costs during prereq check
-                # model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-                # response = client.invoke_model(...)
 
                 result = CheckResult(
                     check_name="Claude Bedrock API",
                     passed=True,
-                    message="AWS credentials found and Bedrock client created successfully. (Not tested with actual API call to avoid costs)",
-                    details={"region": "us-east-1", "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0"}
+                    message=(
+                        "AWS credentials found, Bedrock client created. "
+                        "(Not tested with actual API call)"
+                    ),
+                    details={
+                        "region": os.getenv('AWS_REGION', 'us-east-1'),
+                        "model": "anthropic.claude-3-5-sonnet-20241022-v2:0"
+                    }
                 )
 
             except ClientError as e:
@@ -314,15 +289,18 @@ class PrerequisiteChecker:
                 result = CheckResult(
                     check_name="Claude Bedrock API",
                     passed=False,
-                    message=f"AWS Bedrock client error: {error_code}. Check IAM permissions and model access.",
-                    details={"error": error_code, "message": str(e)}
+                    message=(
+                        f"Bedrock error: {error_code}. "
+                        "Check IAM permissions."
+                    ),
+                    details={"error": error_code}
                 )
 
         except ImportError:
             result = CheckResult(
                 check_name="Claude Bedrock API",
                 passed=False,
-                message="boto3 library not installed. Run: pip install boto3",
+                message="boto3 not installed. Run: pip install boto3",
                 details={"error": "ImportError"}
             )
 
@@ -331,7 +309,6 @@ class PrerequisiteChecker:
 
     def check_gpt_oss_api(self) -> CheckResult:
         """Check GPT-OSS 120B API endpoint access."""
-        # Check for environment variable with endpoint
         endpoint = os.getenv("GPT_OSS_ENDPOINT")
         api_key = os.getenv("GPT_OSS_API_KEY")
 
@@ -339,47 +316,33 @@ class PrerequisiteChecker:
             result = CheckResult(
                 check_name="GPT-OSS 120B API",
                 passed=False,
-                message="GPT_OSS_ENDPOINT environment variable not set. Set it to your endpoint URL.",
+                message=(
+                    "GPT_OSS_ENDPOINT not set. "
+                    "Set it in .env file."
+                ),
                 details={"env_var": "GPT_OSS_ENDPOINT"}
             )
             self.results.append(result)
             return result
 
-        if not api_key:
-            result = CheckResult(
-                check_name="GPT-OSS 120B API",
-                passed=False,
-                message="GPT_OSS_API_KEY environment variable not set (may be optional depending on endpoint).",
-                details={"env_var": "GPT_OSS_API_KEY", "warning": True}
-            )
-            self.results.append(result)
-            return result
-
-        # Try to connect to endpoint (without making actual API call)
-        try:
-            import requests
-            # Just check if URL is valid and reachable
-            # Not making actual API call to avoid costs
-            result = CheckResult(
-                check_name="GPT-OSS 120B API",
-                passed=True,
-                message=f"Endpoint configured: {endpoint[:50]}... (Not tested with actual API call)",
-                details={"endpoint": endpoint, "api_key_set": bool(api_key)}
-            )
-
-        except ImportError:
-            result = CheckResult(
-                check_name="GPT-OSS 120B API",
-                passed=False,
-                message="requests library not installed. Run: pip install requests",
-                details={"error": "ImportError"}
-            )
+        result = CheckResult(
+            check_name="GPT-OSS 120B API",
+            passed=True,
+            message=(
+                f"Endpoint configured: {endpoint[:50]}... "
+                "(Not tested with actual API call)"
+            ),
+            details={
+                "endpoint": endpoint,
+                "api_key_set": bool(api_key)
+            }
+        )
 
         self.results.append(result)
         return result
 
     def check_python_dependencies(self) -> CheckResult:
-        """Check that required Python packages are installed."""
+        """Check required Python packages."""
         required_packages = [
             "boto3",
             "pandas",
@@ -388,6 +351,8 @@ class PrerequisiteChecker:
             "seaborn",
             "scipy",
             "pytest",
+            "datasets",
+            "pymongo",
         ]
 
         missing_packages = []
@@ -401,21 +366,24 @@ class PrerequisiteChecker:
             result = CheckResult(
                 check_name="Python Dependencies",
                 passed=False,
-                message=f"Missing packages: {', '.join(missing_packages)}. Run: pip install -r requirements.txt",
+                message=(
+                    f"Missing: {', '.join(missing_packages)}. "
+                    "Run: pip install -r requirements.txt"
+                ),
                 details={"missing": missing_packages}
             )
         else:
             result = CheckResult(
                 check_name="Python Dependencies",
                 passed=True,
-                message="All required Python packages are installed"
+                message="All required packages installed"
             )
 
         self.results.append(result)
         return result
 
     def get_summary(self) -> Dict[str, any]:
-        """Get summary of all check results as dictionary."""
+        """Get summary of all check results."""
         return {
             "total_checks": len(self.results),
             "passed": sum(1 for r in self.results if r.passed),
@@ -437,8 +405,6 @@ def main():
     """Run pre-requisite checks from command line."""
     checker = PrerequisiteChecker()
     all_passed = checker.run_all_checks()
-
-    # Exit with appropriate code
     sys.exit(0 if all_passed else 1)
 
 

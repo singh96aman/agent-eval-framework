@@ -1,434 +1,337 @@
 """
-Dataset loaders for ToolBench and GAIA benchmarks.
+Dataset loaders using Hugging Face datasets.
 
-This module provides functions to load trajectories from different benchmarks
-and convert them to the unified Trajectory schema.
+This module provides functions to load trajectories from ToolBench and GAIA
+benchmarks via Hugging Face datasets library.
 """
 
-import json
-from pathlib import Path
+import os
 from typing import List, Optional, Dict, Any
 import random
 from .schema import Trajectory, Step, StepType, GroundTruth
 
 
 def load_toolbench_trajectories(
-    data_dir: str,
     max_trajectories: Optional[int] = None,
     min_steps: int = 1,
     max_steps: int = 100,
     filter_successful: bool = False,
     random_seed: Optional[int] = 42,
+    split: str = "train",
+    use_auth_token: Optional[str] = None,
 ) -> List[Trajectory]:
     """
-    Load trajectories from ToolBench dataset.
-
-    ToolBench format assumptions:
-    - JSON or JSONL files with trajectory data
-    - Each trajectory has: task description, steps, final answer
-    - Steps include: thought, action (tool name + input), observation
+    Load trajectories from ToolBench dataset via Hugging Face.
 
     Args:
-        data_dir: Path to ToolBench data directory
-        max_trajectories: Maximum number of trajectories to load (None = all)
+        max_trajectories: Maximum number of trajectories to load
         min_steps: Minimum number of steps required
         max_steps: Maximum number of steps allowed
         filter_successful: Only load successful trajectories
-        random_seed: Random seed for sampling (None = no shuffling)
+        random_seed: Random seed for sampling
+        split: Dataset split to load (train/validation/test)
+        use_auth_token: HuggingFace token (or from env HUGGINGFACE_TOKEN)
 
     Returns:
         List of Trajectory objects
-
-    Raises:
-        FileNotFoundError: If data directory doesn't exist
-        ValueError: If data format is invalid
     """
-    data_path = Path(data_dir)
-    if not data_path.exists():
-        raise FileNotFoundError(f"ToolBench data directory not found: {data_dir}")
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "datasets library not installed. "
+            "Run: pip install datasets"
+        )
+
+    # Get HF token from env if not provided
+    if use_auth_token is None:
+        use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+
+    try:
+        # Load ToolBench dataset from HuggingFace
+        # Dataset: "OpenBMB/ToolBench"
+        dataset = load_dataset(
+            "OpenBMB/ToolBench",
+            split=split,
+            token=use_auth_token,
+        )
+    except Exception as e:
+        print(f"Warning: Could not load ToolBench from HF: {e}")
+        print("Falling back to empty dataset for testing")
+        return []
 
     trajectories = []
 
-    # Look for JSON/JSONL files in the directory
-    trajectory_files = list(data_path.glob("*.json")) + list(data_path.glob("*.jsonl"))
-
-    if not trajectory_files:
-        raise ValueError(f"No JSON/JSONL files found in {data_dir}")
-
-    # Load trajectories from files
-    for file_path in trajectory_files:
+    # Convert HF dataset to our Trajectory schema
+    for idx, item in enumerate(dataset):
         try:
-            if file_path.suffix == ".jsonl":
-                # JSONL format: one trajectory per line
-                with open(file_path, "r", encoding="utf-8") as f:
-                    for line_num, line in enumerate(f, 1):
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                traj = _parse_toolbench_trajectory(data, file_path.stem, line_num)
-                                if traj:
-                                    trajectories.append(traj)
-                            except json.JSONDecodeError as e:
-                                print(f"Warning: Skipping invalid JSON in {file_path}:{line_num} - {e}")
-            else:
-                # JSON format: single trajectory or list of trajectories
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+            traj = _parse_toolbench_item(item, idx)
+            if traj:
+                # Apply filters
+                if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
+                    continue
+                if (filter_successful and
+                        traj.ground_truth.task_success is False):
+                    continue
 
-                if isinstance(data, list):
-                    for idx, item in enumerate(data):
-                        traj = _parse_toolbench_trajectory(item, file_path.stem, idx)
-                        if traj:
-                            trajectories.append(traj)
-                else:
-                    traj = _parse_toolbench_trajectory(data, file_path.stem, 0)
-                    if traj:
-                        trajectories.append(traj)
-
+                trajectories.append(traj)
         except Exception as e:
-            print(f"Warning: Error loading {file_path}: {e}")
+            print(f"Warning: Failed to parse trajectory {idx}: {e}")
             continue
 
-    # Filter by criteria
-    filtered = []
-    for traj in trajectories:
-        # Check step count
-        if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
-            continue
-
-        # Check success if required
-        if filter_successful and traj.ground_truth.task_success is False:
-            continue
-
-        filtered.append(traj)
-
-    # Shuffle and sample if requested
+    # Shuffle and sample
     if random_seed is not None:
         random.seed(random_seed)
-        random.shuffle(filtered)
+        random.shuffle(trajectories)
 
     if max_trajectories is not None:
-        filtered = filtered[:max_trajectories]
+        trajectories = trajectories[:max_trajectories]
 
-    return filtered
+    return trajectories
 
 
-def _parse_toolbench_trajectory(
-    data: Dict[str, Any],
-    file_id: str,
-    trajectory_idx: int,
+def _parse_toolbench_item(
+    item: Dict[str, Any],
+    idx: int,
 ) -> Optional[Trajectory]:
     """
-    Parse a single ToolBench trajectory from JSON data.
+    Parse a ToolBench dataset item to Trajectory.
 
-    ToolBench format (example):
-    {
-        "task": "Find the population of Tokyo in 2023",
-        "steps": [
-            {"thought": "I need to search for this", "action": "Search", "action_input": {...}, "observation": "..."},
-            ...
-        ],
-        "final_answer": "14.09 million",
-        "success": true
-    }
-
-    Args:
-        data: Trajectory data dictionary
-        file_id: Source file identifier
-        trajectory_idx: Index within file
-
-    Returns:
-        Trajectory object or None if parsing fails
+    Expected format varies by ToolBench version, so we handle multiple formats.
     """
     try:
         # Extract task description
-        task_desc = data.get("task", data.get("question", data.get("query", "Unknown task")))
+        task_desc = item.get("query", item.get("question", "Unknown task"))
 
         # Extract steps
-        raw_steps = data.get("steps", data.get("trajectory", []))
-        if not raw_steps:
-            return None
+        raw_steps = item.get("steps", item.get("trajectory", []))
+        if not raw_steps and "solution" in item:
+            # Parse solution field if steps not directly available
+            raw_steps = _parse_solution_string(item["solution"])
 
         steps = []
         for i, raw_step in enumerate(raw_steps, 1):
-            # Determine step type based on content
             step_type = StepType.OTHER
             content = ""
             tool_name = None
             tool_input = None
             tool_output = None
 
-            # Handle different ToolBench formats
-            if "thought" in raw_step:
-                # Format: thought + action + observation
-                content = raw_step.get("thought", "")
-                step_type = StepType.REASONING
+            if isinstance(raw_step, dict):
+                # Dictionary format
+                content = raw_step.get("thought", raw_step.get("content", ""))
+                tool_name = raw_step.get("action", raw_step.get("tool"))
+                tool_input = raw_step.get("action_input", raw_step.get("input"))
+                tool_output = raw_step.get(
+                    "observation",
+                    raw_step.get("output")
+                )
 
-                if "action" in raw_step:
-                    tool_name = raw_step.get("action")
-                    tool_input = raw_step.get("action_input", {})
-                    tool_output = raw_step.get("observation", "")
+                if tool_name:
                     step_type = StepType.TOOL_EXECUTION
-
-            elif "action" in raw_step:
-                # Format: action only
-                tool_name = raw_step.get("action")
-                tool_input = raw_step.get("action_input", {})
-                tool_output = raw_step.get("observation", "")
-                content = f"Use {tool_name}"
-                step_type = StepType.TOOL_EXECUTION
-
+                elif content:
+                    step_type = StepType.REASONING
             else:
-                # Generic format
-                content = raw_step.get("content", str(raw_step))
+                # String format
+                content = str(raw_step)
 
             step = Step(
-                step_id=f"{file_id}_{trajectory_idx}_step_{i}",
+                step_id=f"toolbench_{idx}_step_{i}",
                 step_number=i,
                 step_type=step_type,
                 content=content,
                 tool_name=tool_name,
                 tool_input=tool_input,
                 tool_output=tool_output,
-                metadata=raw_step,
+                metadata=raw_step if isinstance(raw_step, dict) else {},
             )
             steps.append(step)
 
+        if not steps:
+            return None
+
         # Extract ground truth
-        expected_answer = data.get("final_answer", data.get("answer", None))
-        task_success = data.get("success", data.get("correct", None))
+        final_answer = item.get("answer", item.get("final_answer"))
+        task_success = item.get("success", item.get("correct"))
 
         ground_truth = GroundTruth(
             task_description=task_desc,
-            expected_answer=expected_answer,
+            expected_answer=final_answer,
             task_success=task_success,
-            success_criteria=data.get("success_criteria", "exact_match"),
-            difficulty=data.get("difficulty", None),
-            domain=data.get("domain", data.get("category", None)),
+            domain=item.get("category", item.get("domain")),
         )
 
-        # Create trajectory
-        trajectory_id = f"toolbench_{file_id}_{trajectory_idx}"
         trajectory = Trajectory(
-            trajectory_id=trajectory_id,
+            trajectory_id=f"toolbench_{idx}",
             benchmark="toolbench",
             steps=steps,
             ground_truth=ground_truth,
-            metadata={"source_file": file_id, "index": trajectory_idx},
+            metadata={"hf_index": idx},
         )
 
         return trajectory
 
     except Exception as e:
-        print(f"Warning: Failed to parse ToolBench trajectory {file_id}_{trajectory_idx}: {e}")
+        print(f"Warning: Failed to parse ToolBench item {idx}: {e}")
         return None
 
 
 def load_gaia_trajectories(
-    data_dir: str,
     max_trajectories: Optional[int] = None,
     min_steps: int = 1,
     max_steps: int = 100,
     difficulty: Optional[str] = None,
     random_seed: Optional[int] = 42,
+    split: str = "validation",
+    use_auth_token: Optional[str] = None,
 ) -> List[Trajectory]:
     """
-    Load trajectories from GAIA benchmark.
-
-    GAIA format assumptions:
-    - JSON or JSONL files with question-answer pairs
-    - Trajectories show multi-step reasoning with tool use
-    - Includes difficulty levels (Level 1, 2, 3)
+    Load trajectories from GAIA benchmark via Hugging Face.
 
     Args:
-        data_dir: Path to GAIA data directory
-        max_trajectories: Maximum number of trajectories to load (None = all)
+        max_trajectories: Maximum number of trajectories to load
         min_steps: Minimum number of steps required
         max_steps: Maximum number of steps allowed
-        difficulty: Filter by difficulty level (None = all levels)
-        random_seed: Random seed for sampling (None = no shuffling)
+        difficulty: Filter by difficulty level (None = all)
+        random_seed: Random seed for sampling
+        split: Dataset split (validation/test)
+        use_auth_token: HuggingFace token
 
     Returns:
         List of Trajectory objects
-
-    Raises:
-        FileNotFoundError: If data directory doesn't exist
-        ValueError: If data format is invalid
     """
-    data_path = Path(data_dir)
-    if not data_path.exists():
-        raise FileNotFoundError(f"GAIA data directory not found: {data_dir}")
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "datasets library not installed. "
+            "Run: pip install datasets"
+        )
+
+    # Get HF token
+    if use_auth_token is None:
+        use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+
+    try:
+        # Load GAIA dataset
+        # Dataset: "gaia-benchmark/GAIA"
+        dataset = load_dataset(
+            "gaia-benchmark/GAIA",
+            "2023_all",  # version
+            split=split,
+            token=use_auth_token,
+        )
+    except Exception as e:
+        print(f"Warning: Could not load GAIA from HF: {e}")
+        print("Falling back to empty dataset for testing")
+        return []
 
     trajectories = []
 
-    # Look for JSON/JSONL files
-    trajectory_files = list(data_path.glob("*.json")) + list(data_path.glob("*.jsonl"))
-
-    if not trajectory_files:
-        raise ValueError(f"No JSON/JSONL files found in {data_dir}")
-
-    # Load trajectories
-    for file_path in trajectory_files:
+    for idx, item in enumerate(dataset):
         try:
-            if file_path.suffix == ".jsonl":
-                with open(file_path, "r", encoding="utf-8") as f:
-                    for line_num, line in enumerate(f, 1):
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                traj = _parse_gaia_trajectory(data, file_path.stem, line_num)
-                                if traj:
-                                    trajectories.append(traj)
-                            except json.JSONDecodeError as e:
-                                print(f"Warning: Skipping invalid JSON in {file_path}:{line_num} - {e}")
-            else:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+            traj = _parse_gaia_item(item, idx)
+            if traj:
+                # Apply filters
+                if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
+                    continue
+                if (difficulty and
+                        traj.ground_truth.difficulty != difficulty):
+                    continue
 
-                if isinstance(data, list):
-                    for idx, item in enumerate(data):
-                        traj = _parse_gaia_trajectory(item, file_path.stem, idx)
-                        if traj:
-                            trajectories.append(traj)
-                else:
-                    traj = _parse_gaia_trajectory(data, file_path.stem, 0)
-                    if traj:
-                        trajectories.append(traj)
-
+                trajectories.append(traj)
         except Exception as e:
-            print(f"Warning: Error loading {file_path}: {e}")
+            print(f"Warning: Failed to parse trajectory {idx}: {e}")
             continue
 
-    # Filter by criteria
-    filtered = []
-    for traj in trajectories:
-        # Check step count
-        if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
-            continue
-
-        # Check difficulty if specified
-        if difficulty and traj.ground_truth.difficulty != difficulty:
-            continue
-
-        filtered.append(traj)
-
-    # Shuffle and sample if requested
+    # Shuffle and sample
     if random_seed is not None:
         random.seed(random_seed)
-        random.shuffle(filtered)
+        random.shuffle(trajectories)
 
     if max_trajectories is not None:
-        filtered = filtered[:max_trajectories]
+        trajectories = trajectories[:max_trajectories]
 
-    return filtered
+    return trajectories
 
 
-def _parse_gaia_trajectory(
-    data: Dict[str, Any],
-    file_id: str,
-    trajectory_idx: int,
+def _parse_gaia_item(
+    item: Dict[str, Any],
+    idx: int,
 ) -> Optional[Trajectory]:
-    """
-    Parse a single GAIA trajectory from JSON data.
-
-    GAIA format (example):
-    {
-        "question": "What is the GDP of France in 2022?",
-        "final_answer": "2.78 trillion USD",
-        "level": "Level 1",
-        "trajectory": [
-            {"type": "search", "query": "France GDP 2022", "result": "..."},
-            {"type": "extract", "content": "..."},
-            ...
-        ]
-    }
-
-    Args:
-        data: Trajectory data dictionary
-        file_id: Source file identifier
-        trajectory_idx: Index within file
-
-    Returns:
-        Trajectory object or None if parsing fails
-    """
+    """Parse GAIA dataset item to Trajectory."""
     try:
-        # Extract question
-        question = data.get("question", data.get("Question", "Unknown question"))
+        # GAIA has question and final_answer fields
+        question = item.get("Question", item.get("question"))
+        final_answer = item.get("Final answer", item.get("final_answer"))
+        level = item.get("Level", item.get("level"))
 
-        # Extract steps
-        raw_steps = data.get("trajectory", data.get("steps", []))
-        if not raw_steps:
-            # If no explicit trajectory, create minimal steps from question/answer
-            raw_steps = [{"content": "Answer the question", "type": "reasoning"}]
-
+        # GAIA doesn't have explicit trajectory steps in the dataset
+        # Create minimal trajectory structure
         steps = []
-        for i, raw_step in enumerate(raw_steps, 1):
-            # Determine step type
-            step_type_str = raw_step.get("type", "other")
-            step_type = _map_gaia_step_type(step_type_str)
 
-            # Extract content
-            content = raw_step.get("content", raw_step.get("query", raw_step.get("action", "")))
+        # If there's an annotator_metadata or steps field, parse it
+        if "Annotator Metadata" in item:
+            metadata = item["Annotator Metadata"]
+            if "Steps" in metadata:
+                raw_steps = metadata["Steps"]
+                for i, step_text in enumerate(raw_steps, 1):
+                    step = Step(
+                        step_id=f"gaia_{idx}_step_{i}",
+                        step_number=i,
+                        step_type=StepType.REASONING,
+                        content=step_text,
+                    )
+                    steps.append(step)
 
-            # Extract tool info
-            tool_name = raw_step.get("tool", raw_step.get("action", None))
-            tool_input = raw_step.get("input", raw_step.get("query", None))
-            tool_output = raw_step.get("result", raw_step.get("observation", None))
-
+        # If no steps, create a single reasoning step
+        if not steps:
             step = Step(
-                step_id=f"{file_id}_{trajectory_idx}_step_{i}",
-                step_number=i,
-                step_type=step_type,
-                content=content if content else f"{step_type_str} step",
-                tool_name=tool_name,
-                tool_input={"query": tool_input} if isinstance(tool_input, str) else tool_input,
-                tool_output=tool_output,
-                metadata=raw_step,
+                step_id=f"gaia_{idx}_step_1",
+                step_number=1,
+                step_type=StepType.REASONING,
+                content=f"Answer the question: {question}",
             )
             steps.append(step)
-
-        # Extract ground truth
-        final_answer = data.get("final_answer", data.get("Final answer", None))
-        difficulty = data.get("Level", data.get("level", None))
 
         ground_truth = GroundTruth(
             task_description=question,
             expected_answer=final_answer,
-            task_success=None,  # May need manual annotation
-            success_criteria="answer_correctness",
-            difficulty=difficulty,
-            domain=data.get("domain", "qa"),
+            difficulty=level,
+            domain="qa",
         )
 
-        # Create trajectory
-        trajectory_id = f"gaia_{file_id}_{trajectory_idx}"
         trajectory = Trajectory(
-            trajectory_id=trajectory_id,
+            trajectory_id=f"gaia_{idx}",
             benchmark="gaia",
             steps=steps,
             ground_truth=ground_truth,
-            metadata={"source_file": file_id, "index": trajectory_idx},
+            metadata={"hf_index": idx, "file_name": item.get("file_name")},
         )
 
         return trajectory
 
     except Exception as e:
-        print(f"Warning: Failed to parse GAIA trajectory {file_id}_{trajectory_idx}: {e}")
+        print(f"Warning: Failed to parse GAIA item {idx}: {e}")
         return None
 
 
-def _map_gaia_step_type(type_str: str) -> StepType:
-    """Map GAIA step type string to StepType enum."""
-    type_map = {
-        "search": StepType.TOOL_EXECUTION,
-        "retrieve": StepType.TOOL_EXECUTION,
-        "extract": StepType.TOOL_EXECUTION,
-        "reasoning": StepType.REASONING,
-        "plan": StepType.PLANNING,
-        "answer": StepType.FINAL_ANSWER,
-        "validation": StepType.VALIDATION,
-    }
-    return type_map.get(type_str.lower(), StepType.OTHER)
+def _parse_solution_string(solution: str) -> List[Dict[str, Any]]:
+    """
+    Parse solution string into steps (fallback for ToolBench).
+
+    This is a simple parser for when steps aren't explicitly structured.
+    """
+    # Simple split by common delimiters
+    lines = solution.split("\n")
+    steps = []
+
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            steps.append({"content": line})
+
+    return steps if steps else [{"content": solution}]
 
 
 def save_trajectories(trajectories: List[Trajectory], output_path: str) -> None:
@@ -439,6 +342,8 @@ def save_trajectories(trajectories: List[Trajectory], output_path: str) -> None:
         trajectories: List of Trajectory objects
         output_path: Path to output JSON file
     """
+    import json
+
     data = [traj.to_dict() for traj in trajectories]
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -454,6 +359,8 @@ def load_trajectories_from_json(json_path: str) -> List[Trajectory]:
     Returns:
         List of Trajectory objects
     """
+    import json
+
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return [Trajectory.from_dict(item) for item in data]

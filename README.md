@@ -29,15 +29,40 @@ Required environment variables:
 - `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (for Claude Bedrock)
 - `GPT_OSS_ENDPOINT`, `GPT_OSS_API_KEY` (for GPT-OSS 120B)
 
-### 3. Set Up Datasets
+### 3. Get HuggingFace Token
 
-Place ToolBench and GAIA datasets in their respective directories:
-- `data/toolbench/` - ToolBench trajectories (JSON/JSONL)
-- `data/gaia/` - GAIA benchmark data (JSON/JSONL)
+Datasets are loaded from HuggingFace (no manual download needed):
 
-See [data/README.md](data/README.md) for detailed setup instructions.
+1. Get token from: https://huggingface.co/settings/tokens
+2. Add to `.env`:
+   ```bash
+   HUGGINGFACE_TOKEN=your_token_here
+   ```
 
-### 4. Verify Pre-Requisites
+See [data/README.md](data/README.md) for dataset details.
+
+### 4. Set Up MongoDB
+
+Results are stored in MongoDB (not local files).
+
+**Option A - Local:**
+```bash
+brew install mongodb-community
+brew services start mongodb-community
+```
+
+**Option B - Atlas (Cloud):**
+Sign up at https://www.mongodb.com/cloud/atlas
+
+Add MongoDB URI to `.env`:
+```bash
+MONGODB_URI=mongodb://localhost:27017
+# or for Atlas:
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
+MONGODB_DATABASE=agent_judge_experiment
+```
+
+### 5. Verify Pre-Requisites
 
 ```bash
 python src/prereq_check.py
@@ -45,11 +70,12 @@ python src/prereq_check.py
 
 This checks:
 - ✓ Directory structure
-- ✓ Datasets available and parseable
+- ✓ MongoDB connection
+- ✓ HuggingFace token and dataset access
 - ✓ API access (Claude Bedrock, GPT-OSS)
 - ✓ Python dependencies installed
 
-### 5. Run Tests
+### 6. Run Tests
 
 ```bash
 pytest tests/ -v
