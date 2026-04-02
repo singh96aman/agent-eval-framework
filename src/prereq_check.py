@@ -231,10 +231,16 @@ class PrerequisiteChecker:
         return result
 
     def check_claude_bedrock_api(self) -> CheckResult:
-        """Check Claude-3.5-Sonnet on AWS Bedrock API access."""
+        """Check Claude-3.5-Sonnet on AWS Bedrock with test call."""
         try:
             import boto3
+            import json
             from botocore.exceptions import ClientError
+
+            model_id = os.getenv(
+                'AWS_BEDROCK_CLAUDE_3_5_SONNET',
+                'anthropic.claude-3-5-sonnet-20241022-v2:0'
+            )
 
             # Check AWS credentials
             try:
@@ -243,11 +249,11 @@ class PrerequisiteChecker:
 
                 if credentials is None:
                     result = CheckResult(
-                        check_name="Claude Bedrock API",
+                        check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=False,
                         message=(
                             "AWS credentials not found. "
-                            "Configure via AWS CLI or environment."
+                            "Configure via AWS CLI."
                         ),
                         details={"error": "NoCredentials"}
                     )
@@ -256,7 +262,7 @@ class PrerequisiteChecker:
 
             except Exception as e:
                 result = CheckResult(
-                    check_name="Claude Bedrock API",
+                    check_name="Claude 3.5 Sonnet (Bedrock)",
                     passed=False,
                     message=f"AWS credentials error: {str(e)}",
                     details={"error": str(e)}
@@ -264,41 +270,85 @@ class PrerequisiteChecker:
                 self.results.append(result)
                 return result
 
-            # Try to create Bedrock client
+            # Create Bedrock client and make test call
             try:
-                boto3.client(
+                client = boto3.client(
                     service_name='bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1')
                 )
 
-                result = CheckResult(
-                    check_name="Claude Bedrock API",
-                    passed=True,
-                    message=(
-                        "AWS credentials found, Bedrock client created. "
-                        "(Not tested with actual API call)"
-                    ),
-                    details={
-                        "region": os.getenv('AWS_REGION', 'us-east-1'),
-                        "model": "anthropic.claude-3-5-sonnet-20241022-v2:0"
-                    }
+                # Make "hello world" test call
+                test_payload = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 10,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Say 'Hello' in one word."
+                        }
+                    ]
+                }
+
+                response = client.invoke_model(
+                    modelId=model_id,
+                    body=json.dumps(test_payload)
                 )
+
+                response_body = json.loads(
+                    response['body'].read().decode('utf-8')
+                )
+
+                # Check response is valid
+                if 'content' in response_body:
+                    result = CheckResult(
+                        check_name="Claude 3.5 Sonnet (Bedrock)",
+                        passed=True,
+                        message=(
+                            "✓ Test call successful. "
+                            f"Model: {model_id.split('.')[-1]}"
+                        ),
+                        details={
+                            "region": os.getenv('AWS_REGION', 'us-east-1'),
+                            "model_id": model_id,
+                            "test_response": response_body['content'][0]['text'][:50]
+                        }
+                    )
+                else:
+                    result = CheckResult(
+                        check_name="Claude 3.5 Sonnet (Bedrock)",
+                        passed=False,
+                        message="Unexpected response format from model",
+                        details={"response": str(response_body)[:200]}
+                    )
 
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_msg = e.response.get('Error', {}).get('Message', '')
+
                 result = CheckResult(
-                    check_name="Claude Bedrock API",
+                    check_name="Claude 3.5 Sonnet (Bedrock)",
                     passed=False,
                     message=(
-                        f"Bedrock error: {error_code}. "
-                        "Check IAM permissions."
+                        f"Bedrock API error: {error_code}. "
+                        f"{error_msg[:100]}"
                     ),
-                    details={"error": error_code}
+                    details={
+                        "error_code": error_code,
+                        "model_id": model_id
+                    }
+                )
+
+            except Exception as e:
+                result = CheckResult(
+                    check_name="Claude 3.5 Sonnet (Bedrock)",
+                    passed=False,
+                    message=f"Test call failed: {str(e)[:100]}",
+                    details={"error": str(e)}
                 )
 
         except ImportError:
             result = CheckResult(
-                check_name="Claude Bedrock API",
+                check_name="Claude 3.5 Sonnet (Bedrock)",
                 passed=False,
                 message="boto3 not installed. Run: pip install boto3",
                 details={"error": "ImportError"}
@@ -308,35 +358,132 @@ class PrerequisiteChecker:
         return result
 
     def check_gpt_oss_api(self) -> CheckResult:
-        """Check GPT-OSS 120B API endpoint access."""
-        endpoint = os.getenv("GPT_OSS_ENDPOINT")
-        api_key = os.getenv("GPT_OSS_API_KEY")
+        """Check GPT-OSS via AWS Bedrock with test call."""
+        try:
+            import boto3
+            import json
+            from botocore.exceptions import ClientError
 
-        if not endpoint:
+            model_id = os.getenv('AWS_BEDROCK_GPT_OSS')
+
+            if not model_id:
+                result = CheckResult(
+                    check_name="GPT-OSS 120B (Bedrock)",
+                    passed=False,
+                    message=(
+                        "AWS_BEDROCK_GPT_OSS not set in .env. "
+                        "Set to Bedrock model ID for GPT-OSS."
+                    ),
+                    details={"env_var": "AWS_BEDROCK_GPT_OSS"}
+                )
+                self.results.append(result)
+                return result
+
+            # Check AWS credentials (reuse session)
+            try:
+                session = boto3.Session()
+                credentials = session.get_credentials()
+
+                if credentials is None:
+                    result = CheckResult(
+                        check_name="GPT-OSS 120B (Bedrock)",
+                        passed=False,
+                        message="AWS credentials not found.",
+                        details={"error": "NoCredentials"}
+                    )
+                    self.results.append(result)
+                    return result
+
+            except Exception as e:
+                result = CheckResult(
+                    check_name="GPT-OSS 120B (Bedrock)",
+                    passed=False,
+                    message=f"AWS credentials error: {str(e)}",
+                    details={"error": str(e)}
+                )
+                self.results.append(result)
+                return result
+
+            # Create Bedrock client and make test call
+            try:
+                client = boto3.client(
+                    service_name='bedrock-runtime',
+                    region_name=os.getenv('AWS_REGION', 'us-east-1')
+                )
+
+                # Make "hello world" test call
+                # Note: Payload format may vary by model
+                test_payload = {
+                    "prompt": "Say 'Hello' in one word.",
+                    "max_gen_len": 10,
+                    "temperature": 0.1,
+                }
+
+                response = client.invoke_model(
+                    modelId=model_id,
+                    body=json.dumps(test_payload)
+                )
+
+                response_body = json.loads(
+                    response['body'].read().decode('utf-8')
+                )
+
+                # Check response is valid (format depends on model)
+                if response_body:
+                    result = CheckResult(
+                        check_name="GPT-OSS 120B (Bedrock)",
+                        passed=True,
+                        message=(
+                            "✓ Test call successful. "
+                            f"Model: {model_id.split('.')[-1]}"
+                        ),
+                        details={
+                            "region": os.getenv('AWS_REGION', 'us-east-1'),
+                            "model_id": model_id,
+                            "test_response": str(response_body)[:50]
+                        }
+                    )
+                else:
+                    result = CheckResult(
+                        check_name="GPT-OSS 120B (Bedrock)",
+                        passed=False,
+                        message="Empty response from model",
+                        details={"response": str(response_body)}
+                    )
+
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_msg = e.response.get('Error', {}).get('Message', '')
+
+                result = CheckResult(
+                    check_name="GPT-OSS 120B (Bedrock)",
+                    passed=False,
+                    message=(
+                        f"Bedrock API error: {error_code}. "
+                        f"{error_msg[:100]}"
+                    ),
+                    details={
+                        "error_code": error_code,
+                        "model_id": model_id,
+                        "hint": "Verify model ID is correct for GPT-OSS on Bedrock"
+                    }
+                )
+
+            except Exception as e:
+                result = CheckResult(
+                    check_name="GPT-OSS 120B (Bedrock)",
+                    passed=False,
+                    message=f"Test call failed: {str(e)[:100]}",
+                    details={"error": str(e)}
+                )
+
+        except ImportError:
             result = CheckResult(
-                check_name="GPT-OSS 120B API",
+                check_name="GPT-OSS 120B (Bedrock)",
                 passed=False,
-                message=(
-                    "GPT_OSS_ENDPOINT not set. "
-                    "Set it in .env file."
-                ),
-                details={"env_var": "GPT_OSS_ENDPOINT"}
+                message="boto3 not installed. Run: pip install boto3",
+                details={"error": "ImportError"}
             )
-            self.results.append(result)
-            return result
-
-        result = CheckResult(
-            check_name="GPT-OSS 120B API",
-            passed=True,
-            message=(
-                f"Endpoint configured: {endpoint[:50]}... "
-                "(Not tested with actual API call)"
-            ),
-            details={
-                "endpoint": endpoint,
-                "api_key_set": bool(api_key)
-            }
-        )
 
         self.results.append(result)
         return result
