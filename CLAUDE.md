@@ -5,6 +5,8 @@ When user starts a new conversation, first check whether you are using AWS Bedro
 
 Note - PLEASE DO NOT CREATE TOO MANY FILES OR FILES THAT ARE NOT ORGANIZED AS PER INSTRUCTIONS
 
+WHEN COMMITTING, PLEASE DON'T COMMIT AS CLAUDE
+
 ### Instructions to the agent
 
 1. Read README.md, Agents.MD, and the task’s Requirements.MD before starting.
