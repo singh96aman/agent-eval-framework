@@ -253,7 +253,12 @@ class ExperimentRunner:
         return trajectories
 
     def _store_trajectories(self, trajectories: List[Trajectory]):
-        """Store trajectories in MongoDB."""
+        """
+        Store trajectories in MongoDB (pure cache).
+
+        NEW ARCHITECTURE: Trajectories are stored WITHOUT experiment_id.
+        They are pure cache entries that can be reused across experiments.
+        """
         # Use experiment_id from config (already set in __init__)
         # This is either from config or generated from config hash
 
@@ -266,34 +271,38 @@ class ExperimentRunner:
         }
         mongo_experiment_id = self.storage.create_experiment(experiment_config)
         print(f"   ✓ Created experiment: {self.experiment_id}")
-        print(f"   ✓ MongoDB record ID: {mongo_experiment_id}")
 
-        # Store trajectories
+        # Store trajectories (pure cache, NO experiment_id)
         stored_count = 0
+        cache_hits = 0
+
         for traj in trajectories:
-            # Convert Trajectory object to dict and add experiment_id
+            # Convert Trajectory object to dict (NO experiment_id!)
             traj_dict = traj.to_dict()
-            traj_dict["experiment_id"] = mongo_experiment_id
             traj_dict["is_perturbed"] = False  # Original trajectory
 
-            self.storage.save_trajectory(trajectory=traj_dict)
-            stored_count += 1
+            # Check if already in cache
+            existing = self.storage.get_trajectory(traj_dict["trajectory_id"])
+            if existing:
+                cache_hits += 1
+            else:
+                self.storage.save_trajectory(trajectory=traj_dict)
+                stored_count += 1
 
-            if stored_count % 10 == 0:
-                print(f"   ... stored {stored_count}/{len(trajectories)}")
+            if (stored_count + cache_hits) % 10 == 0:
+                print(f"   ... processed {stored_count + cache_hits}/{len(trajectories)} (new: {stored_count}, cached: {cache_hits})")
 
-        print(f"   ✓ Stored {stored_count} trajectories")
+        print(f"   ✓ Stored {stored_count} new trajectories")
+        print(f"   ✓ Cache hits: {cache_hits}")
         print()
 
-        # Verify data was actually saved to MongoDB
-        print("🔍 Verifying MongoDB storage...")
+        # Verify data in cache
+        print("🔍 Verifying trajectory cache...")
         try:
-            saved_count = self.storage.trajectories.count_documents({
-                "experiment_id": mongo_experiment_id
+            total_cached = self.storage.trajectories.count_documents({
+                "is_perturbed": False
             })
-            print(f"   ✓ Verified: {saved_count} trajectories in MongoDB")
-            if saved_count != stored_count:
-                print(f"   ⚠️  WARNING: Mismatch! Stored {stored_count} but found {saved_count}")
+            print(f"   ✓ Total original trajectories in cache: {total_cached}")
         except Exception as e:
             print(f"   ⚠️  Could not verify: {e}")
         print()
@@ -302,8 +311,8 @@ class ExperimentRunner:
         print("✅ TRAJECTORY LOADING COMPLETE")
         print("=" * 70)
         print(f"Experiment ID: {self.experiment_id}")
-        print(f"MongoDB Record ID: {mongo_experiment_id}")
-        print(f"Trajectories: {stored_count}")
+        print(f"New trajectories cached: {stored_count}")
+        print(f"Cache hits: {cache_hits}")
         print(f"Database: {self.storage.database_name}")
         print()
 

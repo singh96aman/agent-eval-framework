@@ -42,6 +42,8 @@ Thumbs.db
 .claude/
 results/*
 !results/.gitkeep
+logs/
+*.log
 
 # Ignore ALL data/ folder contents except the main README
 data/*

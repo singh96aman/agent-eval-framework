@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 
@@ -22,6 +23,32 @@ from typing import Dict, Any
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from src.experiment_runner import ExperimentRunner
+
+
+class TeeOutput:
+    """Write to both file and console (like Unix tee command)."""
+
+    def __init__(self, file_path: Path, mode='a'):
+        self.file = open(file_path, mode)
+        self.stdout = sys.stdout
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.file.write(message)
+        self.file.flush()  # Ensure immediate write
+
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 def load_config(config_name: str) -> Dict[str, Any]:
@@ -214,30 +241,71 @@ Examples:
 
     print()
 
-    # Create and run experiment
-    try:
-        runner = ExperimentRunner(config)
-        runner.run()
+    # Set up logging to file
+    experiment_info = config.get('experiment', {})
+    experiment_name = experiment_info.get('name', 'experiment')
+    experiment_id = experiment_info.get('experiment_id', args.config)
+    verbose = config.get('execution', {}).get('verbose', args.verbose)
 
-        print()
-        print("=" * 70)
-        print("✅ EXPERIMENT PHASE COMPLETE")
-        print("=" * 70)
+    # Create logs directory
+    logs_dir = Path(__file__).parent / "logs"
+    logs_dir.mkdir(exist_ok=True)
 
-    except KeyboardInterrupt:
-        print()
-        print("⚠️  Interrupted by user")
-        sys.exit(130)
-    except Exception as e:
-        print()
-        print("=" * 70)
-        print("❌ EXPERIMENT FAILED")
-        print("=" * 70)
-        print(f"Error: {e}")
-        print()
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    # Create log filename using config name (cleaner than experiment_id which may contain dates)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_config_name = args.config.replace("/", "_").replace(":", "_")
+    log_filename = f"{safe_config_name}_{timestamp}.log"
+    log_path = logs_dir / log_filename
+
+    print(f"📝 Logging to: {log_path}")
+    print()
+
+    # Redirect stdout to both console and file
+    with TeeOutput(log_path, mode='a') as tee:
+        original_stdout = sys.stdout
+        sys.stdout = tee
+
+        try:
+            print("=" * 70)
+            print("EXPERIMENT LOG")
+            print("=" * 70)
+            print(f"Experiment: {experiment_name}")
+            print(f"Experiment ID: {experiment_id}")
+            print(f"Config: {args.config}")
+            print(f"Runner: {config.get('execution', {}).get('runner', 'N/A')}")
+            print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Log file: {log_path}")
+            print("=" * 70)
+            print()
+
+            # Create and run experiment
+            runner = ExperimentRunner(config)
+            runner.run()
+
+            print()
+            print("=" * 70)
+            print("✅ EXPERIMENT PHASE COMPLETE")
+            print("=" * 70)
+
+        except KeyboardInterrupt:
+            print()
+            print("⚠️  Interrupted by user")
+            sys.stdout = original_stdout
+            sys.exit(130)
+        except Exception as e:
+            print()
+            print("=" * 70)
+            print("❌ EXPERIMENT FAILED")
+            print("=" * 70)
+            print(f"Error: {e}")
+            print()
+            import traceback
+            traceback.print_exc()
+            sys.stdout = original_stdout
+            sys.exit(1)
+        finally:
+            # Restore stdout
+            sys.stdout = original_stdout
 
 
 if __name__ == "__main__":

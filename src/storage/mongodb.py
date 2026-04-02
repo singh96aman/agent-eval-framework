@@ -69,6 +69,7 @@ class MongoDBStorage:
 
         # Collection references
         self.trajectories = self.db["trajectories"]
+        self.perturbations = self.db["perturbations"]  # NEW!
         self.annotations = self.db["annotations"]
         self.judge_evaluations = self.db["judge_evaluations"]
         self.ccg_scores = self.db["ccg_scores"]
@@ -82,32 +83,42 @@ class MongoDBStorage:
         Create indexes on collections for efficient queries.
 
         CRITICAL: Foreign key indexes for O(1) lookups and pagination.
-        Without these indexes, queries by experiment_id would be O(n).
+
+        NEW ARCHITECTURE:
+        - Trajectories: Pure cache, NO experiment_id
+        - Perturbations: Links experiment → original → perturbed
+        - All downstream entities: Have experiment_id
         """
-        # Trajectories: indexed by ID, benchmark, and FOREIGN KEY
+        # Trajectories: Pure cache layer (NO experiment_id!)
         self.trajectories.create_index([("trajectory_id", ASCENDING)], unique=True)
-        self.trajectories.create_index([("experiment_id", ASCENDING)])  # Foreign key!
         self.trajectories.create_index([("benchmark", ASCENDING)])
         self.trajectories.create_index([("is_perturbed", ASCENDING)])
-        self.trajectories.create_index([
-            ("experiment_id", ASCENDING),
-            ("is_perturbed", ASCENDING)
-        ])  # Compound index for filtered queries
+        self.trajectories.create_index([("original_trajectory_id", ASCENDING)])
 
-        # Annotations: indexed by trajectory ID and FOREIGN KEY
+        # Perturbations: Experiment-scoped (NEW collection!)
+        self.perturbations.create_index([("perturbation_id", ASCENDING)], unique=True)
+        self.perturbations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
+        self.perturbations.create_index([("original_trajectory_id", ASCENDING)])  # FK to trajectories
+        self.perturbations.create_index([("perturbed_trajectory_id", ASCENDING)])  # FK to trajectories
+        self.perturbations.create_index([
+            ("perturbation_type", ASCENDING),
+            ("perturbation_position", ASCENDING)
+        ])  # Compound index for analysis queries
+
+        # Annotations: indexed by trajectory ID and experiment FK
         self.annotations.create_index([("annotation_id", ASCENDING)], unique=True)
-        self.annotations.create_index([("experiment_id", ASCENDING)])  # Foreign key!
-        self.annotations.create_index([("trajectory_id", ASCENDING)])  # Foreign key!
+        self.annotations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
+        self.annotations.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
         self.annotations.create_index([("annotator", ASCENDING)])
         self.annotations.create_index([
             ("experiment_id", ASCENDING),
             ("trajectory_id", ASCENDING)
         ])  # Compound index
 
-        # Judge evaluations: indexed by trajectory, judge, and FOREIGN KEY
+        # Judge evaluations: indexed by trajectory, judge, and experiment FK
         self.judge_evaluations.create_index([("evaluation_id", ASCENDING)], unique=True)
-        self.judge_evaluations.create_index([("experiment_id", ASCENDING)])  # Foreign key!
-        self.judge_evaluations.create_index([("trajectory_id", ASCENDING)])  # Foreign key!
+        self.judge_evaluations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
+        self.judge_evaluations.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
         self.judge_evaluations.create_index([
             ("trajectory_id", ASCENDING),
             ("judge_model", ASCENDING)
@@ -117,12 +128,12 @@ class MongoDBStorage:
             ("judge_model", ASCENDING)
         ])  # Filter by experiment and judge
 
-        # CCG scores: indexed by experiment and condition with FOREIGN KEYS
+        # CCG scores: indexed by experiment and condition with FKs
         self.ccg_scores.create_index([("ccg_id", ASCENDING)], unique=True)
-        self.ccg_scores.create_index([("experiment_id", ASCENDING)])  # Foreign key!
-        self.ccg_scores.create_index([("trajectory_id", ASCENDING)])  # Foreign key!
-        self.ccg_scores.create_index([("annotation_id", ASCENDING)])  # Foreign key!
-        self.ccg_scores.create_index([("evaluation_id", ASCENDING)])  # Foreign key!
+        self.ccg_scores.create_index([("experiment_id", ASCENDING)])  # FK to experiments
+        self.ccg_scores.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
+        self.ccg_scores.create_index([("annotation_id", ASCENDING)])  # FK to annotations
+        self.ccg_scores.create_index([("evaluation_id", ASCENDING)])  # FK to evaluations
         self.ccg_scores.create_index([
             ("perturbation_type", ASCENDING),
             ("perturbation_position", ASCENDING)
@@ -213,12 +224,23 @@ class MongoDBStorage:
 
     def get_perturbed_trajectories(
         self,
-        experiment_id: Optional[str] = None
+        benchmark: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get all perturbed trajectories, optionally filtered by experiment."""
+        """
+        Get all perturbed trajectories from cache.
+
+        NOTE: To get perturbed trajectories for a specific experiment,
+        use get_perturbations_by_experiment() instead.
+
+        Args:
+            benchmark: Filter by benchmark (optional)
+
+        Returns:
+            List of perturbed trajectory dicts
+        """
         query = {"is_perturbed": True}
-        if experiment_id:
-            query["experiment_id"] = experiment_id
+        if benchmark:
+            query["benchmark"] = benchmark
         return list(self.trajectories.find(query))
 
     def get_trajectories_by_experiment(
@@ -231,7 +253,8 @@ class MongoDBStorage:
         """
         Get trajectories for a specific experiment with pagination.
 
-        Uses foreign key index for O(1) lookup.
+        NEW ARCHITECTURE: Queries via perturbations collection to find
+        trajectories used in this experiment.
 
         Args:
             experiment_id: Experiment ID
@@ -242,13 +265,33 @@ class MongoDBStorage:
         Returns:
             List of trajectory dicts
         """
-        query = {"experiment_id": experiment_id}
-        if is_perturbed is not None:
-            query["is_perturbed"] = is_perturbed
+        # Get perturbations for this experiment
+        perturbations = list(self.perturbations.find({"experiment_id": experiment_id}))
 
-        cursor = self.trajectories.find(query).skip(skip)
+        if not perturbations:
+            return []
+
+        # Extract trajectory IDs
+        if is_perturbed is True:
+            # Only perturbed
+            trajectory_ids = [p["perturbed_trajectory_id"] for p in perturbations]
+        elif is_perturbed is False:
+            # Only originals (unique)
+            trajectory_ids = list(set([p["original_trajectory_id"] for p in perturbations]))
+        else:
+            # Both originals and perturbed
+            original_ids = [p["original_trajectory_id"] for p in perturbations]
+            perturbed_ids = [p["perturbed_trajectory_id"] for p in perturbations]
+            trajectory_ids = list(set(original_ids + perturbed_ids))
+
+        # Get trajectories by IDs with pagination
+        cursor = self.trajectories.find({
+            "trajectory_id": {"$in": trajectory_ids}
+        }).skip(skip)
+
         if limit:
             cursor = cursor.limit(limit)
+
         return list(cursor)
 
     def count_trajectories(
@@ -259,6 +302,9 @@ class MongoDBStorage:
         """
         Count trajectories matching criteria.
 
+        NEW ARCHITECTURE: If experiment_id is provided, queries via
+        perturbations collection.
+
         Args:
             experiment_id: Filter by experiment (optional)
             is_perturbed: Filter by perturbed status (optional)
@@ -266,12 +312,142 @@ class MongoDBStorage:
         Returns:
             Count of matching trajectories
         """
+        if experiment_id:
+            # Query via perturbations
+            perturbations = list(self.perturbations.find({"experiment_id": experiment_id}))
+
+            if not perturbations:
+                return 0
+
+            # Extract trajectory IDs
+            if is_perturbed is True:
+                trajectory_ids = [p["perturbed_trajectory_id"] for p in perturbations]
+            elif is_perturbed is False:
+                trajectory_ids = list(set([p["original_trajectory_id"] for p in perturbations]))
+            else:
+                original_ids = [p["original_trajectory_id"] for p in perturbations]
+                perturbed_ids = [p["perturbed_trajectory_id"] for p in perturbations]
+                trajectory_ids = list(set(original_ids + perturbed_ids))
+
+            return len(trajectory_ids)
+        else:
+            # Direct query on trajectories
+            query = {}
+            if is_perturbed is not None:
+                query["is_perturbed"] = is_perturbed
+            return self.trajectories.count_documents(query)
+
+    # === Perturbation Storage (NEW!) ===
+
+    def save_perturbation(self, perturbation: Dict[str, Any]) -> str:
+        """
+        Save a perturbation record linking experiment to trajectories.
+
+        Expected fields:
+        - perturbation_id: str (unique)
+        - experiment_id: str (FK to experiments)
+        - original_trajectory_id: str (FK to trajectories)
+        - perturbed_trajectory_id: str (FK to trajectories)
+        - perturbation_type: str (planning, tool_selection, parameter)
+        - perturbation_position: str (early, middle, late)
+        - perturbation_config: Dict (method, step_number, etc.)
+
+        Returns:
+            Perturbation ID
+        """
+        perturbation["created_at"] = datetime.utcnow()
+
+        try:
+            result = self.perturbations.insert_one(perturbation)
+            return perturbation["perturbation_id"]
+        except DuplicateKeyError:
+            # Update existing
+            self.perturbations.replace_one(
+                {"perturbation_id": perturbation["perturbation_id"]},
+                perturbation
+            )
+            return perturbation["perturbation_id"]
+
+    def save_perturbations_bulk(self, perturbations: List[Dict[str, Any]]) -> int:
+        """
+        Save multiple perturbation records in bulk.
+
+        Args:
+            perturbations: List of perturbation dicts
+
+        Returns:
+            Number of perturbations saved
+        """
+        for pert in perturbations:
+            pert["created_at"] = datetime.utcnow()
+
+        if not perturbations:
+            return 0
+
+        try:
+            result = self.perturbations.insert_many(perturbations, ordered=False)
+            return len(result.inserted_ids)
+        except Exception as e:
+            print(f"Warning: Bulk perturbation insert partially failed: {e}")
+            return 0
+
+    def get_perturbation(self, perturbation_id: str) -> Optional[Dict[str, Any]]:
+        """Get perturbation by ID."""
+        return self.perturbations.find_one({"perturbation_id": perturbation_id})
+
+    def get_perturbations_by_experiment(
+        self,
+        experiment_id: str,
+        skip: int = 0,
+        limit: Optional[int] = None,
+        perturbation_type: Optional[str] = None,
+        perturbation_position: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all perturbations for a specific experiment.
+
+        Args:
+            experiment_id: Experiment ID
+            skip: Number of records to skip (for pagination)
+            limit: Max number of records to return
+            perturbation_type: Filter by type (optional)
+            perturbation_position: Filter by position (optional)
+
+        Returns:
+            List of perturbation dicts
+        """
+        query = {"experiment_id": experiment_id}
+        if perturbation_type:
+            query["perturbation_type"] = perturbation_type
+        if perturbation_position:
+            query["perturbation_position"] = perturbation_position
+
+        cursor = self.perturbations.find(query).skip(skip)
+        if limit:
+            cursor = cursor.limit(limit)
+        return list(cursor)
+
+    def count_perturbations(
+        self,
+        experiment_id: Optional[str] = None,
+        perturbation_type: Optional[str] = None
+    ) -> int:
+        """
+        Count perturbations matching criteria.
+
+        Args:
+            experiment_id: Filter by experiment (optional)
+            perturbation_type: Filter by type (optional)
+
+        Returns:
+            Count of matching perturbations
+        """
         query = {}
         if experiment_id:
             query["experiment_id"] = experiment_id
-        if is_perturbed is not None:
-            query["is_perturbed"] = is_perturbed
-        return self.trajectories.count_documents(query)
+        if perturbation_type:
+            query["perturbation_type"] = perturbation_type
+        return self.perturbations.count_documents(query)
 
     # === Annotation Storage ===
 

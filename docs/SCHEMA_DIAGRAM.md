@@ -17,62 +17,73 @@
 │                                                                       │
 └───────────────────────────────┬───────────────────────────────────────┘
                                 │
-                                │ SHA256(entire_config)
-                                ▼
-                    ┌────────────────────────┐
-                    │   experiment_hash      │
-                    │   "a3f5b2c1..."       │
-                    └────────────────────────┘
-                                │
-                                │ Used as primary key
+                                │ Defines experiment
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        EXPERIMENTS COLLECTION                         │
 │                                                                       │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  _id: ObjectId("...")                                       │   │
-│  │  experiment_hash: "a3f5b2c1..."          ◄─── Primary Key   │   │
-│  │                                                              │   │
+│  │  experiment_id: "exp_poc_toolbench_20260402" ◄─ Primary Key │   │
 │  │  config: { ...full JSON... }                                │   │
 │  │  status: "in_progress"                                      │   │
-│  │                                                              │   │
-│  │  ⚠️  NO trajectory_refs array!                              │   │
-│  │  ⚠️  Relationship stored via foreign key in trajectories    │   │
-│  │                                                              │   │
-│  │  progress: {                             ◄─── Only counts   │   │
-│  │    trajectories_loaded: 50,                  not IDs!       │   │
+│  │  progress: {                                                │   │
+│  │    trajectories_loaded: 50,                                 │   │
+│  │    perturbations_generated: 450,                            │   │
 │  │    annotations_completed: 25,                               │   │
 │  │    evaluations_completed: 150                               │   │
 │  │  }                                                           │   │
-│  │                                                              │   │
 │  │  created_at: "2026-04-02T12:00:00Z"                         │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                       │
 └───────────────────────────────┬───────────────────────────────────────┘
                                 │
-                                │ Linked via experiment_id (foreign key)
-                                │ NOT via array! See trajectories below
+                                │ References trajectories via
+                                │ downstream entities (perturbations, etc.)
                                 ▼
         ┌─────────────────────────────────────────────────┐
-        │  Query: db.trajectories.find({                  │
-        │    experiment_id: "a3f5b2c1..."                 │
-        │  })                                             │
+        │  Pure Cache Layer - NO experiment references!   │
         └─────────────────────────────────────────────────┘
                                 │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    TRAJECTORIES (Pure Cache)                          │
+│                   ⚠️  NO experiment_id field!                         │
+├─────────────────────────────────────────────────────────────────────┤
+│  trajectory_id (PK) - Unique identifier                              │
+│  cache_key {...} - What makes this trajectory unique                 │
+│  trajectory_data {...} - Steps, ground truth, etc.                   │
+│  benchmark - "toolbench", "gaia", etc.                               │
+│  is_perturbed - true/false                                           │
+│  original_trajectory_id - (if perturbed, FK to original)             │
+│  stored_at - When cached                                             │
+│                                                                       │
+│  Used by multiple experiments with NO coupling!                      │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │
+                                │ Referenced by experiment-scoped entities
+                                ▼
         ┌───────────────────────┼───────────────────────┐
         │                       │                       │
         ▼                       ▼                       ▼
-   traj_001               traj_002                 traj_003
-   experiment_id:         experiment_id:           experiment_id:
-   "a3f5b2c1..."         "a3f5b2c1..."           "a3f5b2c1..."
-   (Original)             (Perturbed)              (Perturbed)
+   PERTURBATIONS          ANNOTATIONS            JUDGE_EVALUATIONS
+   (has exp_id)          (has exp_id)           (has exp_id)
 ```
+
+---
+
+## Key Design Principle
+
+**Trajectories = Pure Cache (Zero Experiment Coupling)**
+
+- Trajectories are stored once and referenced by multiple experiments
+- All experiment context lives in **downstream entities**
+- Query pattern: `db.perturbations.find({experiment_id: "exp_B"})` → get trajectory_ids → lookup trajectories
 
 ---
 
 ## Detailed Collection Schemas
 
-### 1️⃣ EXPERIMENTS Collection (Metadata + References)
+### 1️⃣ EXPERIMENTS Collection (Metadata Only)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -83,8 +94,8 @@
 │  │  Document Structure                                  │     │
 │  ├──────────────────────────────────────────────────────┤     │
 │  │                                                      │     │
-│  │  experiment_hash: "a3f5b2c189d7e4f1..."            │     │
-│  │  └─ SHA256 of entire config JSON                   │     │
+│  │  experiment_id: "exp_poc_toolbench_20260402"       │     │
+│  │  └─ User-provided or auto-generated                │     │
 │  │  └─ UNIQUE INDEX                                    │     │
 │  │                                                      │     │
 │  │  config: {                                          │     │
@@ -98,17 +109,10 @@
 │  │  status: "in_progress"                              │     │
 │  │  └─ created | in_progress | completed | failed      │     │
 │  │                                                      │     │
-│  │  ⚠️  NO ARRAYS OF IDS! Avoids 16MB limit            │     │
-│  │                                                      │     │
-│  │  To get trajectories for this experiment:           │     │
-│  │    db.trajectories.find({                           │     │
-│  │      experiment_id: "a3f5b2c1..."                   │     │
-│  │    })                                                │     │
-│  │  ↑ Uses INDEX for O(1) lookup                       │     │
-│  │                                                      │     │
 │  │  progress: {                                        │     │
-│  │    trajectories_loaded: 50,      ◄─ Just counts    │     │
-│  │    annotations_completed: 25,        not IDs!       │     │
+│  │    trajectories_loaded: 50,      ◄─ Counts only    │     │
+│  │    perturbations_generated: 450,                    │     │
+│  │    annotations_completed: 25,                       │     │
 │  │    evaluations_completed: 150                       │     │
 │  │  }                                                   │     │
 │  │                                                      │     │
@@ -118,7 +122,7 @@
 │  └──────────────────────────────────────────────────────┘     │
 │                                                                │
 │  Indexes:                                                      │
-│    - experiment_hash (unique)                                  │
+│    - experiment_id (unique)                                    │
 │    - status                                                    │
 │    - created_at (desc)                                         │
 │                                                                │
@@ -127,20 +131,20 @@
 
 ---
 
-### 2️⃣ TRAJECTORIES Collection (Cached Data)
+### 2️⃣ TRAJECTORIES Collection (Pure Cache - NO Experiment References!)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │  Collection: trajectories                                      │
+│  ⚠️  NO experiment_id field - Pure cache layer!                │
 ├────────────────────────────────────────────────────────────────┤
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │  Original Trajectory                                 │     │
 │  ├──────────────────────────────────────────────────────┤     │
 │  │                                                      │     │
-│  │  trajectory_hash: "d7e9f1a289c4b3e2..."            │     │
-│  │  └─ SHA256 of cache_key                            │     │
-│  │  └─ UNIQUE INDEX                                    │     │
+│  │  trajectory_id: "traj_toolbench_123"               │     │
+│  │  └─ UNIQUE INDEX (Primary Key)                     │     │
 │  │                                                      │     │
 │  │  cache_key: {                                       │     │
 │  │    benchmark: "toolbench",                          │     │
@@ -153,7 +157,7 @@
 │  │    is_perturbed: false,                             │     │
 │  │    perturbation: null                               │     │
 │  │  }                                                   │     │
-│  │  └─ Parameters that uniquely identify this          │     │
+│  │  └─ What makes this trajectory unique               │     │
 │  │                                                      │     │
 │  │  trajectory_data: {                                 │     │
 │  │    steps: [                                         │     │
@@ -179,63 +183,129 @@
 │  │    }                                                │     │
 │  │  }                                                   │     │
 │  │                                                      │     │
-│  │  experiment_id: "a3f5b2c1..."  ◄─ Foreign key!       │     │
-│  │  └─ Links back to experiments collection            │     │
-│  │  └─ INDEXED for fast queries                        │     │
+│  │  benchmark: "toolbench"  ◄─ Indexed for queries     │     │
+│  │  is_perturbed: false                                │     │
+│  │  original_trajectory_id: null                       │     │
 │  │                                                      │     │
-│  │  ⚠️  NOT an array! Single value only                │     │
-│  │  Each trajectory belongs to ONE experiment          │     │
-│  │                                                      │     │
-│  │  first_cached: "2026-04-02T12:00:00Z"              │     │
-│  │  last_accessed: "2026-04-05T15:30:00Z"             │     │
-│  │  access_count: 5                                    │     │
+│  │  stored_at: "2026-04-02T12:00:00Z"                 │     │
 │  │                                                      │     │
 │  └──────────────────────────────────────────────────────┘     │
 │                                                                │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐     │
-│  │  Perturbed Trajectory                                │     │
+│  │  Perturbed Trajectory (Still Pure Cache!)           │     │
 │  ├──────────────────────────────────────────────────────┤     │
 │  │                                                      │     │
-│  │  trajectory_hash: "e8f2a3b4c5d6e7f8..."            │     │
+│  │  trajectory_id: "traj_perturbed_e8f2a3b4"          │     │
 │  │                                                      │     │
 │  │  cache_key: {                                       │     │
-│  │    original_trajectory_hash: "d7e9f1a2...", ◄────┐  │     │
-│  │    perturbation_type: "planning",             │  │     │
-│  │    perturbation_position: "early",            │  │     │
-│  │    perturbation_params: {                     │  │     │
-│  │      method: "goal_substitution"              │  │     │
-│  │    }                                          │  │     │
-│  │  }                                            │  │     │
-│  │  └─ Links to original via hash               │  │     │
-│  │                                                │  │     │
-│  │  trajectory_data: {                            │  │     │
-│  │    steps: [                                    │  │     │
-│  │      { ... modified step 2 ... },             │  │     │
-│  │      { ... },                                  │  │     │
-│  │      ...                                       │  │     │
-│  │    ],                                          │  │     │
-│  │    ground_truth: { ... }                      │  │     │
-│  │  }                                             │  │     │
-│  │                                                │  │     │
-│  │  experiment_id: "a3f5b2c1..."  ◄─ Foreign key  │  │     │
-│  │  first_cached: "2026-04-02T13:00:00Z"        │  │     │
-│  │  access_count: 1                              │  │     │
-│  │                                                │  │     │
-│  └────────────────────────────────────────────────│──┘     │
-│                                                    │        │
-│  Indexes:                                         │        │
-│    - trajectory_hash (unique)                     │        │
-│    - experiment_id ◄─ CRITICAL for fast queries  │        │
-│    - cache_key.benchmark                          │        │
-│    - cache_key.original_trajectory_hash  ─────────┘        │
-│                                                            │
-└────────────────────────────────────────────────────────────┘
+│  │    original_trajectory_id: "traj_toolbench_123",   │     │
+│  │    perturbation_type: "planning",                   │     │
+│  │    perturbation_position: "early",                  │     │
+│  │    perturbation_params: {                           │     │
+│  │      method: "goal_substitution"                    │     │
+│  │    }                                                │     │
+│  │  }                                                   │     │
+│  │                                                      │     │
+│  │  trajectory_data: {                                 │     │
+│  │    steps: [                                         │     │
+│  │      { ... modified step 2 ... },                   │     │
+│  │      { ... },                                       │     │
+│  │      ...                                            │     │
+│  │    ],                                               │     │
+│  │    ground_truth: { ... }                           │     │
+│  │  }                                                   │     │
+│  │                                                      │     │
+│  │  benchmark: "toolbench"                             │     │
+│  │  is_perturbed: true                                 │     │
+│  │  original_trajectory_id: "traj_toolbench_123"      │     │
+│  │                                                      │     │
+│  │  stored_at: "2026-04-02T13:00:00Z"                 │     │
+│  │                                                      │     │
+│  │  ⚠️  NO experiment_id - Experiment context is in    │     │
+│  │      the perturbations collection!                  │     │
+│  │                                                      │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                                                                │
+│  Indexes:                                                      │
+│    - trajectory_id (unique) ◄─ Primary key                    │
+│    - benchmark                                                 │
+│    - is_perturbed                                              │
+│    - original_trajectory_id ◄─ Link perturbed → original      │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 3️⃣ ANNOTATIONS Collection
+### 3️⃣ PERTURBATIONS Collection (NEW! - Experiment-Scoped)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Collection: perturbations                                     │
+│  Links experiments → original → perturbed trajectories         │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ┌──────────────────────────────────────────────────────┐     │
+│  │                                                      │     │
+│  │  perturbation_id: "pert_a1b2c3d4"                   │     │
+│  │  └─ UNIQUE INDEX (Primary Key)                     │     │
+│  │                                                      │     │
+│  │  experiment_id: "exp_poc_toolbench_20260402"       │     │
+│  │  └─ FK to experiments ◄─ INDEXED                   │     │
+│  │                                                      │     │
+│  │  original_trajectory_id: "traj_toolbench_123"      │     │
+│  │  └─ FK to trajectories (original)                  │     │
+│  │                                                      │     │
+│  │  perturbed_trajectory_id: "traj_perturbed_e8f2"    │     │
+│  │  └─ FK to trajectories (perturbed version)         │     │
+│  │                                                      │     │
+│  │  perturbation_type: "planning"                      │     │
+│  │  └─ planning | tool_selection | parameter           │     │
+│  │                                                      │     │
+│  │  perturbation_position: "early"                     │     │
+│  │  └─ early | middle | late                           │     │
+│  │                                                      │     │
+│  │  perturbation_config: {                             │     │
+│  │    method: "goal_substitution",                     │     │
+│  │    step_number: 2,                                  │     │
+│  │    original_step: {...},                            │     │
+│  │    modified_step: {...}                             │     │
+│  │  }                                                   │     │
+│  │  └─ Full details of the perturbation               │     │
+│  │                                                      │     │
+│  │  created_at: "2026-04-02T13:00:00Z"                │     │
+│  │                                                      │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                                                                │
+│  Indexes:                                                      │
+│    - perturbation_id (unique)                                  │
+│    - experiment_id ◄─ CRITICAL for experiment queries         │
+│    - original_trajectory_id                                    │
+│    - perturbed_trajectory_id                                   │
+│    - (perturbation_type, perturbation_position) compound       │
+│                                                                │
+│  Query Pattern:                                                │
+│    # Get all perturbations for experiment B                    │
+│    perturbations = db.perturbations.find({                     │
+│      "experiment_id": "exp_B"                                  │
+│    })                                                          │
+│                                                                │
+│    # Get trajectory data                                       │
+│    for pert in perturbations:                                  │
+│      original = db.trajectories.find_one({                     │
+│        "trajectory_id": pert["original_trajectory_id"]         │
+│      })                                                        │
+│      perturbed = db.trajectories.find_one({                    │
+│        "trajectory_id": pert["perturbed_trajectory_id"]        │
+│      })                                                        │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 4️⃣ ANNOTATIONS Collection (Experiment-Scoped)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -244,49 +314,53 @@
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │                                                      │     │
-│  │  annotation_hash: "f9a3b5c289d7e4f1..."            │     │
-│  │  └─ UNIQUE INDEX                                    │     │
+│  │  annotation_id: "ann_f9a3b5c2"                      │     │
+│  │  └─ UNIQUE INDEX (Primary Key)                     │     │
 │  │                                                      │     │
-│  │  experiment_hash: "a3f5b2c1..." ──────┐            │     │
-│  │  trajectory_hash: "e8f2a3b4..." ──────┼─ Links     │     │
-│  │                                        │            │     │
-│  │  annotator: "human_researcher"         │            │     │
-│  │                                        │            │     │
-│  │  task_success_degradation: 1.0         │            │     │
-│  │  └─ 0.0 = no impact, 1.0 = failed      │            │     │
-│  │                                        │            │     │
-│  │  subsequent_errors: [                  │            │     │
-│  │    {                                   │            │     │
-│  │      step_number: 3,                   │            │     │
-│  │      error_type: "wrong_tool",         │            │     │
-│  │      severity: "high"                  │            │     │
-│  │    },                                  │            │     │
-│  │    {                                   │            │     │
-│  │      step_number: 4,                   │            │     │
-│  │      error_type: "cascade",            │            │     │
-│  │      severity: "critical"              │            │     │
-│  │    }                                   │            │     │
-│  │  ]                                     │            │     │
-│  │  subsequent_error_rate: 0.67           │            │     │
-│  │                                        │            │     │
-│  │  true_criticality_score: 110.0         │            │     │
-│  │  └─ TCS = (TSD × 100) + (SER × 10)     │            │     │
-│  │                                        │            │     │
-│  │  annotated_at: "2026-04-02T14:00:00Z" │            │     │
-│  │                                        │            │     │
-│  └────────────────────────────────────────┼────────────┘     │
-│                                           │                  │
-│  Indexes:                                 │                  │
-│    - annotation_hash (unique)             │                  │
-│    - experiment_hash ─────────────────────┘                  │
-│    - trajectory_hash                                         │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+│  │  experiment_id: "exp_poc_toolbench_20260402"       │     │
+│  │  └─ FK to experiments ◄─ INDEXED                   │     │
+│  │                                                      │     │
+│  │  trajectory_id: "traj_perturbed_e8f2"              │     │
+│  │  └─ FK to trajectories ◄─ INDEXED                  │     │
+│  │                                                      │     │
+│  │  annotator: "human_researcher"                      │     │
+│  │                                                      │     │
+│  │  task_success_degradation: 1.0                      │     │
+│  │  └─ 0.0 = no impact, 1.0 = failed                   │     │
+│  │                                                      │     │
+│  │  subsequent_errors: [                               │     │
+│  │    {                                                │     │
+│  │      step_number: 3,                                │     │
+│  │      error_type: "wrong_tool",                      │     │
+│  │      severity: "high"                               │     │
+│  │    },                                               │     │
+│  │    {                                                │     │
+│  │      step_number: 4,                                │     │
+│  │      error_type: "cascade",                         │     │
+│  │      severity: "critical"                           │     │
+│  │    }                                                │     │
+│  │  ]                                                   │     │
+│  │  subsequent_error_rate: 0.67                        │     │
+│  │                                                      │     │
+│  │  true_criticality_score: 110.0                      │     │
+│  │  └─ TCS = (TSD × 100) + (SER × 10)                  │     │
+│  │                                                      │     │
+│  │  annotated_at: "2026-04-02T14:00:00Z"              │     │
+│  │                                                      │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                                                                │
+│  Indexes:                                                      │
+│    - annotation_id (unique)                                    │
+│    - experiment_id ◄─ Query all annotations for experiment    │
+│    - trajectory_id                                             │
+│    - annotator                                                 │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 4️⃣ JUDGE_EVALUATIONS Collection
+### 5️⃣ JUDGE_EVALUATIONS Collection (Experiment-Scoped)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -295,58 +369,62 @@
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │                                                      │     │
-│  │  evaluation_hash: "g1b4c6d389e2f5a7..."            │     │
-│  │  └─ UNIQUE INDEX                                    │     │
+│  │  evaluation_id: "eval_g1b4c6d3"                     │     │
+│  │  └─ UNIQUE INDEX (Primary Key)                     │     │
 │  │                                                      │     │
-│  │  experiment_hash: "a3f5b2c1..." ──────┐            │     │
-│  │  trajectory_hash: "e8f2a3b4..." ──────┼─ Links     │     │
-│  │                                        │            │     │
-│  │  judge_model: "claude-3.5-sonnet"      │            │     │
-│  │  judge_provider: "aws_bedrock"         │            │     │
-│  │  sample_number: 1                      │            │     │
-│  │  └─ For multiple samples               │            │     │
-│  │                                        │            │     │
-│  │  overall_score: 85.0                   │            │     │
-│  │  └─ 0-100 scale                        │            │     │
-│  │                                        │            │     │
-│  │  errors_identified: [                  │            │     │
-│  │    {                                   │            │     │
-│  │      step_number: 2,                   │            │     │
-│  │      description: "Imprecise goal",    │            │     │
-│  │      severity: 4.0,                    │            │     │
-│  │      └─ 0-10 scale                     │            │     │
-│  │      reasoning: "..."                  │            │     │
-│  │    }                                   │            │     │
-│  │  ]                                     │            │     │
-│  │                                        │            │     │
-│  │  judge_penalty_score: 15.0             │            │     │
-│  │  └─ JPS = 100 - overall_score          │            │     │
-│  │                                        │            │     │
-│  │  raw_response: "The trajectory..."     │            │     │
-│  │  prompt_version: "v1.0"                │            │     │
-│  │                                        │            │     │
-│  │  api_call: {                           │            │     │
-│  │    tokens_input: 1234,                 │            │     │
-│  │    tokens_output: 567,                 │            │     │
-│  │    cost_usd: 0.025,                    │            │     │
-│  │    latency_ms: 2345                    │            │     │
-│  │  }                                     │            │     │
-│  │                                        │            │     │
-│  │  evaluated_at: "2026-04-02T15:00:00Z" │            │     │
-│  │                                        │            │     │
-│  └────────────────────────────────────────┼────────────┘     │
-│                                           │                  │
-│  Indexes:                                 │                  │
-│    - evaluation_hash (unique)             │                  │
-│    - experiment_hash ─────────────────────┘                  │
-│    - trajectory_hash, judge_model (compound)                 │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+│  │  experiment_id: "exp_poc_toolbench_20260402"       │     │
+│  │  └─ FK to experiments ◄─ INDEXED                   │     │
+│  │                                                      │     │
+│  │  trajectory_id: "traj_perturbed_e8f2"              │     │
+│  │  └─ FK to trajectories ◄─ INDEXED                  │     │
+│  │                                                      │     │
+│  │  judge_model: "claude-sonnet-4.5"                   │     │
+│  │  judge_provider: "aws_bedrock"                      │     │
+│  │  sample_number: 1                                   │     │
+│  │  └─ For multiple samples                            │     │
+│  │                                                      │     │
+│  │  overall_score: 85.0                                │     │
+│  │  └─ 0-100 scale                                     │     │
+│  │                                                      │     │
+│  │  errors_identified: [                               │     │
+│  │    {                                                │     │
+│  │      step_number: 2,                                │     │
+│  │      description: "Imprecise goal",                 │     │
+│  │      severity: 4.0,                                 │     │
+│  │      └─ 0-10 scale                                  │     │
+│  │      reasoning: "..."                               │     │
+│  │    }                                                │     │
+│  │  ]                                                   │     │
+│  │                                                      │     │
+│  │  judge_penalty_score: 15.0                          │     │
+│  │  └─ JPS = 100 - overall_score                       │     │
+│  │                                                      │     │
+│  │  raw_response: "The trajectory..."                  │     │
+│  │  prompt_version: "v1.0"                             │     │
+│  │                                                      │     │
+│  │  api_call: {                                        │     │
+│  │    tokens_input: 1234,                              │     │
+│  │    tokens_output: 567,                              │     │
+│  │    cost_usd: 0.025,                                 │     │
+│  │    latency_ms: 2345                                 │     │
+│  │  }                                                   │     │
+│  │                                                      │     │
+│  │  evaluated_at: "2026-04-02T15:00:00Z"              │     │
+│  │                                                      │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                                                                │
+│  Indexes:                                                      │
+│    - evaluation_id (unique)                                    │
+│    - experiment_id ◄─ Query all evaluations for experiment    │
+│    - (trajectory_id, judge_model) compound                     │
+│    - judge_model                                               │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 5️⃣ CCG_SCORES Collection
+### 6️⃣ CCG_SCORES Collection (Experiment-Scoped)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -355,18 +433,25 @@
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐     │
 │  │                                                      │     │
-│  │  ccg_hash: "h2c5d7e489f1a3b6..."                   │     │
-│  │  └─ UNIQUE INDEX                                    │     │
+│  │  ccg_id: "ccg_h2c5d7e4"                             │     │
+│  │  └─ UNIQUE INDEX (Primary Key)                     │     │
 │  │                                                      │     │
-│  │  experiment_hash: "a3f5b2c1..." ──────┐            │     │
-│  │  trajectory_hash: "e8f2a3b4..." ──────┤            │     │
-│  │  annotation_hash: "f9a3b5c2..." ──────┼─ Links     │     │
-│  │  evaluation_hash: "g1b4c6d3..." ──────┘            │     │
+│  │  experiment_id: "exp_poc_toolbench_20260402"       │     │
+│  │  └─ FK to experiments ◄─ INDEXED                   │     │
+│  │                                                      │     │
+│  │  trajectory_id: "traj_perturbed_e8f2"              │     │
+│  │  └─ FK to trajectories ◄─ INDEXED                  │     │
+│  │                                                      │     │
+│  │  annotation_id: "ann_f9a3b5c2"                      │     │
+│  │  └─ FK to annotations                               │     │
+│  │                                                      │     │
+│  │  evaluation_id: "eval_g1b4c6d3"                     │     │
+│  │  └─ FK to judge_evaluations                         │     │
 │  │                                                      │     │
 │  │  perturbation_type: "planning"                      │     │
 │  │  perturbation_position: "early"                     │     │
 │  │  benchmark: "toolbench"                             │     │
-│  │  judge_model: "claude-3.5-sonnet"                   │     │
+│  │  judge_model: "claude-sonnet-4.5"                   │     │
 │  │                                                      │     │
 │  │  true_criticality_score: 110.0                      │     │
 │  │  └─ From annotation                                 │     │
@@ -386,9 +471,12 @@
 │  └──────────────────────────────────────────────────────┘     │
 │                                                                │
 │  Indexes:                                                      │
-│    - ccg_hash (unique)                                         │
-│    - experiment_hash                                           │
-│    - perturbation_type, perturbation_position (compound)       │
+│    - ccg_id (unique)                                           │
+│    - experiment_id ◄─ Query all CCG scores for experiment     │
+│    - trajectory_id                                             │
+│    - annotation_id                                             │
+│    - evaluation_id                                             │
+│    - (perturbation_type, perturbation_position) compound       │
 │    - judge_model                                               │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
@@ -405,161 +493,286 @@
 │ poc.json     │
 └──────┬───────┘
        │
-       │ SHA256(config)
+       │ Create experiment
        ▼
-┌──────────────┐
-│ Experiment   │───────┐
-│ "a3f5b2c1"   │       │
-└──────────────┘       │
-                       │
-                       │ Loads trajectories
-                       ▼
-           ┌─────────────────────┐
-           │ For each trajectory: │
-           │ 1. Compute hash      │
-           │ 2. Check cache       │
-           │ 3. Load if needed    │
-           └─────────┬───────────┘
-                     │
-        ┌────────────┼────────────┐
-        │            │            │
-        ▼            ▼            ▼
-  ┌─────────┐  ┌─────────┐  ┌─────────┐
-  │ Traj 1  │  │ Traj 2  │  │ Traj 3  │
-  │ (cache  │  │ (cache  │  │ (new)   │
-  │  hit)   │  │  hit)   │  │         │
-  └────┬────┘  └────┬────┘  └────┬────┘
-       │            │            │
-       │            │            │ Store in cache
-       └────────────┼────────────┘
-                    │
-                    │ Generate perturbations
-                    ▼
-       ┌────────────────────────┐
-       │ Perturbed trajectories │
-       │ - Planning errors      │
-       │ - Tool errors          │
-       │ - Parameter errors     │
-       └────────┬───────────────┘
-                │
-                │ Human annotation
-                ▼
-           ┌────────────┐
-           │ Annotations│──────┐
-           │ TCS values │      │
-           └────────────┘      │
-                               │
-                               │ Judge evaluation
-                               ▼
-                          ┌────────────┐
-                          │ Evaluations│──────┐
-                          │ JPS values │      │
-                          └────────────┘      │
-                                              │
-                                              │ Compute CCG
-                                              ▼
-                                         ┌──────────┐
-                                         │ CCG Score│
-                                         │ Analysis │
-                                         └──────────┘
+┌──────────────────┐
+│ Experiment       │
+│ "exp_B"          │
+└──────────────────┘
+       │
+       │ Load trajectories (phase 1)
+       ▼
+┌─────────────────────────────────┐
+│ For each trajectory:            │
+│ 1. Check if in cache            │
+│ 2. If not, load from HF         │
+│ 3. Store in trajectories        │
+│    (NO experiment_id!)          │
+└────────┬────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│ TRAJECTORIES (Pure Cache)          │
+│ - traj_001 (original)              │
+│ - traj_002 (original)              │
+│ - ...                              │
+│ - traj_050 (original)              │
+│                                    │
+│ ⚠️  NO experiment references!      │
+└────────┬───────────────────────────┘
+         │
+         │ Generate perturbations (phase 2)
+         ▼
+┌────────────────────────────────────┐
+│ For each perturbation:             │
+│ 1. Create perturbed trajectory     │
+│ 2. Store in trajectories           │
+│ 3. Create perturbation record      │
+│    linking exp_B → original        │
+│    → perturbed                     │
+└────────┬───────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────┐
+│ PERTURBATIONS (Experiment-Scoped)      │
+│ - pert_001: exp_B, traj_001→traj_051   │
+│ - pert_002: exp_B, traj_001→traj_052   │
+│ - ...                                  │
+│ - pert_450: exp_B, traj_050→traj_500   │
+└────────┬───────────────────────────────┘
+         │
+         │ Human annotation (phase 3)
+         ▼
+┌────────────────────────────┐
+│ ANNOTATIONS                │
+│ - ann_001: exp_B, traj_051 │
+│ - ann_002: exp_B, traj_052 │
+│ - ...                      │
+└────────┬───────────────────┘
+         │
+         │ Judge evaluation (phase 4)
+         ▼
+┌─────────────────────────────┐
+│ JUDGE_EVALUATIONS           │
+│ - eval_001: exp_B, traj_051 │
+│ - eval_002: exp_B, traj_052 │
+│ - ...                       │
+└────────┬────────────────────┘
+         │
+         │ Compute CCG (phase 5)
+         ▼
+┌────────────────────────────┐
+│ CCG_SCORES                 │
+│ - ccg_001: exp_B, ...      │
+│ - ccg_002: exp_B, ...      │
+│ - ...                      │
+└────────────────────────────┘
 ```
 
 ---
 
-## Cache Hit Example
+## Multi-Experiment Workflow Example
 
+### Scenario: Same trajectories, different perturbations
+
+**Experiment A (load only):**
 ```
-User runs: python run.py config/experiments/poc.json
+Phase 1: Load 50 trajectories
+  → Store in trajectories collection (traj_001..traj_050)
+  → NO experiment_id stored on trajectories
+  → Experiment A has NO perturbations
+```
 
-Step 1: Compute experiment_hash
-  SHA256(config) → "a3f5b2c1..."
+**Experiment B (same load + perturbation set 1):**
+```
+Phase 1: Load 50 trajectories
+  → Check cache: traj_001..traj_050 already exist ✓
+  → NO writes to trajectories (cache hit!)
 
-Step 2: Check if experiment exists
-  db.experiments.find_one({experiment_hash: "a3f5b2c1"})
-  
-  ┌─────────────────────────┐
-  │ Result: Not found       │ → NEW EXPERIMENT
-  │ Continue...             │
-  └─────────────────────────┘
+Phase 2: Generate 450 perturbations (9 conditions × 50 trajs)
+  → Store perturbed trajectories (traj_051..traj_500)
+  → Create perturbation records:
+      db.perturbations.insert_many([
+        {
+          experiment_id: "exp_B",
+          original_trajectory_id: "traj_001",
+          perturbed_trajectory_id: "traj_051",
+          perturbation_type: "planning",
+          perturbation_position: "early"
+        },
+        ...
+      ])
+```
 
-Step 3: Load trajectory #1 (ToolBench, index=123)
-  cache_key = {
-    benchmark: "toolbench",
-    hf_index: 123,
-    filters: {...}
+**Experiment C (same load + perturbation set 2):**
+```
+Phase 1: Load 50 trajectories
+  → Cache hit again! traj_001..traj_050 reused
+
+Phase 2: Generate 450 NEW perturbations
+  → Store perturbed trajectories (traj_501..traj_950)
+  → Create perturbation records:
+      db.perturbations.insert_many([
+        {
+          experiment_id: "exp_C",
+          original_trajectory_id: "traj_001",
+          perturbed_trajectory_id: "traj_501",
+          perturbation_type: "tool_selection",
+          perturbation_position: "early"
+        },
+        ...
+      ])
+```
+
+**Result:**
+- Original trajectories stored ONCE (traj_001..traj_050)
+- Experiment B perturbations: traj_051..traj_500
+- Experiment C perturbations: traj_501..traj_950
+- Zero duplication of originals
+- Easy to compare: query by experiment_id
+
+---
+
+## Query Patterns
+
+### Get all data for an experiment
+
+```javascript
+// 1. Get experiment metadata
+const experiment = db.experiments.find_one({
+  experiment_id: "exp_B"
+});
+
+// 2. Get all perturbations for this experiment
+const perturbations = db.perturbations.find({
+  experiment_id: "exp_B"
+});
+
+// 3. Get unique original trajectory IDs
+const original_ids = [...new Set(
+  perturbations.map(p => p.original_trajectory_id)
+)];
+
+// 4. Get original trajectories
+const originals = db.trajectories.find({
+  trajectory_id: { $in: original_ids }
+});
+
+// 5. Get all perturbed trajectory IDs
+const perturbed_ids = perturbations.map(p => p.perturbed_trajectory_id);
+
+// 6. Get perturbed trajectories
+const perturbed = db.trajectories.find({
+  trajectory_id: { $in: perturbed_ids }
+});
+
+// 7. Get annotations
+const annotations = db.annotations.find({
+  experiment_id: "exp_B"
+});
+
+// 8. Get evaluations
+const evaluations = db.judge_evaluations.find({
+  experiment_id: "exp_B"
+});
+
+// 9. Get CCG scores
+const ccg_scores = db.ccg_scores.find({
+  experiment_id: "exp_B"
+});
+```
+
+### Compare experiments
+
+```javascript
+// Find which original trajectories are shared
+const exp_B_originals = db.perturbations.distinct(
+  "original_trajectory_id",
+  { experiment_id: "exp_B" }
+);
+
+const exp_C_originals = db.perturbations.distinct(
+  "original_trajectory_id",
+  { experiment_id: "exp_C" }
+);
+
+const shared_originals = exp_B_originals.filter(
+  id => exp_C_originals.includes(id)
+);
+
+// Compare CCG scores for same perturbation type/position
+db.ccg_scores.aggregate([
+  {
+    $match: {
+      experiment_id: { $in: ["exp_B", "exp_C"] },
+      perturbation_type: "planning",
+      perturbation_position: "early"
+    }
+  },
+  {
+    $group: {
+      _id: "$experiment_id",
+      avg_ccg: { $avg: "$criticality_calibration_gap" },
+      count: { $sum: 1 }
+    }
   }
-  
-  SHA256(cache_key) → "d7e9f1a2..."
-  
-  db.trajectories.find_one({trajectory_hash: "d7e9f1a2"})
-  
-  ┌─────────────────────────┐
-  │ Result: Found!          │ → CACHE HIT ✓
-  │ Use cached trajectory   │
-  │ Update access_count     │
-  └─────────────────────────┘
-
-Step 4: Load trajectory #2 (ToolBench, index=456)
-  SHA256(cache_key) → "e8f2a3b4..."
-  
-  db.trajectories.find_one({trajectory_hash: "e8f2a3b4"})
-  
-  ┌─────────────────────────┐
-  │ Result: Not found       │ → CACHE MISS ✗
-  │ Load from HuggingFace   │
-  │ Store in cache          │
-  └─────────────────────────┘
-
-And so on...
-
-Final result:
-  - 40 cache hits (instant, $0)
-  - 10 cache misses (load from HF, ~$10)
-  - Total time: 5 minutes (vs 30 minutes without cache)
-  - Total cost: $10 (vs $50 without cache)
+]);
 ```
 
 ---
 
-## Key Relationships (Foreign Keys, NOT Arrays!)
+## Key Relationships (Foreign Keys)
 
 ```
-experiments (1) ────── (M) trajectories
-    ▲                      │
-    │                      │
-    │                      │ experiment_id (foreign key)
-    │                      │
-    └──────────────────────┘
-    
-    Query: db.trajectories.find({ experiment_id: "a3f5b2c1..." })
-    ↑ Indexed for O(1) lookup, no 16MB limit!
+experiments (1) ────────────────── (M) perturbations
+                                        │
+                                        │ experiment_id
+                                        │
+                                        
+experiments (1) ────────────────── (M) annotations
+                                        │
+                                        │ experiment_id
 
+experiments (1) ────────────────── (M) judge_evaluations
+                                        │
+                                        │ experiment_id
 
-trajectories (1) ───── (M) annotations
-    ▲                      │
-    │                      │ trajectory_id (foreign key)
-    └──────────────────────┘
+experiments (1) ────────────────── (M) ccg_scores
+                                        │
+                                        │ experiment_id
 
+trajectories (1) ───────────────── (M) perturbations
+                                        │
+                                        │ original_trajectory_id
+                                        │ perturbed_trajectory_id
 
-trajectories (1) ───── (M) judge_evaluations
-    ▲                      │
-    │                      │ trajectory_id (foreign key)
-    └──────────────────────┘
+trajectories (1) ───────────────── (M) annotations
+                                        │
+                                        │ trajectory_id
 
-
-(annotation + evaluation) ───── (1) ccg_score
-      (paired to compute CCG via foreign keys)
+trajectories (1) ───────────────── (M) judge_evaluations
+                                        │
+                                        │ trajectory_id
 ```
 
-**Why Foreign Keys > Arrays:**
-- ✅ No 16MB document size limit
-- ✅ Efficient pagination (skip/limit)
-- ✅ Fast indexed queries
-- ✅ No memory overhead loading experiment metadata
-- ❌ Arrays would fail at ~1M trajectory IDs (~40MB)
+**Why This Design?**
+✅ Trajectories cached independently of experiments  
+✅ Zero experiment_id writes to trajectories  
+✅ No array bottlenecks, no junction table overhead  
+✅ Experiment context lives where it's used  
+✅ Simple queries: `find({experiment_id: "exp_B"})`  
+✅ Easy to share trajectories across experiments  
+✅ Clean separation of concerns  
 
-Is this clearer? Let me know if you want me to:
-1. Zoom in on any specific part
-2. Show a specific query example
-3. Diagram the caching logic in more detail
-4. Show multi-experiment scenarios
+---
+
+## Benefits Summary
+
+| Aspect | Old Design | New Design |
+|--------|------------|------------|
+| Trajectory reuse | ❌ Must duplicate or update | ✅ Pure cache, zero writes |
+| Experiment coupling | ❌ experiment_id in trajectories | ✅ Zero coupling |
+| Query pattern | ❌ Complex OR queries | ✅ Simple experiment_id filter |
+| Bottlenecks | ❌ Array updates on trajectories | ✅ None |
+| Comparison | ❌ Hard to track shared trajs | ✅ Easy via perturbations |
+| Schema clarity | ❌ Mixed concerns | ✅ Clear separation |
