@@ -39,5 +39,5 @@
     "README.md (updated)"
   ],
   "blockers": [],
-  "notes": "Phase 1 complete (2026-04-02). Implemented: unified trajectory schema, ToolBench/GAIA dataset loaders with filtering, pre-requisite verification system (6 checks), comprehensive test suite, requirements.txt with all dependencies, setup documentation. All Phase 1 tests passing. Ready for Phase 2: Perturbation generation (9 conditions: 3 types × 3 positions)."
+  "notes": "Phase 1 complete (2026-04-02). REFACTORED based on feedback: (1) HuggingFace datasets integration (no manual JSON), (2) MongoDB storage backend for all results, (3) Proper .env management. Implemented: unified trajectory schema, HF dataset loaders (ToolBench/GAIA), MongoDB storage with 5 collections, pre-requisite verification (6 checks including MongoDB/HF), comprehensive test suite (40 tests passing). Ready for Phase 2: Perturbation generation."
 }
