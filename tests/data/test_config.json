@@ -1,0 +1,39 @@
+{
+  "experiment_id": "test_integration_001",
+  "name": "Integration Test Experiment",
+  "description": "End-to-end test with stubbed data",
+  "config": {
+    "datasets": {
+      "toolbench": {
+        "enabled": true,
+        "num_trajectories": 1,
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 10
+        }
+      },
+      "gaia": {
+        "enabled": false
+      }
+    },
+    "perturbations": {
+      "types": ["planning"],
+      "positions": ["early"],
+      "samples_per_trajectory": 1
+    },
+    "judges": [
+      {
+        "name": "claude-3.5-sonnet",
+        "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "provider": "aws_bedrock",
+        "temperature": 0.7,
+        "max_tokens": 2000
+      }
+    ],
+    "annotation": {
+      "method": "manual",
+      "annotator": "test_researcher"
+    },
+    "random_seed": 42
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "perturbations": {
+    "planning_early": {
+      "step_number": 1,
+      "original_content": "I need to find the population of Tokyo in 2023. I'll use the Search tool to look this up.",
+      "perturbed_content": "I need to find the GDP of Tokyo in 2023. I'll use the Search tool to look this up.",
+      "perturbation_metadata": {
+        "method": "goal_substitution",
+        "description": "Changed goal from 'population' to 'GDP'"
+      }
+    }
+  },
+  "annotations": {
+    "toolbench_sample_001_perturbed": {
+      "annotator": "test_researcher",
+      "task_success_degradation": 1.0,
+      "task_success_before": true,
+      "task_success_after": false,
+      "subsequent_errors": [
+        {
+          "step_number": 2,
+          "error_type": "wrong_search_query",
+          "severity": "high",
+          "description": "Agent searched for GDP instead of population due to planning error"
+        },
+        {
+          "step_number": 3,
+          "error_type": "incorrect_reasoning",
+          "severity": "high",
+          "description": "Agent reasoned about GDP data instead of population"
+        },
+        {
+          "step_number": 4,
+          "error_type": "wrong_answer",
+          "severity": "critical",
+          "description": "Agent provided GDP value instead of population"
+        }
+      ],
+      "subsequent_error_rate": 1.0,
+      "true_criticality_score": 110.0,
+      "confidence": "high",
+      "notes": "Clear cascade from early planning error - completely derailed task"
+    }
+  },
+  "judge_evaluations": {
+    "claude-3.5-sonnet": {
+      "overall_score": 75.0,
+      "overall_penalty": 25.0,
+      "errors_identified": [
+        {
+          "step_number": 1,
+          "error_description": "Planning step has incorrect goal formulation",
+          "severity": 5.0,
+          "judge_reasoning": "The agent planned to find GDP instead of population, which is a moderate planning error."
+        }
+      ],
+      "raw_response": "The trajectory shows a planning error in step 1 where the agent incorrectly formulated the goal as finding GDP instead of population. This led to incorrect downstream execution. Overall score: 75/100.",
+      "api_call": {
+        "tokens_input": 450,
+        "tokens_output": 120,
+        "latency_ms": 1200,
+        "cost_usd": 0.015
+      }
+    }
+  },
+  "expected_ccg": {
+    "true_criticality_score": 110.0,
+    "judge_penalty_score": 25.0,
+    "criticality_calibration_gap": -0.773,
+    "calibration_status": "under_penalized",
+    "gap_magnitude": "severe"
+  }
+}

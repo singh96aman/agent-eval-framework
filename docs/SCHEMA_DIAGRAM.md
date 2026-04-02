@@ -36,27 +36,35 @@
 │  │  config: { ...full JSON... }                                │   │
 │  │  status: "in_progress"                                      │   │
 │  │                                                              │   │
-│  │  trajectory_refs: [                      ◄─── References    │   │
-│  │    "traj_001",                                               │   │
-│  │    "traj_002",                                               │   │
-│  │    ...                                                       │   │
-│  │  ]                                                           │   │
+│  │  ⚠️  NO trajectory_refs array!                              │   │
+│  │  ⚠️  Relationship stored via foreign key in trajectories    │   │
 │  │                                                              │   │
-│  │  annotation_refs: ["ann_001", ...]                          │   │
-│  │  judge_eval_refs: ["eval_001", ...]                         │   │
-│  │  ccg_refs: ["ccg_001", ...]                                 │   │
+│  │  progress: {                             ◄─── Only counts   │   │
+│  │    trajectories_loaded: 50,                  not IDs!       │   │
+│  │    annotations_completed: 25,                               │   │
+│  │    evaluations_completed: 150                               │   │
+│  │  }                                                           │   │
 │  │                                                              │   │
 │  │  created_at: "2026-04-02T12:00:00Z"                         │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                       │
 └───────────────────────────────┬───────────────────────────────────────┘
                                 │
-                                │ Points to trajectories
+                                │ Linked via experiment_id (foreign key)
+                                │ NOT via array! See trajectories below
+                                ▼
+        ┌─────────────────────────────────────────────────┐
+        │  Query: db.trajectories.find({                  │
+        │    experiment_id: "a3f5b2c1..."                 │
+        │  })                                             │
+        └─────────────────────────────────────────────────┘
                                 │
         ┌───────────────────────┼───────────────────────┐
         │                       │                       │
         ▼                       ▼                       ▼
    traj_001               traj_002                 traj_003
+   experiment_id:         experiment_id:           experiment_id:
+   "a3f5b2c1..."         "a3f5b2c1..."           "a3f5b2c1..."
    (Original)             (Perturbed)              (Perturbed)
 ```
 
@@ -90,19 +98,17 @@
 │  │  status: "in_progress"                              │     │
 │  │  └─ created | in_progress | completed | failed      │     │
 │  │                                                      │     │
-│  │  trajectory_refs: [                                 │     │
-│  │    "d7e9f1a2...",  ◄───┐                           │     │
-│  │    "e8f2a3b4...",  ◄───┼─ References to            │     │
-│  │    "f9b3c5d6..."   ◄───┘   trajectories collection │     │
-│  │  ]                                                   │     │
+│  │  ⚠️  NO ARRAYS OF IDS! Avoids 16MB limit            │     │
 │  │                                                      │     │
-│  │  annotation_refs: [...]     ◄─ References           │     │
-│  │  judge_eval_refs: [...]     ◄─ References           │     │
-│  │  ccg_refs: [...]            ◄─ References           │     │
+│  │  To get trajectories for this experiment:           │     │
+│  │    db.trajectories.find({                           │     │
+│  │      experiment_id: "a3f5b2c1..."                   │     │
+│  │    })                                                │     │
+│  │  ↑ Uses INDEX for O(1) lookup                       │     │
 │  │                                                      │     │
 │  │  progress: {                                        │     │
-│  │    trajectories_cached: 50,                         │     │
-│  │    annotations_completed: 25,                       │     │
+│  │    trajectories_loaded: 50,      ◄─ Just counts    │     │
+│  │    annotations_completed: 25,        not IDs!       │     │
 │  │    evaluations_completed: 150                       │     │
 │  │  }                                                   │     │
 │  │                                                      │     │
@@ -173,11 +179,12 @@
 │  │    }                                                │     │
 │  │  }                                                   │     │
 │  │                                                      │     │
-│  │  referenced_by: [                                   │     │
-│  │    "a3f5b2c1...",  ◄─── Experiment 1                │     │
-│  │    "b8c4d6e2..."   ◄─── Experiment 2                │     │
-│  │  ]                                                   │     │
-│  │  └─ Which experiments use this trajectory           │     │
+│  │  experiment_id: "a3f5b2c1..."  ◄─ Foreign key!       │     │
+│  │  └─ Links back to experiments collection            │     │
+│  │  └─ INDEXED for fast queries                        │     │
+│  │                                                      │     │
+│  │  ⚠️  NOT an array! Single value only                │     │
+│  │  Each trajectory belongs to ONE experiment          │     │
 │  │                                                      │     │
 │  │  first_cached: "2026-04-02T12:00:00Z"              │     │
 │  │  last_accessed: "2026-04-05T15:30:00Z"             │     │
@@ -211,7 +218,7 @@
 │  │    ground_truth: { ... }                      │  │     │
 │  │  }                                             │  │     │
 │  │                                                │  │     │
-│  │  referenced_by: ["a3f5b2c1..."]               │  │     │
+│  │  experiment_id: "a3f5b2c1..."  ◄─ Foreign key  │  │     │
 │  │  first_cached: "2026-04-02T13:00:00Z"        │  │     │
 │  │  access_count: 1                              │  │     │
 │  │                                                │  │     │
@@ -219,9 +226,9 @@
 │                                                    │        │
 │  Indexes:                                         │        │
 │    - trajectory_hash (unique)                     │        │
+│    - experiment_id ◄─ CRITICAL for fast queries  │        │
 │    - cache_key.benchmark                          │        │
 │    - cache_key.original_trajectory_hash  ─────────┘        │
-│    - referenced_by (array)                                 │
 │                                                            │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -514,29 +521,42 @@ Final result:
 
 ---
 
-## Key Relationships
+## Key Relationships (Foreign Keys, NOT Arrays!)
 
 ```
 experiments (1) ────── (M) trajectories
+    ▲                      │
     │                      │
-    │                      │
-    │                  referenced_by
+    │                      │ experiment_id (foreign key)
     │                      │
     └──────────────────────┘
-           (one experiment references many trajectories)
+    
+    Query: db.trajectories.find({ experiment_id: "a3f5b2c1..." })
+    ↑ Indexed for O(1) lookup, no 16MB limit!
 
 
 trajectories (1) ───── (M) annotations
-                           (one trajectory, many annotations if multi-annotator)
+    ▲                      │
+    │                      │ trajectory_id (foreign key)
+    └──────────────────────┘
 
 
 trajectories (1) ───── (M) judge_evaluations
-                           (one trajectory × judges × samples)
+    ▲                      │
+    │                      │ trajectory_id (foreign key)
+    └──────────────────────┘
 
 
 (annotation + evaluation) ───── (1) ccg_score
-      (paired to compute CCG)
+      (paired to compute CCG via foreign keys)
 ```
+
+**Why Foreign Keys > Arrays:**
+- ✅ No 16MB document size limit
+- ✅ Efficient pagination (skip/limit)
+- ✅ Fast indexed queries
+- ✅ No memory overhead loading experiment metadata
+- ❌ Arrays would fail at ~1M trajectory IDs (~40MB)
 
 Is this clearer? Let me know if you want me to:
 1. Zoom in on any specific part

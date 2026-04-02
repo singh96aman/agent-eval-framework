@@ -1,0 +1,32 @@
+[
+  {
+    "evaluation_id": "eval_test_integration_001_claude_001",
+    "experiment_id": "test_integration_001",
+    "trajectory_id": "toolbench_sample_001_perturbed",
+    "judge_model": "claude-3.5-sonnet",
+    "judge_model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "judge_provider": "aws_bedrock",
+    "sample_number": 1,
+    "overall_score": 75.0,
+    "overall_penalty": 25.0,
+    "errors_identified": [
+      {
+        "step_number": 1,
+        "error_description": "Planning step has incorrect goal formulation",
+        "severity": 5.0,
+        "judge_reasoning": "The agent planned to find GDP instead of population, which is a moderate planning error."
+      }
+    ],
+    "raw_response": "The trajectory shows a planning error in step 1 where the agent incorrectly formulated the goal as finding GDP instead of population. This led to incorrect downstream execution. Overall score: 75/100.",
+    "prompt_used": "You are evaluating an agent trajectory...",
+    "api_call": {
+      "tokens_input": 450,
+      "tokens_output": 120,
+      "latency_ms": 1200,
+      "cost_usd": 0.015
+    },
+    "temperature": 0.7,
+    "max_tokens": 2000,
+    "evaluated_at": "2026-04-02T20:19:33.582923"
+  }
+]

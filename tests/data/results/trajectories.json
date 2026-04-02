@@ -1,0 +1,143 @@
+[
+  {
+    "trajectory_id": "toolbench_sample_001",
+    "benchmark": "toolbench",
+    "steps": [
+      {
+        "step_id": "step_1",
+        "step_number": 1,
+        "step_type": "planning",
+        "content": "I need to find the population of Tokyo in 2023. I'll use the Search tool to look this up.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      },
+      {
+        "step_id": "step_2",
+        "step_number": 2,
+        "step_type": "tool_execution",
+        "content": "Executing search for Tokyo population",
+        "tool_name": "Search",
+        "tool_input": {
+          "query": "Tokyo population 2023"
+        },
+        "tool_output": "Tokyo, Japan's capital, has a population of approximately 14.09 million people in 2023 within the city proper, and over 37 million in the Greater Tokyo Area.",
+        "metadata": {}
+      },
+      {
+        "step_id": "step_3",
+        "step_number": 3,
+        "step_type": "reasoning",
+        "content": "The search returned that Tokyo has 14.09 million people in the city proper.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      },
+      {
+        "step_id": "step_4",
+        "step_number": 4,
+        "step_type": "final_answer",
+        "content": "The population of Tokyo in 2023 is 14.09 million.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      }
+    ],
+    "ground_truth": {
+      "task_description": "What is the population of Tokyo in 2023?",
+      "expected_answer": "14.09 million",
+      "task_success": true,
+      "success_criteria": "exact_match",
+      "difficulty": "Level 1",
+      "domain": "geography"
+    },
+    "metadata": {
+      "source": "toolbench",
+      "hf_index": 123,
+      "hf_split": "train"
+    },
+    "experiment_id": "test_integration_001",
+    "is_perturbed": false,
+    "perturbation": null,
+    "stored_at": "2026-04-02T20:19:33.582872"
+  },
+  {
+    "trajectory_id": "toolbench_sample_001_perturbed",
+    "benchmark": "toolbench",
+    "steps": [
+      {
+        "step_id": "step_1",
+        "step_number": 1,
+        "step_type": "planning",
+        "content": "I need to find the GDP of Tokyo in 2023. I'll use the Search tool to look this up.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      },
+      {
+        "step_id": "step_2",
+        "step_number": 2,
+        "step_type": "tool_execution",
+        "content": "Executing search for Tokyo population",
+        "tool_name": "Search",
+        "tool_input": {
+          "query": "Tokyo population 2023"
+        },
+        "tool_output": "Tokyo, Japan's capital, has a population of approximately 14.09 million people in 2023 within the city proper, and over 37 million in the Greater Tokyo Area.",
+        "metadata": {}
+      },
+      {
+        "step_id": "step_3",
+        "step_number": 3,
+        "step_type": "reasoning",
+        "content": "The search returned that Tokyo has 14.09 million people in the city proper.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      },
+      {
+        "step_id": "step_4",
+        "step_number": 4,
+        "step_type": "final_answer",
+        "content": "The population of Tokyo in 2023 is 14.09 million.",
+        "tool_name": null,
+        "tool_input": null,
+        "tool_output": null,
+        "metadata": {}
+      }
+    ],
+    "ground_truth": {
+      "task_description": "What is the population of Tokyo in 2023?",
+      "expected_answer": "14.09 million",
+      "task_success": true,
+      "success_criteria": "exact_match",
+      "difficulty": "Level 1",
+      "domain": "geography"
+    },
+    "metadata": {
+      "source": "toolbench",
+      "hf_index": 123,
+      "hf_split": "train"
+    },
+    "experiment_id": "test_integration_001",
+    "is_perturbed": true,
+    "original_trajectory_id": "toolbench_sample_001",
+    "perturbation": {
+      "type": "planning",
+      "position": "early",
+      "perturbed_step_number": 1,
+      "original_step_content": "I need to find the population of Tokyo in 2023. I'll use the Search tool to look this up.",
+      "perturbed_step_content": "I need to find the GDP of Tokyo in 2023. I'll use the Search tool to look this up.",
+      "metadata": {
+        "method": "goal_substitution",
+        "description": "Changed goal from 'population' to 'GDP'"
+      }
+    },
+    "stored_at": "2026-04-02T20:19:33.582896"
+  }
+]
