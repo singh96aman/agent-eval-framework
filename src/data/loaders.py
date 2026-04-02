@@ -6,7 +6,6 @@ and convert them to the unified Trajectory schema.
 """
 
 import json
-import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import random
@@ -16,9 +15,9 @@ from .schema import Trajectory, Step, StepType, GroundTruth
 def load_toolbench_trajectories(
     data_dir: str,
     max_trajectories: Optional[int] = None,
-    min_steps: int = 5,
-    max_steps: int = 10,
-    filter_successful: bool = True,
+    min_steps: int = 1,
+    max_steps: int = 100,
+    filter_successful: bool = False,
     random_seed: Optional[int] = 42,
 ) -> List[Trajectory]:
     """
@@ -228,8 +227,8 @@ def _parse_toolbench_trajectory(
 def load_gaia_trajectories(
     data_dir: str,
     max_trajectories: Optional[int] = None,
-    min_steps: int = 4,
-    max_steps: int = 8,
+    min_steps: int = 1,
+    max_steps: int = 100,
     difficulty: Optional[str] = None,
     random_seed: Optional[int] = 42,
 ) -> List[Trajectory]:
