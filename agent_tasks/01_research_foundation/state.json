@@ -1,0 +1,30 @@
+{
+  "task_name": "01_research_foundation",
+  "status": "not_started",
+  "created": "2026-04-01",
+  "last_updated": "2026-04-01",
+  "plan": [
+    "Conduct literature review on LLM judges, agent evaluation, and error propagation",
+    "Identify novelty gaps and positioning",
+    "Design minimal POC scope (dataset, perturbations, metrics)",
+    "Define success criteria and experimental protocol",
+    "Write LITERATURE_REVIEW.MD",
+    "Write POC_REQUIREMENTS.MD",
+    "Get human researcher approval"
+  ],
+  "completed_steps": [],
+  "pending_steps": [
+    "Conduct literature review on LLM judges, agent evaluation, and error propagation",
+    "Identify novelty gaps and positioning",
+    "Design minimal POC scope (dataset, perturbations, metrics)",
+    "Define success criteria and experimental protocol",
+    "Write LITERATURE_REVIEW.MD",
+    "Write POC_REQUIREMENTS.MD",
+    "Get human researcher approval"
+  ],
+  "artifacts_created": [
+    "agent_tasks/01_research_foundation/Requirements.MD"
+  ],
+  "blockers": [],
+  "notes": "Task created. Waiting for human researcher to initiate work."
+}

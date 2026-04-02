@@ -82,10 +82,7 @@ agent_tasks/<task_name>/
 ```
 agent_tasks/<task_name>/
 ├── Requirements.MD
-├── state.json
-├── inputs/
-├── outputs/
-└── artifacts/
+└── state.json
 ```
 
 ### Task rules
