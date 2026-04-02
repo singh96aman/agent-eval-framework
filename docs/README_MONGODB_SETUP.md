@@ -126,10 +126,10 @@ mongodb+srv://<username>:<password>@<cluster>.mongodb.net/?appName=<app-name>
 ```
 
 **Current Configuration:**
-- **Username:** `singh96aman_db_user`
-- **Password:** `rzVqnZkWrDrsryRy` (stored in .env, not committed)
-- **Cluster:** `judging-the-agents.zzzls0n.mongodb.net`
-- **App Name:** `Judging-the-Agents`
+- **Username:** Your MongoDB Atlas username
+- **Password:** Stored in `.env`, never commit to git
+- **Cluster:** Your cluster hostname
+- **App Name:** Your app name
 - **Database:** `agent_judge_experiment`
 
 ### Security Notes
