@@ -1,0 +1,32 @@
+{
+  "task_name": "02_poc_implementation",
+  "status": "not_started",
+  "created": "2026-04-02",
+  "last_updated": "2026-04-02",
+  "plan": [
+    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)",
+    "Phase 2: Perturbation generation framework (Days 4-6)",
+    "Phase 3: Judge API integration (Claude Bedrock + GPT-OSS 120B) (Days 7-9)",
+    "Phase 4: Annotation tools + CCG metric computation (Days 10-12)",
+    "Phase 5: Experiment runner + visualization (Days 13-15)",
+    "Write tests for all modules",
+    "Update README with setup and usage instructions",
+    "Human validation: Run pre-requisite checks and pilot perturbations"
+  ],
+  "completed_steps": [],
+  "pending_steps": [
+    "Phase 1: Pre-requisite verification system + dataset loaders (Days 1-3)",
+    "Phase 2: Perturbation generation framework (Days 4-6)",
+    "Phase 3: Judge API integration (Claude Bedrock + GPT-OSS 120B) (Days 7-9)",
+    "Phase 4: Annotation tools + CCG metric computation (Days 10-12)",
+    "Phase 5: Experiment runner + visualization (Days 13-15)",
+    "Write tests for all modules",
+    "Update README with setup and usage instructions",
+    "Human validation: Run pre-requisite checks and pilot perturbations"
+  ],
+  "artifacts_created": [
+    "agent_tasks/02_poc_implementation/Requirements.MD"
+  ],
+  "blockers": [],
+  "notes": "Implementation task created. Dependencies: Task 01 (Research Foundation) completed. Goal: Build experimental infrastructure for POC (50 trajectories, dual benchmarks, CCG analysis). Estimated timeline: 15 days for full implementation. Key components: prereq checks, dataset loaders, perturbation generator, judge APIs (Claude Bedrock + GPT-OSS 120B), annotation tools, CCG computation, experiment runner."
+}
