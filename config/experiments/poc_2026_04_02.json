@@ -1,0 +1,116 @@
+{
+  "experiment": {
+    "name": "POC: Judge Calibration Study",
+    "description": "Initial 50-trajectory POC with dual benchmarks",
+    "version": "1.0",
+    "created_by": "human_researcher",
+    "tags": ["poc", "dual_benchmark", "phase_1"]
+  },
+
+  "datasets": {
+    "toolbench": {
+      "source": "huggingface",
+      "dataset_name": "OpenBMB/ToolBench",
+      "split": "train",
+      "num_trajectories": 25,
+      "filters": {
+        "min_steps": 5,
+        "max_steps": 10,
+        "filter_successful": true
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "source": "huggingface",
+      "dataset_name": "gaia-benchmark/GAIA",
+      "split": "validation",
+      "version": "2023_all",
+      "num_trajectories": 25,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 8,
+        "difficulty": ["Level 1", "Level 2"]
+      },
+      "random_seed": 42
+    }
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection", "parameter"],
+    "positions": ["early", "middle", "late"],
+    "num_per_condition": 5,
+    "generation_config": {
+      "planning": {
+        "method": "goal_substitution",
+        "intensity": "moderate"
+      },
+      "tool_selection": {
+        "method": "wrong_tool_swap",
+        "intensity": "moderate"
+      },
+      "parameter": {
+        "method": "argument_corruption",
+        "intensity": "moderate"
+      }
+    }
+  },
+
+  "judges": {
+    "models": [
+      {
+        "name": "claude-3.5-sonnet",
+        "provider": "aws_bedrock",
+        "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000,
+          "top_p": 0.95
+        }
+      },
+      {
+        "name": "gpt-oss-120b",
+        "provider": "aws_bedrock",
+        "model_id": "meta.llama3-70b-instruct-v1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000,
+          "top_p": 0.95
+        }
+      }
+    ],
+    "prompt_version": "v1.0",
+    "samples_per_trajectory": 3
+  },
+
+  "annotation": {
+    "method": "human",
+    "require_human_in_loop": true,
+    "annotators": ["human_researcher"],
+    "quality_control": {
+      "self_review_percentage": 10,
+      "min_confidence": "medium"
+    }
+  },
+
+  "metrics": {
+    "ccg": {
+      "tcs_formula": "(TSD * 100) + (SER * 10)",
+      "jps_formula": "100 - overall_score",
+      "ccg_formula": "(JPS - TCS) / TCS"
+    },
+    "thresholds": {
+      "early_under_penalization": -0.3,
+      "late_over_penalization": 0.2,
+      "significance_level": 0.05
+    }
+  },
+
+  "execution": {
+    "mode": "incremental",
+    "enable_caching": true,
+    "checkpoint_interval": 10,
+    "parallel_judge_calls": true,
+    "max_retries": 3,
+    "timeout_seconds": 300
+  }
+}
