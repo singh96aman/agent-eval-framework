@@ -1,8 +1,8 @@
 {
   "experiment": {
-    "name": "POC: Judge Calibration to Trajectory Criticality",
-    "experiment_id": "exp_poc_full_v1_20260402",
-    "description": "Full POC experiment: Load 50 trajectories, generate perturbations (9 conditions), annotate criticality, evaluate judges (Claude + GPT-OSS), compute CCG metrics",
+    "name": "POC: ToolBench Judge Calibration",
+    "experiment_id": "exp_poc_toolbench_20260402",
+    "description": "POC experiment with ToolBench only: Load 50 trajectories, generate perturbations (9 conditions), annotate criticality, evaluate judges (Claude + GPT-OSS), compute CCG metrics",
     "version": "1.0",
     "created_by": "human_researcher",
     "created_date": "2026-04-02"
@@ -11,10 +11,10 @@
   "datasets": {
     "toolbench": {
       "enabled": true,
-      "source": "huggingface",
-      "dataset_name": "OpenBMB/ToolBench",
-      "split": "train",
-      "num_trajectories": 25,
+      "source": "local",
+      "dataset_name": "ToolBench",
+      "split": "eval",
+      "num_trajectories": 50,
       "filters": {
         "min_steps": 3,
         "max_steps": 15,
@@ -23,12 +23,12 @@
       "random_seed": 42
     },
     "gaia": {
-      "enabled": true,
+      "enabled": false,
       "source": "huggingface",
       "dataset_name": "gaia-benchmark/GAIA",
       "split": "validation",
       "version": "2023_all",
-      "num_trajectories": 25,
+      "num_trajectories": 0,
       "filters": {
         "min_steps": 2,
         "max_steps": 12,

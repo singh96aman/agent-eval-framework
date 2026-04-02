@@ -19,9 +19,10 @@ def load_toolbench_trajectories(
     random_seed: Optional[int] = 42,
     split: str = "train",
     use_auth_token: Optional[str] = None,
+    local_path: Optional[str] = None,
 ) -> List[Trajectory]:
     """
-    Load trajectories from ToolBench dataset via Hugging Face.
+    Load trajectories from ToolBench dataset (local or HuggingFace).
 
     Args:
         max_trajectories: Maximum number of trajectories to load
@@ -29,40 +30,85 @@ def load_toolbench_trajectories(
         max_steps: Maximum number of steps allowed
         filter_successful: Only load successful trajectories
         random_seed: Random seed for sampling
-        split: Dataset split to load (train/validation/test)
+        split: Dataset split to load (train/eval)
         use_auth_token: HuggingFace token (or from env HUGGINGFACE_TOKEN)
+        local_path: Path to local ToolBench data directory (default: data/toolbench/data/)
 
     Returns:
         List of Trajectory objects
     """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        raise ImportError(
-            "datasets library not installed. "
-            "Run: pip install datasets"
-        )
+    import json
+    from pathlib import Path
 
-    # Get HF token from env if not provided
-    if use_auth_token is None:
-        use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+    # Try loading from local files first
+    if local_path is None:
+        # Default to data/toolbench/data/ relative to project root
+        project_root = Path(__file__).parent.parent.parent
+        local_path = project_root / "data" / "toolbench" / "data"
+    else:
+        local_path = Path(local_path)
 
-    try:
-        # Load ToolBench dataset from HuggingFace
-        # Dataset: "OpenBMB/ToolBench"
-        dataset = load_dataset(
-            "OpenBMB/ToolBench",
-            split=split,
-            token=use_auth_token,
-        )
-    except Exception as e:
-        print(f"Warning: Could not load ToolBench from HF: {e}")
-        print("Falling back to empty dataset for testing")
+    # Determine which file to load based on split
+    if split in ["eval", "validation", "test"]:
+        json_file = local_path / "toolllama_G123_dfs_eval.json"
+    else:  # train
+        json_file = local_path / "toolllama_G123_dfs_train.json"
+
+    dataset = []
+
+    # Try local file first
+    if json_file.exists():
+        print(f"   Loading from local file: {json_file.name}")
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                dataset = json.load(f)
+            print(f"   Loaded {len(dataset)} examples from local file")
+        except Exception as e:
+            print(f"   Warning: Failed to load local file: {e}")
+            dataset = []
+
+    # Fallback to HuggingFace if local file doesn't exist or failed to load
+    if not dataset:
+        print(f"   Trying HuggingFace datasets...")
+        try:
+            from datasets import load_dataset
+
+            # Get HF token from env if not provided
+            if use_auth_token is None:
+                use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+
+            # Try various ToolBench alternatives on HuggingFace
+            hf_alternatives = [
+                "Yhyu13/ToolBench_toolllama_G123_dfs",
+                "tuandunghcmut/toolbench-v1",
+                "Maurus/ToolBench",
+            ]
+
+            for dataset_name in hf_alternatives:
+                try:
+                    hf_dataset = load_dataset(
+                        dataset_name,
+                        split=split if split != "eval" else "train",
+                        token=use_auth_token,
+                    )
+                    dataset = list(hf_dataset)
+                    print(f"   Loaded from HuggingFace: {dataset_name}")
+                    break
+                except Exception:
+                    continue
+
+        except ImportError:
+            print(f"   Warning: datasets library not installed")
+        except Exception as e:
+            print(f"   Warning: Could not load from HuggingFace: {e}")
+
+    if not dataset:
+        print("   Warning: No ToolBench data found (local or HuggingFace)")
         return []
 
     trajectories = []
 
-    # Convert HF dataset to our Trajectory schema
+    # Convert dataset to our Trajectory schema
     for idx, item in enumerate(dataset):
         try:
             traj = _parse_toolbench_item(item, idx)
@@ -76,7 +122,9 @@ def load_toolbench_trajectories(
 
                 trajectories.append(traj)
         except Exception as e:
-            print(f"Warning: Failed to parse trajectory {idx}: {e}")
+            # Only print first few errors to avoid spam
+            if idx < 5:
+                print(f"   Warning: Failed to parse trajectory {idx}: {e}")
             continue
 
     # Shuffle and sample
@@ -97,83 +145,229 @@ def _parse_toolbench_item(
     """
     Parse a ToolBench dataset item to Trajectory.
 
-    Expected format varies by ToolBench version, so we handle multiple formats.
+    Supports two formats:
+    1. Local ToolBench format with "conversations" array
+    2. HuggingFace alternative formats with "steps" or "trajectory"
     """
     try:
-        # Extract task description
-        task_desc = item.get("query", item.get("question", "Unknown task"))
+        # Format 1: Local ToolBench with conversations
+        if "conversations" in item:
+            return _parse_toolbench_conversations(item, idx)
 
-        # Extract steps
-        raw_steps = item.get("steps", item.get("trajectory", []))
-        if not raw_steps and "solution" in item:
-            # Parse solution field if steps not directly available
-            raw_steps = _parse_solution_string(item["solution"])
+        # Format 2: Other formats with direct steps
+        return _parse_toolbench_steps(item, idx)
 
-        steps = []
-        for i, raw_step in enumerate(raw_steps, 1):
-            step_type = StepType.OTHER
-            content = ""
-            tool_name = None
-            tool_input = None
+    except Exception as e:
+        # Only print first few errors to avoid spam
+        if idx < 5:
+            print(f"   Warning: Failed to parse ToolBench item {idx}: {e}")
+        return None
+
+
+def _parse_toolbench_conversations(
+    item: Dict[str, Any],
+    idx: int,
+) -> Optional[Trajectory]:
+    """
+    Parse local ToolBench format with conversations array.
+
+    Format:
+    {
+        "id": "task description",
+        "conversations": [
+            {"from": "system", "value": "..."},
+            {"from": "user", "value": "task query"},
+            {"from": "assistant", "value": "Thought:...\\nAction:...\\nAction Input:..."},
+            {"from": "function", "value": "observation result"},
+            ...
+        ]
+    }
+    """
+    conversations = item.get("conversations", [])
+    if not conversations:
+        return None
+
+    # Extract task description from "id" field or user message
+    task_desc = item.get("id", "")
+    for conv in conversations:
+        if conv.get("from") == "user":
+            task_desc = conv.get("value", task_desc)
+            break
+
+    steps = []
+    step_number = 0
+
+    # Parse conversation turns into steps
+    i = 0
+    while i < len(conversations):
+        conv = conversations[i]
+        from_type = conv.get("from")
+        value = conv.get("value", "")
+
+        if from_type == "assistant":
+            # Parse Thought/Action/Action Input from assistant turn
+            step_number += 1
+            thought = ""
+            action = ""
+            action_input = ""
+
+            # Extract Thought, Action, Action Input
+            lines = value.split("\n")
+            current_field = None
+            for line in lines:
+                line_lower = line.strip().lower()
+                if line_lower.startswith("thought:"):
+                    current_field = "thought"
+                    thought = line.split(":", 1)[1].strip() if ":" in line else ""
+                elif line_lower.startswith("action:"):
+                    current_field = "action"
+                    action = line.split(":", 1)[1].strip() if ":" in line else ""
+                elif line_lower.startswith("action input:"):
+                    current_field = "action_input"
+                    action_input = line.split(":", 1)[1].strip() if ":" in line else ""
+                elif current_field and line.strip():
+                    # Continue previous field
+                    if current_field == "thought":
+                        thought += " " + line.strip()
+                    elif current_field == "action":
+                        action += " " + line.strip()
+                    elif current_field == "action_input":
+                        action_input += " " + line.strip()
+
+            # Get function result from next turn if available
             tool_output = None
+            if i + 1 < len(conversations) and conversations[i + 1].get("from") == "function":
+                tool_output = conversations[i + 1].get("value", "")
+                i += 1  # Skip function turn, we've consumed it
 
-            if isinstance(raw_step, dict):
-                # Dictionary format
-                content = raw_step.get("thought", raw_step.get("content", ""))
-                tool_name = raw_step.get("action", raw_step.get("tool"))
-                tool_input = raw_step.get("action_input", raw_step.get("input"))
-                tool_output = raw_step.get(
-                    "observation",
-                    raw_step.get("output")
-                )
-
-                if tool_name:
-                    step_type = StepType.TOOL_EXECUTION
-                elif content:
-                    step_type = StepType.REASONING
-            else:
-                # String format
-                content = str(raw_step)
-
+            # Create step
             step = Step(
-                step_id=f"toolbench_{idx}_step_{i}",
-                step_number=i,
-                step_type=step_type,
-                content=content,
-                tool_name=tool_name,
-                tool_input=tool_input,
+                step_id=f"toolbench_{idx}_step_{step_number}",
+                step_number=step_number,
+                step_type=StepType.TOOL_EXECUTION if action else StepType.REASONING,
+                content=thought,
+                tool_name=action if action else None,
+                tool_input=action_input if action_input else None,
                 tool_output=tool_output,
-                metadata=raw_step if isinstance(raw_step, dict) else {},
+                metadata={"from": from_type, "raw_value": value},
             )
             steps.append(step)
 
-        if not steps:
-            return None
+        i += 1
 
-        # Extract ground truth
-        final_answer = item.get("answer", item.get("final_answer"))
-        task_success = item.get("success", item.get("correct"))
-
-        ground_truth = GroundTruth(
-            task_description=task_desc,
-            expected_answer=final_answer,
-            task_success=task_success,
-            domain=item.get("category", item.get("domain")),
-        )
-
-        trajectory = Trajectory(
-            trajectory_id=f"toolbench_{idx}",
-            benchmark="toolbench",
-            steps=steps,
-            ground_truth=ground_truth,
-            metadata={"hf_index": idx},
-        )
-
-        return trajectory
-
-    except Exception as e:
-        print(f"Warning: Failed to parse ToolBench item {idx}: {e}")
+    if not steps:
         return None
+
+    # Extract final answer and success from last assistant message
+    final_answer = None
+    task_success = None
+    for conv in reversed(conversations):
+        if conv.get("from") == "assistant":
+            val = conv.get("value", "")
+            if "Finish" in val or "final answer" in val.lower():
+                final_answer = val
+                # Assume successful if it says "give_answer", failed if "give_up"
+                if "give_answer" in val.lower():
+                    task_success = True
+                elif "give_up" in val.lower():
+                    task_success = False
+            break
+
+    ground_truth = GroundTruth(
+        task_description=task_desc,
+        expected_answer=final_answer,
+        task_success=task_success,
+        domain="toolbench",
+    )
+
+    trajectory = Trajectory(
+        trajectory_id=f"toolbench_{idx}",
+        benchmark="toolbench",
+        steps=steps,
+        ground_truth=ground_truth,
+        metadata={"source": "local_conversations", "hf_index": idx},
+    )
+
+    return trajectory
+
+
+def _parse_toolbench_steps(
+    item: Dict[str, Any],
+    idx: int,
+) -> Optional[Trajectory]:
+    """
+    Parse alternative ToolBench formats with direct steps/trajectory.
+    """
+    # Extract task description
+    task_desc = item.get("query", item.get("question", "Unknown task"))
+
+    # Extract steps
+    raw_steps = item.get("steps", item.get("trajectory", []))
+    if not raw_steps and "solution" in item:
+        # Parse solution field if steps not directly available
+        raw_steps = _parse_solution_string(item.get("solution", ""))
+
+    steps = []
+    for i, raw_step in enumerate(raw_steps, 1):
+        step_type = StepType.OTHER
+        content = ""
+        tool_name = None
+        tool_input = None
+        tool_output = None
+
+        if isinstance(raw_step, dict):
+            # Dictionary format
+            content = raw_step.get("thought", raw_step.get("content", ""))
+            tool_name = raw_step.get("action", raw_step.get("tool"))
+            tool_input = raw_step.get("action_input", raw_step.get("input"))
+            tool_output = raw_step.get(
+                "observation",
+                raw_step.get("output")
+            )
+
+            if tool_name:
+                step_type = StepType.TOOL_EXECUTION
+            elif content:
+                step_type = StepType.REASONING
+        else:
+            # String format
+            content = str(raw_step)
+
+        step = Step(
+            step_id=f"toolbench_{idx}_step_{i}",
+            step_number=i,
+            step_type=step_type,
+            content=content,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_output=tool_output,
+            metadata=raw_step if isinstance(raw_step, dict) else {},
+        )
+        steps.append(step)
+
+    if not steps:
+        return None
+
+    # Extract ground truth
+    final_answer = item.get("answer", item.get("final_answer"))
+    task_success = item.get("success", item.get("correct"))
+
+    ground_truth = GroundTruth(
+        task_description=task_desc,
+        expected_answer=final_answer,
+        task_success=task_success,
+        domain=item.get("category", item.get("domain")),
+    )
+
+    trajectory = Trajectory(
+        trajectory_id=f"toolbench_{idx}",
+        benchmark="toolbench",
+        steps=steps,
+        ground_truth=ground_truth,
+        metadata={"source": "steps_format", "hf_index": idx},
+    )
+
+    return trajectory
 
 
 def load_gaia_trajectories(

@@ -42,5 +42,27 @@ Thumbs.db
 .claude/
 results/*
 !results/.gitkeep
+
+# Ignore ALL data/ folder contents except the main README
+data/*
+!data/README.md
+!data/annotations/
+!data/gaia/
+!data/perturbed/
+!data/raw/
 data/raw/*
 !data/raw/.gitkeep
+data/annotations/*
+!data/annotations/.gitkeep
+data/gaia/*
+!data/gaia/.gitkeep
+data/perturbed/*
+!data/perturbed/.gitkeep
+
+# Ignore test data files
+tests/data/*
+
+# Additional data file patterns
+*.json.gz
+*.jsonl
+*.zip

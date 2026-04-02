@@ -237,8 +237,8 @@ class ExperimentRunner:
         print(f"📊 Total trajectories loaded: {len(trajectories)}")
         print()
 
-        # Show sample
-        if trajectories and self.verbose:
+        # Always show first sample for debugging
+        if trajectories:
             self._show_sample_trajectory(trajectories[0])
 
         # Save to MongoDB (unless dry run)
@@ -258,21 +258,25 @@ class ExperimentRunner:
         # This is either from config or generated from config hash
 
         # Create experiment record in MongoDB
-        mongo_experiment_id = self.storage.create_experiment(
-            name=self.experiment_id,
-            description=self.experiment_info.get('description', ''),
-            config=self.config
-        )
+        experiment_config = {
+            "experiment_id": self.experiment_id,
+            "name": self.experiment_info.get('name', self.experiment_id),
+            "description": self.experiment_info.get('description', ''),
+            "config": self.config
+        }
+        mongo_experiment_id = self.storage.create_experiment(experiment_config)
         print(f"   ✓ Created experiment: {self.experiment_id}")
         print(f"   ✓ MongoDB record ID: {mongo_experiment_id}")
 
         # Store trajectories
         stored_count = 0
         for traj in trajectories:
-            self.storage.save_trajectory(
-                trajectory=traj,
-                experiment_id=mongo_experiment_id
-            )
+            # Convert Trajectory object to dict and add experiment_id
+            traj_dict = traj.to_dict()
+            traj_dict["experiment_id"] = mongo_experiment_id
+            traj_dict["is_perturbed"] = False  # Original trajectory
+
+            self.storage.save_trajectory(trajectory=traj_dict)
             stored_count += 1
 
             if stored_count % 10 == 0:
@@ -280,6 +284,20 @@ class ExperimentRunner:
 
         print(f"   ✓ Stored {stored_count} trajectories")
         print()
+
+        # Verify data was actually saved to MongoDB
+        print("🔍 Verifying MongoDB storage...")
+        try:
+            saved_count = self.storage.trajectories.count_documents({
+                "experiment_id": mongo_experiment_id
+            })
+            print(f"   ✓ Verified: {saved_count} trajectories in MongoDB")
+            if saved_count != stored_count:
+                print(f"   ⚠️  WARNING: Mismatch! Stored {stored_count} but found {saved_count}")
+        except Exception as e:
+            print(f"   ⚠️  Could not verify: {e}")
+        print()
+
         print("=" * 70)
         print("✅ TRAJECTORY LOADING COMPLETE")
         print("=" * 70)
@@ -291,13 +309,20 @@ class ExperimentRunner:
 
     def _show_sample_trajectory(self, traj: Trajectory):
         """Display a sample trajectory for verification."""
-        print("Sample trajectory:")
+        print("=" * 70)
+        print("📋 SAMPLE TRAJECTORY")
+        print("=" * 70)
         print(f"  ID: {traj.trajectory_id}")
         print(f"  Benchmark: {traj.benchmark}")
         print(f"  Steps: {len(traj.steps)}")
-        print(f"  Task: {traj.ground_truth.task_description[:80]}...")
+        print(f"  Task: {traj.ground_truth.task_description[:100]}...")
         if traj.steps:
-            print(f"  First step: {traj.steps[0].action[:60]}...")
+            step1 = traj.steps[0]
+            print(f"  First step type: {step1.step_type}")
+            print(f"  First step content: {step1.content[:80]}..." if step1.content else "  First step content: [empty]")
+            if step1.tool_name:
+                print(f"  Tool: {step1.tool_name}")
+        print("=" * 70)
         print()
 
     def _phase_generate_perturbations(self):
