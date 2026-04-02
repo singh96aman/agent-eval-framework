@@ -108,14 +108,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run Phase 2 (load trajectories)
-  python main.py --config poc_phase2_load
+  # Run entire experiment
+  python main.py --config poc_experiment --runner all
 
-  # Dry run (load but don't save)
-  python main.py --config poc_phase2_load --dry-run
+  # Run specific phases
+  python main.py --config poc_experiment --runner load,perturb
+  python main.py --config poc_experiment --runner judge,ccg,analyze
 
-  # Override phase from config
-  python main.py --config poc_phase2_load --phase load_trajectories
+  # Run single phase
+  python main.py --config poc_experiment --runner load
+
+  # Dry run (test without saving)
+  python main.py --config poc_experiment --runner load --dry-run
 
   # List all available configs
   python main.py --list-configs
@@ -130,15 +134,16 @@ Examples:
     parser.add_argument(
         "--phase",
         type=str,
-        choices=[
-            "load_trajectories",
-            "generate_perturbations",
-            "annotate",
-            "evaluate_judges",
-            "compute_ccg",
-            "analyze"
-        ],
-        help="Override phase specified in config"
+        help="(Deprecated: use --runner instead) Override phase specified in config"
+    )
+    parser.add_argument(
+        "--runner",
+        type=str,
+        help=(
+            "Which phases to run (comma-separated or 'all'). "
+            "Options: load, perturb, annotate, judge, ccg, analyze, all. "
+            "Example: --runner load,perturb or --runner all"
+        )
     )
     parser.add_argument(
         "--dry-run",
@@ -189,19 +194,23 @@ Examples:
 
     # Override config with command-line args
     if args.phase:
-        config['execution']['phase'] = args.phase
-        print(f"⚙️  Override phase: {args.phase}")
+        print("⚠️  Warning: --phase is deprecated, use --runner instead")
+        config['execution']['runner'] = args.phase
+
+    if args.runner:
+        config['execution']['runner'] = args.runner
+        print("⚙️  Runner: {}".format(args.runner))
 
     if args.dry_run:
         config['execution']['dry_run'] = True
-        print(f"⚙️  Dry run mode enabled")
+        print("⚙️  Dry run mode enabled")
 
     if args.verbose:
         config['execution']['verbose'] = True
 
     if args.resume:
         config['execution']['resume'] = True
-        print(f"⚙️  Resume mode enabled")
+        print("⚙️  Resume mode enabled")
 
     print()
 

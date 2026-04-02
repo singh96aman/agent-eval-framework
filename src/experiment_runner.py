@@ -9,16 +9,38 @@ This is the main driver class that handles:
 - Phase 5: CCG computation and analysis
 """
 
-import os
 import json
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 from dotenv import load_dotenv
 
 from data.loaders import load_toolbench_trajectories, load_gaia_trajectories
 from storage.mongodb import MongoDBStorage
 from data.schema import Trajectory
+
+
+def generate_experiment_id(config: Dict[str, Any]) -> str:
+    """
+    Generate a unique experiment ID by hashing the configuration.
+
+    This creates a deterministic hash from the experiment configuration,
+    ensuring the same config always produces the same experiment ID.
+
+    Args:
+        config: Experiment configuration dictionary
+
+    Returns:
+        Unique experiment ID (e.g., "exp_a3f2d9e1")
+    """
+    # Create a stable JSON representation for hashing
+    # Sort keys to ensure deterministic ordering
+    config_str = json.dumps(config, sort_keys=True)
+
+    # Generate SHA256 hash and take first 8 characters
+    hash_digest = hashlib.sha256(config_str.encode()).hexdigest()[:8]
+
+    return f"exp_{hash_digest}"
 
 
 class ExperimentRunner:
@@ -39,7 +61,11 @@ class ExperimentRunner:
         self.config = config
         self.experiment_info = config.get('experiment', {})
         self.execution = config.get('execution', {})
-        self.phase = self.execution.get('phase', 'load_trajectories')
+
+        # Parse runner parameter (which phases to run)
+        runner_str = self.execution.get('runner', 'all')
+        self.phases_to_run = self._parse_runner(runner_str)
+
         self.dry_run = self.execution.get('dry_run', False)
         self.verbose = self.execution.get('verbose', True)
 
@@ -48,21 +74,79 @@ class ExperimentRunner:
         if not self.dry_run:
             self.storage = MongoDBStorage()
 
-        # Experiment state
-        self.experiment_id: Optional[str] = None
+        # Get or generate experiment ID from config
+        # If experiment_id is specified in config, use it
+        # Otherwise, generate one from config hash
+        self.experiment_id: Optional[str] = self.experiment_info.get('experiment_id')
+        if not self.experiment_id:
+            self.experiment_id = generate_experiment_id(self.config)
+
         self.checkpoint_dir = Path(
             self.execution.get('checkpoint_dir', 'results/checkpoints')
         )
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    def _parse_runner(self, runner_str: str) -> List[str]:
+        """
+        Parse runner string into list of phases to run.
+
+        Args:
+            runner_str: Comma-separated phases or 'all'
+                       Examples: 'load', 'load,perturb', 'all'
+
+        Returns:
+            List of phase names to execute
+        """
+        # Mapping of short names to full phase names
+        phase_map = {
+            'load': 'load_trajectories',
+            'perturb': 'generate_perturbations',
+            'annotate': 'annotate',
+            'judge': 'evaluate_judges',
+            'ccg': 'compute_ccg',
+            'analyze': 'analyze',
+            # Also support full names
+            'load_trajectories': 'load_trajectories',
+            'generate_perturbations': 'generate_perturbations',
+            'evaluate_judges': 'evaluate_judges',
+            'compute_ccg': 'compute_ccg',
+        }
+
+        # 'all' means run everything in order
+        if runner_str == 'all':
+            return [
+                'load_trajectories',
+                'generate_perturbations',
+                'annotate',
+                'evaluate_judges',
+                'compute_ccg',
+                'analyze'
+            ]
+
+        # Parse comma-separated list
+        phases = []
+        for phase in runner_str.split(','):
+            phase = phase.strip().lower()
+            if phase in phase_map:
+                phases.append(phase_map[phase])
+            else:
+                raise ValueError(
+                    f"Unknown phase: '{phase}'. "
+                    f"Valid options: {', '.join(phase_map.keys())}, all"
+                )
+
+        return phases
+
     def run(self):
-        """Run the experiment phase specified in config."""
+        """Run experiment phases specified by runner config."""
         print("=" * 70)
         print(f"EXPERIMENT: {self.experiment_info.get('name', 'Unnamed')}")
         print("=" * 70)
-        print(f"Phase: {self.phase}")
+        print(f"Experiment ID: {self.experiment_id}")
+        print(f"Phases to run: {', '.join(self.phases_to_run)}")
         print(f"Dry Run: {self.dry_run}")
-        print(f"Description: {self.experiment_info.get('description', 'N/A')}")
+        desc = self.experiment_info.get('description', 'N/A')
+        print(f"Description: {desc}")
         print("=" * 70)
         print()
 
@@ -76,15 +160,26 @@ class ExperimentRunner:
             'analyze': self._phase_analyze,
         }
 
-        handler = phase_handlers.get(self.phase)
-        if not handler:
-            raise ValueError(
-                f"Unknown phase: {self.phase}. "
-                f"Valid phases: {list(phase_handlers.keys())}"
+        # Run each phase in sequence
+        for idx, phase in enumerate(self.phases_to_run, 1):
+            print()
+            print("=" * 70)
+            print(
+                f"RUNNING PHASE {idx}/{len(self.phases_to_run)}: "
+                f"{phase.upper()}"
             )
+            print("=" * 70)
+            print()
 
-        # Run the phase
-        handler()
+            handler = phase_handlers.get(phase)
+            if not handler:
+                raise ValueError(
+                    f"Unknown phase: {phase}. "
+                    f"Valid phases: {list(phase_handlers.keys())}"
+                )
+
+            # Run the phase
+            handler()
 
         # Cleanup
         if self.storage:
@@ -159,26 +254,24 @@ class ExperimentRunner:
 
     def _store_trajectories(self, trajectories: List[Trajectory]):
         """Store trajectories in MongoDB."""
-        storage_config = self.config.get('storage', {})
-        experiment_name = storage_config.get(
-            'experiment_name',
-            f"poc_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
+        # Use experiment_id from config (already set in __init__)
+        # This is either from config or generated from config hash
 
-        # Create experiment
-        self.experiment_id = self.storage.create_experiment(
-            name=experiment_name,
+        # Create experiment record in MongoDB
+        mongo_experiment_id = self.storage.create_experiment(
+            name=self.experiment_id,
             description=self.experiment_info.get('description', ''),
             config=self.config
         )
         print(f"   ✓ Created experiment: {self.experiment_id}")
+        print(f"   ✓ MongoDB record ID: {mongo_experiment_id}")
 
         # Store trajectories
         stored_count = 0
         for traj in trajectories:
             self.storage.save_trajectory(
                 trajectory=traj,
-                experiment_id=self.experiment_id
+                experiment_id=mongo_experiment_id
             )
             stored_count += 1
 
@@ -191,6 +284,7 @@ class ExperimentRunner:
         print("✅ TRAJECTORY LOADING COMPLETE")
         print("=" * 70)
         print(f"Experiment ID: {self.experiment_id}")
+        print(f"MongoDB Record ID: {mongo_experiment_id}")
         print(f"Trajectories: {stored_count}")
         print(f"Database: {self.storage.database_name}")
         print()

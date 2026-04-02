@@ -1,222 +1,441 @@
+# Agent Judge Calibration Research
 
-## README
+## What This Is
 
-## What this repo is
+This repository studies whether LLM judges fail to penalize the most consequential errors in agent trajectories.
 
-This repository studies whether LLM judges fail to penalize the most consequential errors in agentic trajectories.
+**Core hypothesis:** Judges systematically miscalibrate to error criticality, over-penalizing visible local mistakes while under-penalizing early structural failures (planning/tool selection) that cause larger downstream degradation.
 
-Core idea:
-some trajectory errors are much more damaging than others, but judges may not score them in proportion to their true downstream impact.
+**Example:** A judge might rate a typo in step 9 as worse than a wrong strategy in step 1, even though the step 1 error cascaded and ruined all subsequent steps.
 
 ---
 
 ## Quick Start
 
 ### 1. Install Dependencies
-
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment
-
 ```bash
 cp .env.example .env
-# Edit .env with your API credentials
+# Edit .env with your credentials
 ```
 
-Required environment variables:
-- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (for Claude Bedrock)
-- `GPT_OSS_ENDPOINT`, `GPT_OSS_API_KEY` (for GPT-OSS 120B)
+**Required:**
+- `MONGODB_URI` - MongoDB Atlas connection string
+- `HUGGINGFACE_TOKEN` - HuggingFace API token
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` - AWS credentials for Bedrock
 
-### 3. Get HuggingFace Token
-
-Datasets are loaded from HuggingFace (no manual download needed):
-
-1. Get token from: https://huggingface.co/settings/tokens
-2. Add to `.env`:
-   ```bash
-   HUGGINGFACE_TOKEN=your_token_here
-   ```
-
-See [data/README.md](data/README.md) for dataset details.
-
-### 4. Set Up MongoDB
-
-Results are stored in MongoDB (not local files).
-
-**Option A - Local:**
-```bash
-brew install mongodb-community
-brew services start mongodb-community
-```
-
-**Option B - Atlas (Cloud):**
-Sign up at https://www.mongodb.com/cloud/atlas
-
-Add MongoDB URI to `.env`:
-```bash
-MONGODB_URI=mongodb://localhost:27017
-# or for Atlas:
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
-MONGODB_DATABASE=agent_judge_experiment
-```
-
-### 5. Verify Pre-Requisites
-
+### 3. Verify Setup
 ```bash
 python src/prereq_check.py
+# Should show: ✅ PASSED: 6/6 (100%)
 ```
 
-This checks:
-- ✓ Directory structure
-- ✓ MongoDB connection
-- ✓ HuggingFace token and dataset access
-- ✓ API access (Claude Bedrock, GPT-OSS)
-- ✓ Python dependencies installed
-
-### 6. Run Tests
-
+### 4. Run Experiment
 ```bash
-pytest tests/ -v
-```
+# Run entire experiment (all 6 phases)
+python main.py --config poc_experiment --runner all
 
-### 7. Run Experiment
-
-The experiment uses a unified driver system with JSON-based configurations.
-
-**List available configurations:**
-```bash
-python main.py --list-configs
-```
-
-**Run Phase 2 (Load Trajectories):**
-```bash
-# Dry run (test without saving)
-python main.py --config poc_phase2_load --dry-run
-
-# Full run (save to MongoDB)
-python main.py --config poc_phase2_load
-```
-
-**Test with small sample:**
-```bash
-python main.py --config test_load --dry-run
+# Or run specific phases
+python main.py --config poc_experiment --runner load
+python main.py --config poc_experiment --runner load,perturb
+python main.py --config poc_experiment --runner judge,ccg,analyze
 ```
 
 ---
 
-## Experiment Configuration System
+## Experiment Configuration
 
-All experiment phases are controlled via `main.py` with JSON configuration files in `config/experiments/`.
+### Design: 1 Config = 1 Complete Experiment
 
-### Main Driver
+Each JSON config file in `config/experiments/` defines a complete experiment. Use the `--runner` parameter to control which phases execute.
 
-```bash
-python main.py --config <config_name> [options]
+### Example: `config/experiments/poc_experiment.json`
+
+```json
+{
+  "experiment": {
+    "name": "POC: Judge Calibration to Trajectory Criticality",
+    "experiment_id": "exp_poc_full_v1_20260402",
+    "description": "Full POC experiment with 50 trajectories"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "num_trajectories": 25,
+      "filters": { "min_steps": 3, "max_steps": 15 }
+    },
+    "gaia": {
+      "num_trajectories": 25,
+      "filters": { "min_steps": 2, "max_steps": 12 }
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment"
+  },
+
+  "judges": {
+    "models": [
+      {"name": "claude-sonnet-4.5", "model_id": "..."},
+      {"name": "gpt-oss-120b", "model_id": "..."}
+    ],
+    "samples_per_trajectory": 3
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection", "parameter"],
+    "positions": ["early", "middle", "late"],
+    "num_per_condition": 5
+  },
+
+  "execution": {
+    "runner": "all",
+    "dry_run": false,
+    "verbose": true
+  }
+}
 ```
 
-**Options:**
-- `--config <name>` - Configuration file to use
-- `--phase <phase>` - Override phase (load_trajectories, generate_perturbations, etc.)
-- `--dry-run` - Run without saving to database
-- `--resume` - Resume from last checkpoint
-- `--verbose` - Enable verbose output
-- `--list-configs` - List all available configurations
+### Config Sections Explained
 
-### Configuration Files
+#### `experiment`
+- **`experiment_id`**: Unique identifier (manual or auto-generated hash)
+- **`name`**: Human-readable display name
+- **`description`**: What this experiment does
 
-**`poc_phase2_load.json`** - Load 50 trajectories (25 ToolBench + 25 GAIA)
+#### `datasets`
+- **`num_trajectories`**: How many trajectories to load from each benchmark
+- **`filters`**: Length constraints (min/max steps) and success criteria
+- **`random_seed`**: For reproducibility (same seed = same sample)
 
-**`test_load.json`** - Test with 4 trajectories (2 from each dataset)
+#### `storage`
+- **`backend`**: Database type (mongodb)
+- **`database`**: Database name where results are stored
 
-### Supported Phases
+#### `judges`
+- **`models`**: Which LLM judges to use (Claude, GPT-OSS, etc.)
+- **`samples_per_trajectory`**: How many times to run each judge (for variance measurement)
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| `load_trajectories` | ✅ Implemented | Load trajectories from HuggingFace → MongoDB |
-| `generate_perturbations` | ⏳ Pending | Create perturbed versions (9 conditions) |
-| `annotate` | ⏳ Pending | Human annotation interface (TSD, SER) |
-| `evaluate_judges` | ⏳ Pending | Run judges on all trajectories |
-| `compute_ccg` | ⏳ Pending | Calculate Criticality-Calibration Gap |
-| `analyze` | ⏳ Pending | Generate visualizations and reports |
+#### `perturbations`
+- **`types`**: Error types to inject (planning, tool_selection, parameter)
+- **`positions`**: Where to inject (early/middle/late in trajectory)
+- **`num_per_condition`**: Samples per (type × position) combination
 
-### Current Configuration (Phase 2)
-
-**Datasets:**
-- ToolBench: 25 trajectories (3-15 steps, seed=42)
-- GAIA: 25 trajectories (2-12 steps, seed=42)
-
-**Storage:**
-- Backend: MongoDB Atlas
-- Database: `agent_judge_experiment`
-- Experiment: `poc_load_2026_04_02`
-
-**Judge Models (for later phases):**
-- Claude Sonnet 4.5: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
-- GPT-OSS 120B: `openai.gpt-oss-120b-1:0`
-
-**Perturbations (Phase 3):**
-- Types: planning, tool_selection, parameter
-- Positions: early, middle, late
-- Total: 9 conditions (3 types × 3 positions)
+#### `execution`
+- **`runner`**: Which phases to run (`"all"`, `"load"`, `"load,perturb"`, etc.)
+- **`dry_run`**: If true, runs without saving to database
+- **`verbose`**: Enable detailed output
 
 ---
 
-## Repo layout
+## Running Experiments
 
-- `src/` — all code
-  - `data/` — dataset loaders and schema
-  - `perturbations/` — perturbation generation (Phase 2)
-  - `judges/` — LLM judge API integration (Phase 3)
-  - `annotation/` — human annotation tools (Phase 4)
-  - `metrics/` — CCG computation (Phase 4)
-  - `visualization/` — plotting and reporting (Phase 5)
-- `tests/` — all tests
-- `agent_tasks/` — restartable task folders
-- `data/` — datasets and dataset artifacts
-- `results/` — experiment outputs
-- `paper/` — notes, deep dives, outlines, drafts
+### The `--runner` Parameter
+
+Controls which phases execute:
+
+| Runner | Phases | Description |
+|--------|--------|-------------|
+| `all` | 1→2→3→4→5→6 | Full experiment pipeline |
+| `load` | 1 | Load trajectories from HuggingFace |
+| `perturb` | 2 | Generate perturbed versions |
+| `annotate` | 3 | Human annotation interface |
+| `judge` | 4 | Run LLM judge evaluations |
+| `ccg` | 5 | Compute CCG metrics |
+| `analyze` | 6 | Generate visualizations |
+
+### Common Workflows
+
+**Full experiment (end-to-end):**
+```bash
+python main.py --config poc_experiment --runner all
+```
+
+**Staged execution:**
+```bash
+# Stage 1: Load baseline data
+python main.py --config poc_experiment --runner load
+
+# Stage 2: Generate perturbations
+python main.py --config poc_experiment --runner perturb
+
+# Stage 3: Annotate (human)
+python main.py --config poc_experiment --runner annotate
+
+# Stage 4-6: Judge evaluation + analysis
+python main.py --config poc_experiment --runner judge,ccg,analyze
+```
+
+**Test mode (no database writes):**
+```bash
+python main.py --config poc_experiment --runner load --dry-run
+```
+
+---
+
+## The 6 Experiment Phases
+
+| Phase | Name | Input | Output | Time |
+|-------|------|-------|--------|------|
+| 1 | Load Trajectories | HuggingFace datasets | 50 baseline trajectories in MongoDB | 5-10 min |
+| 2 | Generate Perturbations | Baseline trajectories | 50 perturbed trajectories (9 conditions) | 1-2 hours (manual) |
+| 3 | Annotate | Perturbed trajectories | True criticality scores (TSD, SER) | 12-17 hours (manual) |
+| 4 | Evaluate Judges | Trajectories + perturbations | Judge penalty scores (JPS) | 20-30 min (API) |
+| 5 | Compute CCG | TCS + JPS | CCG = (JPS - TCS) / TCS | 1-2 min |
+| 6 | Analyze | CCG results | Heatmaps, statistical tests, reports | 5-10 min |
+
+---
+
+## Repo Structure
+
+```
+repo/
+├── README.md                    # This file
+├── Agents.MD                    # Project rules and instructions
+├── main.py                      # CLI entry point
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Environment variable template
+│
+├── src/                         # All implementation code
+│   ├── data/                    # Dataset loaders (ToolBench, GAIA)
+│   ├── storage/                 # MongoDB integration
+│   ├── perturbations/           # Error injection logic
+│   ├── judges/                  # LLM judge API clients
+│   ├── annotation/              # Human annotation tools
+│   ├── metrics/                 # CCG computation
+│   ├── visualization/           # Plotting and analysis
+│   ├── experiment_runner.py    # Main orchestrator
+│   └── prereq_check.py          # Prerequisite verification
+│
+├── tests/                       # Test suite (58 tests)
+│   ├── test_loaders.py
+│   ├── test_storage.py
+│   ├── test_prerequisites.py
+│   └── test_integration_pipeline.py
+│
+├── config/                      # Experiment configurations
+│   └── experiments/
+│       ├── poc_experiment.json  # Full POC experiment
+│       └── test_load.json       # Small test config
+│
+├── agent_tasks/                 # Task tracking for agents
+│   ├── 01_research_foundation/
+│   └── 02_poc_implementation/
+│
+├── data/                        # Datasets and artifacts
+├── results/                     # Experiment outputs
+└── paper/                       # Papers, notes, literature review
+    ├── literature_review.md
+    └── POC_REQUIREMENTS.MD
+```
+
+---
+
+## Key Concepts
+
+### Trajectories
+A **trajectory** is a sequence of steps an AI agent takes to solve a task.
+
+Example:
+```
+Task: "What's the population of Tokyo?"
+Step 1: [Think] "I need to search"
+Step 2: [Tool] search_api(query="Tokyo population 2023")
+Step 3: [Observe] "14.09 million"
+Step 4: [Answer] "The population is 14.09 million"
+```
+
+### Perturbations
+A **perturbation** is an intentionally injected error to test judge sensitivity.
+
+**Types:**
+- **Planning error**: Wrong goal or strategy
+- **Tool selection error**: Wrong tool for the task
+- **Parameter error**: Right tool, wrong arguments
+
+**Positions:**
+- **Early** (steps 1-2): Planning phase
+- **Middle** (steps 3-5): Execution phase
+- **Late** (steps 6+): Validation phase
+
+### Criticality Metrics
+
+**True Criticality Score (TCS):**
+```
+TCS = (Task Success Degradation × 100) + (Subsequent Error Rate × 10)
+```
+- Measured by human annotation
+- High TCS = error broke everything downstream
+
+**Judge Penalty Score (JPS):**
+```
+JPS = 100 - judge_overall_score
+```
+- Extracted from LLM judge ratings
+- High JPS = judge penalized heavily
+
+**Criticality-Calibration Gap (CCG):**
+```
+CCG = (JPS - TCS) / TCS
+```
+- **CCG < 0**: Judge under-penalizes (missed critical error)
+- **CCG > 0**: Judge over-penalizes (overreacted to minor error)
+- **CCG ≈ 0**: Well-calibrated
+
+### Expected Results
+
+**Hypothesis:** Judges exhibit position-dependent miscalibration.
+
+| Position | Expected CCG | Interpretation |
+|----------|--------------|----------------|
+| Early | < -0.3 | Under-penalizes critical errors by 30%+ |
+| Middle | -0.2 to +0.1 | Moderately calibrated |
+| Late | > +0.2 | Over-penalizes minor errors by 20%+ |
+
+**Heatmap visualization:**
+```
+           Early    Middle    Late
+Planning   -0.65    -0.30    +0.15  (blue → red)
+Tool       -0.50    -0.20    +0.25
+Parameter  -0.40    -0.10    +0.35
+
+Blue (negative) = Under-penalizes
+Red (positive) = Over-penalizes
+```
+
+---
+
+## Data Storage
+
+Results are stored in MongoDB Atlas:
+
+**Collections:**
+- `experiments` - Experiment metadata and configs
+- `trajectories` - Baseline trajectories
+- `perturbed_trajectories` - Perturbed versions with metadata
+- `annotations` - Human annotations (TSD, SER, TCS)
+- `judge_evaluations` - Judge ratings (JPS)
+- `ccg_results` - Computed CCG metrics
+
+**Experiment ID tracking:**
+All data for an experiment is linked by `experiment_id` from the config. This enables:
+- Querying all data for one experiment
+- Resuming failed runs
+- Comparing across experiments
 
 ---
 
 ## Current Status
 
 **Completed:**
-- ✅ Task 01: Research Foundation (literature review + POC design)
-- ✅ Phase 1 of Task 02: Pre-requisite checks + dataset loaders
+- ✅ Infrastructure (loaders, storage, runner system)
+- ✅ Test suite (58 tests passing)
+- ✅ Prerequisites (MongoDB, HF, AWS Bedrock verified)
+- ✅ Phase 1 implementation (trajectory loading)
 
 **In Progress:**
-- 🔄 Task 02: POC Implementation (Phase 2-5)
-
-**Next:**
-- Phase 2: Perturbation generation
-- Phase 3: Judge API integration
-- Phase 4: Annotation tools + CCG metrics
-- Phase 5: Experiment runner + visualization
+- 🔄 Phase 2: Perturbation generation
+- 🔄 Phase 3: Annotation interface
+- 🔄 Phase 4: Judge API integration
+- 🔄 Phase 5: CCG computation
+- 🔄 Phase 6: Visualization
 
 ---
 
-## How to start or restart work
+## CLI Reference
+
+### List available configs
+```bash
+python main.py --list-configs
+```
+
+### Run experiment
+```bash
+python main.py --config <config_name> --runner <phases>
+```
+
+**Options:**
+- `--config <name>` - Config file name (in `config/experiments/`)
+- `--runner <phases>` - Which phases to run (`all`, `load`, `load,perturb`, etc.)
+- `--dry-run` - Test without saving to database
+- `--resume` - Resume from last checkpoint
+- `--verbose` - Enable detailed output
+
+**Examples:**
+```bash
+# Run all phases
+python main.py --config poc_experiment --runner all
+
+# Run specific phases
+python main.py --config poc_experiment --runner load,perturb
+
+# Test mode
+python main.py --config poc_experiment --runner load --dry-run
+
+# Resume after failure
+python main.py --config poc_experiment --resume
+```
+
+---
+
+## Development
+
+### Run tests
+```bash
+pytest tests/ -v
+```
+
+### Check prerequisites
+```bash
+python src/prereq_check.py
+```
+
+### Verify MongoDB connection
+```bash
+python src/data/verify_atlas_connection.py
+```
+
+---
+
+## How to Start Work
 
 Read in this order:
 1. `README.md` (this file)
-2. `Agents.MD` (project rules and instructions)
+2. `Agents.MD` (project rules)
 3. `agent_tasks/<task_name>/Requirements.MD`
-4. `agent_tasks/<task_name>/state.json` if present
-
-That should be enough to resume most work.
+4. `agent_tasks/<task_name>/state.json`
 
 ---
 
-## Task format
+## Research Context
 
-Example:
+**Literature review:** [paper/literature_review.md](paper/literature_review.md)  
+**POC design:** [paper/POC_REQUIREMENTS.MD](paper/POC_REQUIREMENTS.MD)
 
-```text
-agent_tasks/create_scaffolding_for_mongodb/
-├── Requirements.MD
-├── state.json
-├── inputs/
-├── outputs/
-└── artifacts/
+**Key related work:**
+- G-Eval (judge evaluation)
+- AgentProcessBench (step-level evaluation)
+- Position-Weighted Consistency (PWC)
+- Information Fidelity in Tool-Using Agents
+- Effort-based metrics (autonomous driving)
+
+**Our novelty:**
+First systematic study of judge calibration to trajectory criticality with position-dependent error weighting.
+
+---
+
+## Contributing
+
+This is a research project. AI agents are heavily used for implementation. See `Agents.MD` for project-specific instructions.
+
+**Important rules:**
+- All code in `src/`
+- All tests in `tests/`
+- All paper material in `paper/`
+- Never commit as Claude (update git config)
+- Keep repo clean and organized

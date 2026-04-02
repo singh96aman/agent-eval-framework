@@ -1,9 +1,9 @@
 {
   "experiment": {
-    "name": "POC Phase 2: Load Trajectories",
-    "description": "Load 50 trajectories (25 ToolBench + 25 GAIA) into MongoDB",
+    "name": "POC: Judge Calibration to Trajectory Criticality",
+    "experiment_id": "exp_poc_full_v1_20260402",
+    "description": "Full POC experiment: Load 50 trajectories, generate perturbations (9 conditions), annotate criticality, evaluate judges (Claude + GPT-OSS), compute CCG metrics",
     "version": "1.0",
-    "phase": "load_trajectories",
     "created_by": "human_researcher",
     "created_date": "2026-04-02"
   },
@@ -40,8 +40,7 @@
 
   "storage": {
     "backend": "mongodb",
-    "database": "agent_judge_experiment",
-    "experiment_name": "poc_load_2026_04_02"
+    "database": "agent_judge_experiment"
   },
 
   "judges": {
@@ -86,7 +85,7 @@
   },
 
   "execution": {
-    "phase": "load_trajectories",
+    "runner": "all",
     "dry_run": false,
     "enable_checkpointing": true,
     "checkpoint_dir": "results/checkpoints",

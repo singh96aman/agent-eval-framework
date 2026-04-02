@@ -1,6 +1,7 @@
 {
   "experiment": {
     "name": "Test: Load Small Sample",
+    "experiment_id": "exp_test_load_v1_20260402",
     "description": "Load 2 trajectories from each dataset for testing",
     "version": "1.0",
     "phase": "load_trajectories",
@@ -40,8 +41,7 @@
 
   "storage": {
     "backend": "mongodb",
-    "database": "agent_judge_experiment",
-    "experiment_name": "test_load_2026_04_02"
+    "database": "agent_judge_experiment"
   },
 
   "execution": {
