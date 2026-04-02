@@ -277,29 +277,19 @@ class PrerequisiteChecker:
                     region_name=os.getenv('AWS_REGION', 'us-east-1')
                 )
 
-                # Make "hello world" test call
-                test_payload = {
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 10,
-                    "messages": [
+                # Make "hello world" test call using Converse API
+                response = client.converse(
+                    modelId=model_id,
+                    messages=[
                         {
                             "role": "user",
-                            "content": "Say 'Hello' in one word."
+                            "content": [{"text": "Hello"}]
                         }
                     ]
-                }
-
-                response = client.invoke_model(
-                    modelId=model_id,
-                    body=json.dumps(test_payload)
-                )
-
-                response_body = json.loads(
-                    response['body'].read().decode('utf-8')
                 )
 
                 # Check response is valid
-                if 'content' in response_body:
+                if 'output' in response and 'message' in response['output']:
                     result = CheckResult(
                         check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=True,
@@ -310,7 +300,7 @@ class PrerequisiteChecker:
                         details={
                             "region": os.getenv('AWS_REGION', 'us-east-1'),
                             "model_id": model_id,
-                            "test_response": response_body['content'][0]['text'][:50]
+                            "tokens_used": response.get('usage', {}).get('totalTokens', 0)
                         }
                     )
                 else:
@@ -318,7 +308,7 @@ class PrerequisiteChecker:
                         check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=False,
                         message="Unexpected response format from model",
-                        details={"response": str(response_body)[:200]}
+                        details={"response": str(response)[:200]}
                     )
 
             except ClientError as e:
@@ -411,25 +401,19 @@ class PrerequisiteChecker:
                     region_name=os.getenv('AWS_REGION', 'us-east-1')
                 )
 
-                # Make "hello world" test call
-                # Note: Payload format may vary by model
-                test_payload = {
-                    "prompt": "Say 'Hello' in one word.",
-                    "max_gen_len": 10,
-                    "temperature": 0.1,
-                }
-
-                response = client.invoke_model(
+                # Make "hello world" test call using Converse API
+                response = client.converse(
                     modelId=model_id,
-                    body=json.dumps(test_payload)
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [{"text": "Hello"}]
+                        }
+                    ]
                 )
 
-                response_body = json.loads(
-                    response['body'].read().decode('utf-8')
-                )
-
-                # Check response is valid (format depends on model)
-                if response_body:
+                # Check response is valid
+                if 'output' in response and 'message' in response['output']:
                     result = CheckResult(
                         check_name="GPT-OSS 120B (Bedrock)",
                         passed=True,
@@ -440,15 +424,15 @@ class PrerequisiteChecker:
                         details={
                             "region": os.getenv('AWS_REGION', 'us-east-1'),
                             "model_id": model_id,
-                            "test_response": str(response_body)[:50]
+                            "tokens_used": response.get('usage', {}).get('totalTokens', 0)
                         }
                     )
                 else:
                     result = CheckResult(
                         check_name="GPT-OSS 120B (Bedrock)",
                         passed=False,
-                        message="Empty response from model",
-                        details={"response": str(response_body)}
+                        message="Unexpected response format from model",
+                        details={"response": str(response)[:200]}
                     )
 
             except ClientError as e:
@@ -550,6 +534,13 @@ class PrerequisiteChecker:
 
 def main():
     """Run pre-requisite checks from command line."""
+    # Load .env file
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
+
     checker = PrerequisiteChecker()
     all_passed = checker.run_all_checks()
     sys.exit(0 if all_passed else 1)

@@ -14,12 +14,15 @@
   ],
   "completed_steps": [
     "Phase 1: Infrastructure setup - COMPLETE",
-    "- Pre-requisite verification system (6 checks)",
+    "- Pre-requisite verification system (6/6 passing)",
     "- Dataset loaders (HuggingFace integration)",
     "- MongoDB storage backend (5 collections)",
     "- Unified trajectory schema",
-    "- Complete test suite (53 tests passing)",
-    "- All tests use mocks (no real DB/API required)"
+    "- Complete test suite (58 tests passing)",
+    "- All tests use mocks (no real DB/API required)",
+    "- Main driver system (main.py + ExperimentRunner)",
+    "- Configuration system (JSON-based configs)",
+    "- Command-line interface with all options"
   ],
   "pending_steps": [
     "Phase 2: Load real trajectories",
@@ -42,6 +45,11 @@
     "src/data/loaders.py",
     "src/prereq_check.py",
     "src/storage/mongodb.py",
+    "src/experiment_runner.py",
+    "main.py",
+    "config/experiments/poc_phase2_load.json",
+    "config/experiments/test_load.json",
+    "CONFIGURATION.md",
     "tests/__init__.py",
     "tests/test_loaders.py (16 tests)",
     "tests/test_prerequisites.py (13 tests)",
@@ -50,16 +58,11 @@
     "tests/test_mongodb_schema.py (6 tests)",
     "tests/test_mongodb_atlas.py (5 skipped)",
     "requirements.txt",
+    ".env (configured)",
     ".env.example",
     "data/README.md",
     "README.md (updated)"
   ],
-  "blockers": [
-    "Phase 2 blocked: Need .env configuration",
-    "- MONGODB_URI not set",
-    "- HUGGINGFACE_TOKEN not set",
-    "- AWS_BEDROCK_CLAUDE model version outdated (end of life)",
-    "- AWS_BEDROCK_GPT_OSS not set (can skip for now)"
-  ],
-  "notes": "Phase 1 complete (2026-04-02). Infrastructure ready, all tests passing. Current blocker: .env configuration needed. Pre-req checks show 2/6 passing (Directory + Python deps OK, need MongoDB/HF/AWS config). Once .env is configured, can proceed to load 50 trajectories (25 ToolBench + 25 GAIA) and store in MongoDB for Phase 3 perturbation work."
+  "blockers": [],
+  "notes": "Phase 1 complete (2026-04-02). All prerequisites PASSING (6/6 - 100%). Configuration verified: MongoDB Atlas connected, HuggingFace datasets accessible, Claude Sonnet 4.5 & GPT-OSS 120B working. Ready to proceed with Phase 2: Load 50 trajectories (25 ToolBench + 25 GAIA) into MongoDB."
 }

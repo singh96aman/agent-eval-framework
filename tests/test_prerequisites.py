@@ -122,13 +122,20 @@ class TestPrerequisiteChecker:
         mock_credentials = MagicMock()
         mock_session.return_value.get_credentials.return_value = mock_credentials
 
-        # Mock Bedrock client response
+        # Mock Bedrock client response (Converse API format)
         mock_bedrock_runtime = MagicMock()
         mock_response = {
-            'body': MagicMock()
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [{'text': 'Hello'}]
+                }
+            },
+            'usage': {
+                'totalTokens': 20
+            }
         }
-        mock_response['body'].read.return_value = b'{"content": [{"text": "Hello"}]}'
-        mock_bedrock_runtime.invoke_model.return_value = mock_response
+        mock_bedrock_runtime.converse.return_value = mock_response
         mock_client.return_value = mock_bedrock_runtime
 
         checker = PrerequisiteChecker(temp_project_dir)
@@ -155,13 +162,20 @@ class TestPrerequisiteChecker:
         mock_credentials = MagicMock()
         mock_session.return_value.get_credentials.return_value = mock_credentials
 
-        # Mock Bedrock client response
+        # Mock Bedrock client response (Converse API format)
         mock_bedrock_runtime = MagicMock()
         mock_response = {
-            'body': MagicMock()
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [{'text': 'Hello'}]
+                }
+            },
+            'usage': {
+                'totalTokens': 20
+            }
         }
-        mock_response['body'].read.return_value = b'{"generation": "Hello"}'
-        mock_bedrock_runtime.invoke_model.return_value = mock_response
+        mock_bedrock_runtime.converse.return_value = mock_response
         mock_client.return_value = mock_bedrock_runtime
 
         checker = PrerequisiteChecker(temp_project_dir)

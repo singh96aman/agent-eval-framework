@@ -1,0 +1,55 @@
+{
+  "experiment": {
+    "name": "Test: Load Small Sample",
+    "description": "Load 2 trajectories from each dataset for testing",
+    "version": "1.0",
+    "phase": "load_trajectories",
+    "created_by": "human_researcher",
+    "created_date": "2026-04-02"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "huggingface",
+      "dataset_name": "OpenBMB/ToolBench",
+      "split": "train",
+      "num_trajectories": 2,
+      "filters": {
+        "min_steps": 3,
+        "max_steps": 15,
+        "filter_successful": false
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "enabled": true,
+      "source": "huggingface",
+      "dataset_name": "gaia-benchmark/GAIA",
+      "split": "validation",
+      "version": "2023_all",
+      "num_trajectories": 2,
+      "filters": {
+        "min_steps": 2,
+        "max_steps": 12,
+        "difficulty": ["Level 1", "Level 2", "Level 3"]
+      },
+      "random_seed": 42
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment",
+    "experiment_name": "test_load_2026_04_02"
+  },
+
+  "execution": {
+    "phase": "load_trajectories",
+    "dry_run": false,
+    "enable_checkpointing": true,
+    "checkpoint_dir": "results/checkpoints",
+    "verbose": true,
+    "max_retries": 3
+  }
+}

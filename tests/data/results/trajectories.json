@@ -62,7 +62,7 @@
     "experiment_id": "test_integration_001",
     "is_perturbed": false,
     "perturbation": null,
-    "stored_at": "2026-04-02T20:50:35.923119"
+    "stored_at": "2026-04-02T21:26:34.921142"
   },
   {
     "trajectory_id": "toolbench_sample_001_perturbed",
@@ -138,6 +138,6 @@
         "description": "Changed goal from 'population' to 'GDP'"
       }
     },
-    "stored_at": "2026-04-02T20:50:35.923150"
+    "stored_at": "2026-04-02T21:26:34.921172"
   }
 ]

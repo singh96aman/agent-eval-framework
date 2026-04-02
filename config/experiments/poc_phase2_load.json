@@ -1,0 +1,96 @@
+{
+  "experiment": {
+    "name": "POC Phase 2: Load Trajectories",
+    "description": "Load 50 trajectories (25 ToolBench + 25 GAIA) into MongoDB",
+    "version": "1.0",
+    "phase": "load_trajectories",
+    "created_by": "human_researcher",
+    "created_date": "2026-04-02"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "huggingface",
+      "dataset_name": "OpenBMB/ToolBench",
+      "split": "train",
+      "num_trajectories": 25,
+      "filters": {
+        "min_steps": 3,
+        "max_steps": 15,
+        "filter_successful": false
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "enabled": true,
+      "source": "huggingface",
+      "dataset_name": "gaia-benchmark/GAIA",
+      "split": "validation",
+      "version": "2023_all",
+      "num_trajectories": 25,
+      "filters": {
+        "min_steps": 2,
+        "max_steps": 12,
+        "difficulty": ["Level 1", "Level 2", "Level 3"]
+      },
+      "random_seed": 42
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment",
+    "experiment_name": "poc_load_2026_04_02"
+  },
+
+  "judges": {
+    "models": [
+      {
+        "name": "claude-sonnet-4.5",
+        "provider": "aws_bedrock",
+        "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      },
+      {
+        "name": "gpt-oss-120b",
+        "provider": "aws_bedrock",
+        "model_id": "openai.gpt-oss-120b-1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      }
+    ],
+    "samples_per_trajectory": 3
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection", "parameter"],
+    "positions": ["early", "middle", "late"],
+    "conditions": [
+      {"type": "planning", "position": "early"},
+      {"type": "planning", "position": "middle"},
+      {"type": "planning", "position": "late"},
+      {"type": "tool_selection", "position": "early"},
+      {"type": "tool_selection", "position": "middle"},
+      {"type": "tool_selection", "position": "late"},
+      {"type": "parameter", "position": "early"},
+      {"type": "parameter", "position": "middle"},
+      {"type": "parameter", "position": "late"}
+    ],
+    "num_per_condition": 5
+  },
+
+  "execution": {
+    "phase": "load_trajectories",
+    "dry_run": false,
+    "enable_checkpointing": true,
+    "checkpoint_dir": "results/checkpoints",
+    "verbose": true,
+    "max_retries": 3
+  }
+}

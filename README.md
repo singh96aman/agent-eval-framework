@@ -81,6 +81,86 @@ This checks:
 pytest tests/ -v
 ```
 
+### 7. Run Experiment
+
+The experiment uses a unified driver system with JSON-based configurations.
+
+**List available configurations:**
+```bash
+python main.py --list-configs
+```
+
+**Run Phase 2 (Load Trajectories):**
+```bash
+# Dry run (test without saving)
+python main.py --config poc_phase2_load --dry-run
+
+# Full run (save to MongoDB)
+python main.py --config poc_phase2_load
+```
+
+**Test with small sample:**
+```bash
+python main.py --config test_load --dry-run
+```
+
+---
+
+## Experiment Configuration System
+
+All experiment phases are controlled via `main.py` with JSON configuration files in `config/experiments/`.
+
+### Main Driver
+
+```bash
+python main.py --config <config_name> [options]
+```
+
+**Options:**
+- `--config <name>` - Configuration file to use
+- `--phase <phase>` - Override phase (load_trajectories, generate_perturbations, etc.)
+- `--dry-run` - Run without saving to database
+- `--resume` - Resume from last checkpoint
+- `--verbose` - Enable verbose output
+- `--list-configs` - List all available configurations
+
+### Configuration Files
+
+**`poc_phase2_load.json`** - Load 50 trajectories (25 ToolBench + 25 GAIA)
+
+**`test_load.json`** - Test with 4 trajectories (2 from each dataset)
+
+### Supported Phases
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| `load_trajectories` | ✅ Implemented | Load trajectories from HuggingFace → MongoDB |
+| `generate_perturbations` | ⏳ Pending | Create perturbed versions (9 conditions) |
+| `annotate` | ⏳ Pending | Human annotation interface (TSD, SER) |
+| `evaluate_judges` | ⏳ Pending | Run judges on all trajectories |
+| `compute_ccg` | ⏳ Pending | Calculate Criticality-Calibration Gap |
+| `analyze` | ⏳ Pending | Generate visualizations and reports |
+
+### Current Configuration (Phase 2)
+
+**Datasets:**
+- ToolBench: 25 trajectories (3-15 steps, seed=42)
+- GAIA: 25 trajectories (2-12 steps, seed=42)
+
+**Storage:**
+- Backend: MongoDB Atlas
+- Database: `agent_judge_experiment`
+- Experiment: `poc_load_2026_04_02`
+
+**Judge Models (for later phases):**
+- Claude Sonnet 4.5: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+- GPT-OSS 120B: `openai.gpt-oss-120b-1:0`
+
+**Perturbations (Phase 3):**
+- Types: planning, tool_selection, parameter
+- Positions: early, middle, late
+- Total: 9 conditions (3 types × 3 positions)
+
 ---
 
 ## Repo layout
