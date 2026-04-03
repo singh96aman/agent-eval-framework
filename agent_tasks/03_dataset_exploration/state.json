@@ -134,6 +134,28 @@
     ]
   },
   "blocking_on": null,
-  "iteration": 5,
-  "notes": "Step 6 COMPLETE. Code changes implemented: SWE-bench loader, Data Reference strategy (Type D), parameter subtypes, SWE-bench-native perturbations, stratified sampling. 43 tests passing. Ready for Step 7: smoke test with 10 samples per domain."
+  "iteration": 6,
+  "notes": "Steps 6-8 COMPLETE. Smoke test and validation passed. Key findings: Planning 100% success, Tool selection 75-90%, Parameter 60-70%, Data reference 30-65%. Issues: 48% 'other' domain, no complex trajectories in eval set, only 44% parameter-eligible. Ready for Step 9: full 600 trajectory run.",
+  "step7_8_findings": {
+    "trajectories_tested": 100,
+    "domains_covered": 9,
+    "parameter_eligible_pct": 44,
+    "perturbation_success_rates": {
+      "planning": "100%",
+      "tool_selection": "75-90%",
+      "parameter": "60-70%",
+      "data_reference": "30-65%"
+    },
+    "issues": [
+      "48% trajectories classified as 'other' domain",
+      "No complex trajectories (7+ steps) in eval set",
+      "Only 44% support parameter perturbations in all positions",
+      "Low counts: travel_logistics (1), utilities_tools (1)"
+    ],
+    "recommendations": [
+      "Use training set for more complex trajectories",
+      "Refine domain classification patterns",
+      "Consider relaxing require_parameters_all_positions filter"
+    ]
+  }
 }

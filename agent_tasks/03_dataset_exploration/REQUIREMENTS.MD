@@ -20,8 +20,8 @@ The goal of this tasks is as follows -
 | 4 | STOP - Get documents reviewed | ✅ DONE | First review received |
 | 5 | Iterate on feedback until approved | ✅ DONE | 2 iterations, expert approved |
 | 6 | Make code changes to ingest datasets and add perturbation types | ✅ DONE | SWE-bench loader, Type D, sampling |
-| 7 | Run trajectories for 10 samples per diversity domain | ⏳ PENDING | Smoke test |
-| 8 | Validate trajectory results | ⏳ PENDING | Quality check |
+| 7 | Run trajectories for 10 samples per diversity domain | ✅ DONE | 100 samples tested |
+| 8 | Validate trajectory results | ✅ DONE | Coverage validated |
 | 9 | Run trajectories for all samples | ⏳ PENDING | Full 600 trajectories |
 | 10 | Analyze coverage for all trajectories (show numbers) | ⏳ PENDING | |
 | 11 | Run perturbations | ⏳ PENDING | |
