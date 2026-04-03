@@ -616,8 +616,169 @@ class ExperimentRunner:
         print("✍️  PHASE: ANNOTATION")
         print("=" * 70)
         print()
-        print("⚠️  This phase is not yet implemented.")
-        print("   Coming in Phase 5 of implementation.")
+
+        # Import annotation components
+        from src.annotation.tools import AnnotationInterface, load_annotation
+        import random
+
+        # Get annotation configuration
+        annotation_config = self.config.get('annotation', {})
+        num_samples = annotation_config.get('num_samples', 25)
+        annotator_id = annotation_config.get('annotator_id', 'default')
+        sampling_strategy = annotation_config.get('sampling_strategy', 'random')
+        skip_annotated = annotation_config.get('skip_annotated', True)
+        random_seed = annotation_config.get('random_seed', 42)
+
+        print(f"📊 Configuration:")
+        print(f"   Samples to annotate: {num_samples}")
+        print(f"   Annotator ID: {annotator_id}")
+        print(f"   Sampling strategy: {sampling_strategy}")
+        print(f"   Skip already annotated: {skip_annotated}")
+        print()
+
+        # Load perturbations that have judge evaluations
+        print("📥 Loading perturbations with judge evaluations...")
+
+        # Get all perturbations for this experiment
+        all_perturbations = list(self.storage.db['perturbations'].find({
+            'experiment_id': self.experiment_id
+        }))
+
+        if not all_perturbations:
+            print("❌ No perturbations found for this experiment")
+            return
+
+        print(f"   Found {len(all_perturbations)} perturbations")
+
+        # Filter to those with judge evaluations
+        perturbations_with_evals = []
+        for pert in all_perturbations:
+            perturbed_traj_id = pert['perturbed_trajectory_id']
+            eval_count = self.storage.db['judge_evaluations'].count_documents({
+                'experiment_id': self.experiment_id,
+                'trajectory_id': perturbed_traj_id
+            })
+            if eval_count > 0:
+                perturbations_with_evals.append(pert)
+
+        print(f"   {len(perturbations_with_evals)} have judge evaluations")
+
+        if not perturbations_with_evals:
+            print("❌ No perturbations with judge evaluations found")
+            print("   Run the 'judge' phase first to generate evaluations")
+            return
+
+        # Filter out already annotated if requested
+        if skip_annotated:
+            unannotated = []
+            for pert in perturbations_with_evals:
+                pert_id = pert['perturbation_id']
+                if load_annotation(pert_id) is None:
+                    unannotated.append(pert)
+
+            print(f"   {len(unannotated)} not yet annotated")
+            perturbations_to_sample = unannotated
+        else:
+            perturbations_to_sample = perturbations_with_evals
+
+        if not perturbations_to_sample:
+            print("✅ All perturbations already annotated!")
+            return
+
+        # Sample perturbations based on strategy
+        random.seed(random_seed)
+
+        if sampling_strategy == 'random':
+            # Random sampling
+            sample_size = min(num_samples, len(perturbations_to_sample))
+            sampled_perturbations = random.sample(perturbations_to_sample, sample_size)
+            print(f"\n📋 Randomly sampled {sample_size} perturbations")
+
+        elif sampling_strategy == 'stratified':
+            # Stratified sampling by condition (type × position)
+            from collections import defaultdict
+
+            by_condition = defaultdict(list)
+            for pert in perturbations_to_sample:
+                condition = f"{pert['perturbation_type']}_{pert['perturbation_position']}"
+                by_condition[condition].append(pert)
+
+            # Sample evenly from each condition
+            samples_per_condition = max(1, num_samples // len(by_condition))
+            sampled_perturbations = []
+
+            for condition, perts in by_condition.items():
+                sample_size = min(samples_per_condition, len(perts))
+                sampled_perturbations.extend(random.sample(perts, sample_size))
+
+            # If we need more, add randomly
+            if len(sampled_perturbations) < num_samples:
+                remaining = [p for p in perturbations_to_sample if p not in sampled_perturbations]
+                additional = min(num_samples - len(sampled_perturbations), len(remaining))
+                sampled_perturbations.extend(random.sample(remaining, additional))
+
+            print(f"\n📋 Stratified sample: {len(sampled_perturbations)} perturbations")
+            print(f"   Conditions: {len(by_condition)}")
+
+        else:
+            print(f"❌ Unknown sampling strategy: {sampling_strategy}")
+            return
+
+        # Show distribution
+        from collections import Counter
+        type_counts = Counter(p['perturbation_type'] for p in sampled_perturbations)
+        pos_counts = Counter(p['perturbation_position'] for p in sampled_perturbations)
+
+        print(f"\n📊 Sample distribution:")
+        print(f"   By type: {dict(type_counts)}")
+        print(f"   By position: {dict(pos_counts)}")
+        print()
+
+        # Run annotation interface
+        if self.dry_run:
+            print("🔍 DRY RUN: Would annotate the following perturbations:")
+            for i, pert in enumerate(sampled_perturbations, 1):
+                pert_id = pert['perturbation_id']
+                ptype = pert['perturbation_type']
+                ppos = pert['perturbation_position']
+                print(f"   {i}. {pert_id} ({ptype}, {ppos})")
+            print()
+            return
+
+        # Create annotation interface
+        interface = AnnotationInterface(storage=self.storage)
+
+        # Batch annotate
+        print("=" * 70)
+        print("🎯 STARTING ANNOTATION SESSION")
+        print("=" * 70)
+        print(f"You will annotate {len(sampled_perturbations)} perturbations")
+        print()
+        print("For each perturbation, you will answer:")
+        print("  1. Did the perturbation cause task failure? (yes/no)")
+        print("  2. How many errors occurred after the perturbation? (count)")
+        print()
+        input("Press Enter to begin...")
+        print()
+
+        # Annotate in batches
+        perturbation_ids = [p['perturbation_id'] for p in sampled_perturbations]
+        completed = interface.batch_annotate(perturbation_ids, annotator_id)
+
+        # Summary
+        print("\n" + "=" * 70)
+        print("✅ ANNOTATION SESSION COMPLETE")
+        print("=" * 70)
+        print(f"Completed: {len(completed)}/{len(sampled_perturbations)} annotations")
+        print()
+
+        if completed:
+            tcs_scores = [ann.compute_tcs() for ann in completed]
+            print(f"True Criticality Scores:")
+            print(f"   Mean: {sum(tcs_scores) / len(tcs_scores):.2f}")
+            print(f"   Min: {min(tcs_scores):.2f}")
+            print(f"   Max: {max(tcs_scores):.2f}")
+
         print()
 
     def _phase_evaluate_judges(self):
@@ -703,8 +864,80 @@ class ExperimentRunner:
         print("📊 PHASE: COMPUTE CCG")
         print("=" * 70)
         print()
-        print("⚠️  This phase is not yet implemented.")
-        print("   Coming in Phase 5 of implementation.")
+
+        # Import CCG components
+        from src.metrics.ccg import compute_ccg_analysis
+        from pathlib import Path
+
+        # Get CCG configuration
+        ccg_config = self.config.get('ccg', {})
+        judges_to_analyze = ccg_config.get('judges', None)
+
+        # If not specified, analyze all judges from the judge config
+        if not judges_to_analyze:
+            judges_config = self.config.get('judges', {})
+            models_config = judges_config.get('models', [])
+            judges_to_analyze = [m['name'] for m in models_config]
+
+        if not judges_to_analyze:
+            print("❌ No judges specified for CCG analysis")
+            return
+
+        print(f"🔍 Analyzing judges: {', '.join(judges_to_analyze)}")
+        print()
+
+        # Compute CCG for each judge
+        results_dir = Path(f"results/{self.experiment_id}")
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        for judge_name in judges_to_analyze:
+            print(f"\n{'=' * 70}")
+            print(f"⚖️  ANALYZING: {judge_name}")
+            print(f"{'=' * 70}\n")
+
+            try:
+                # Compute CCG analysis
+                analysis = compute_ccg_analysis(
+                    experiment_id=self.experiment_id,
+                    judge_name=judge_name,
+                    storage=self.storage
+                )
+
+                # Print summary
+                analysis.print_summary()
+
+                # Save to CSV
+                if not self.dry_run:
+                    csv_path = results_dir / f"ccg_results_{judge_name}.csv"
+                    analysis.save_csv(csv_path)
+
+                    # Also save summary as JSON
+                    import json
+                    summary_path = results_dir / f"ccg_summary_{judge_name}.json"
+                    summary_data = {
+                        'experiment_id': analysis.experiment_id,
+                        'judge_name': judge_name,
+                        'total_results': len(analysis.results),
+                        'summary': analysis.summary,
+                        'by_type': analysis.by_type,
+                        'by_position': analysis.by_position,
+                        'by_condition': analysis.by_condition,
+                        'statistical_tests': analysis.statistical_tests
+                    }
+                    with open(summary_path, 'w') as f:
+                        json.dump(summary_data, f, indent=2)
+
+                    print(f"\n✅ Saved summary to {summary_path}")
+
+            except Exception as e:
+                print(f"❌ Error analyzing {judge_name}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print("\n" + "=" * 70)
+        print("✅ CCG COMPUTATION COMPLETE")
+        print("=" * 70)
+        print(f"\nResults saved to: {results_dir}")
         print()
 
     def _phase_analyze(self):

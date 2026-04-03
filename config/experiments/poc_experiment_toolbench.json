@@ -74,6 +74,24 @@
     "num_per_condition": 5
   },
 
+  "annotation": {
+    "num_samples": 25,
+    "annotator_id": "researcher1",
+    "sampling_strategy": "stratified",
+    "skip_annotated": true,
+    "random_seed": 42,
+    "instructions": "For each perturbation, assess: (1) Did it cause task failure? (2) How many downstream errors occurred?"
+  },
+
+  "ccg": {
+    "judges": [
+      "claude-sonnet-4.5",
+      "gpt-oss-120b"
+    ],
+    "output_formats": ["csv", "json"],
+    "generate_plots": true
+  },
+
   "metrics": {
     "definitions": [
       {

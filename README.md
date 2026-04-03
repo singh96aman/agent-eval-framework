@@ -93,6 +93,18 @@ Each JSON config file in `config/experiments/` defines a complete experiment. Us
     "num_per_condition": 5
   },
 
+  "annotation": {
+    "num_samples": 25,
+    "annotator_id": "researcher1",
+    "sampling_strategy": "stratified",
+    "skip_annotated": true,
+    "random_seed": 42
+  },
+
+  "ccg": {
+    "judges": ["claude-sonnet-4.5", "gpt-oss-120b"]
+  },
+
   "execution": {
     "runner": "all",
     "dry_run": false,
@@ -126,8 +138,18 @@ Each JSON config file in `config/experiments/` defines a complete experiment. Us
 - **`positions`**: Where to inject (early/middle/late in trajectory)
 - **`num_per_condition`**: Samples per (type × position) combination
 
+#### `annotation`
+- **`num_samples`**: How many perturbations to annotate (default: 25)
+- **`annotator_id`**: Your identifier (for tracking who annotated)
+- **`sampling_strategy`**: "stratified" (balanced) or "random"
+- **`skip_annotated`**: Skip already annotated perturbations (default: true)
+- **`random_seed`**: For reproducible sampling
+
+#### `ccg`
+- **`judges`**: Which judges to analyze (if omitted, uses all from judges config)
+
 #### `execution`
-- **`runner`**: Which phases to run (`"all"`, `"load"`, `"load,perturb"`, etc.)
+- **`runner`**: Which phases to run (`"all"`, `"load"`, `"load,perturb"`, `"annotate"`, `"judge"`, `"ccg"`, etc.)
 - **`dry_run`**: If true, runs without saving to database
 - **`verbose`**: Enable detailed output
 
@@ -182,12 +204,66 @@ python main.py --config poc_experiment --runner load --dry-run
 
 | Phase | Name | Input | Output | Time |
 |-------|------|-------|--------|------|
-| 1 | Load Trajectories | HuggingFace datasets | 50 baseline trajectories in MongoDB | 5-10 min |
-| 2 | Generate Perturbations | Baseline trajectories | 50 perturbed trajectories (9 conditions) | 1-2 hours (manual) |
-| 3 | Annotate | Perturbed trajectories | True criticality scores (TSD, SER) | 12-17 hours (manual) |
-| 4 | Evaluate Judges | Trajectories + perturbations | Judge penalty scores (JPS) | 20-30 min (API) |
-| 5 | Compute CCG | TCS + JPS | CCG = (JPS - TCS) / TCS | 1-2 min |
-| 6 | Analyze | CCG results | Heatmaps, statistical tests, reports | 5-10 min |
+| 1 | **Load Trajectories** | HuggingFace datasets | 50 baseline trajectories in MongoDB | 5-10 min |
+| 2 | **Generate Perturbations** | Baseline trajectories | 443 perturbed trajectories (9 conditions) | 1-2 min |
+| 3 | **Annotate Criticality** | Perturbed trajectories | Human annotations (TSD, SER, TCS) | ~1 hour for 25 samples |
+| 4 | **Evaluate Judges** | Trajectories + perturbations | Judge ratings (JPS) | ~2 hours for 852 evals |
+| 5 | **Compute CCG** | Annotations + Judge ratings | CCG scores by condition | 1-2 min |
+| 6 | **Analyze Results** | CCG results | Heatmaps, statistical tests, reports | 5-10 min |
+
+### Phase 3: Annotation Details
+
+**Interactive CLI interface** for human researchers to assess perturbation criticality:
+
+```bash
+# Annotate 25 samples (stratified sampling across 9 conditions)
+python main.py --config poc_experiment_toolbench --runner annotate
+```
+
+**For each perturbation, you'll answer:**
+1. **Task Success Degradation (TSD):** Did the perturbation cause task failure? (yes=1, no=0)
+2. **Subsequent Error Rate (SER):** How many errors occurred *after* the perturbation? (count)
+
+**Automatically computes True Criticality Score:**
+```
+TCS = (TSD × 100) + (SER × 10)
+```
+
+**Configuration options** (in experiment JSON):
+```json
+{
+  "annotation": {
+    "num_samples": 25,           // How many to annotate
+    "annotator_id": "researcher1", // Your identifier
+    "sampling_strategy": "stratified", // or "random"
+    "skip_annotated": true,       // Don't re-annotate
+    "random_seed": 42             // For reproducibility
+  }
+}
+```
+
+**Output:** Annotations saved to `data/annotations/<perturbation_id>.json`
+
+### Phase 5: CCG Computation
+
+**Computes calibration metrics** from annotations and judge evaluations:
+
+```bash
+# Compute CCG for all configured judges
+python main.py --config poc_experiment_toolbench --runner ccg
+```
+
+**What it does:**
+1. Loads human annotations (TCS)
+2. Loads judge evaluations (scores → JPS)
+3. Computes CCG = (JPS - TCS) / TCS for each perturbation
+4. Aggregates by type, position, and condition
+5. Runs ANOVA statistical tests
+6. Exports to CSV and JSON
+
+**Output:** `results/<experiment_id>/`
+- `ccg_results_<judge>.csv` - Per-perturbation scores
+- `ccg_summary_<judge>.json` - Aggregated stats and ANOVA results
 
 ---
 
@@ -212,10 +288,14 @@ repo/
 │   ├── experiment_runner.py    # Main orchestrator
 │   └── prereq_check.py          # Prerequisite verification
 │
-├── tests/                       # Test suite (58 tests)
+├── tests/                       # Test suite (93 tests)
 │   ├── test_loaders.py
 │   ├── test_storage.py
 │   ├── test_prerequisites.py
+│   ├── test_perturbations.py
+│   ├── test_judges.py
+│   ├── test_annotation.py
+│   ├── test_ccg.py
 │   └── test_integration_pipeline.py
 │
 ├── config/                      # Experiment configurations
@@ -314,13 +394,15 @@ Red (positive) = Over-penalizes
 
 Results are stored in MongoDB Atlas:
 
-**Collections:**
+**MongoDB Collections:**
 - `experiments` - Experiment metadata and configs
-- `trajectories` - Baseline trajectories
-- `perturbed_trajectories` - Perturbed versions with metadata
-- `annotations` - Human annotations (TSD, SER, TCS)
-- `judge_evaluations` - Judge ratings (JPS)
-- `ccg_results` - Computed CCG metrics
+- `trajectories` - Baseline trajectories from datasets
+- `perturbations` - Perturbed trajectories with metadata
+- `judge_evaluations` - Judge ratings and scores (JPS)
+
+**File Storage:**
+- `data/annotations/` - Human annotations (TSD, SER, TCS) in JSON
+- `results/<experiment_id>/` - CCG results (CSV + JSON summaries)
 
 **Experiment ID tracking:**
 All data for an experiment is linked by `experiment_id` from the config. This enables:
@@ -332,18 +414,23 @@ All data for an experiment is linked by `experiment_id` from the config. This en
 
 ## Current Status
 
-**Completed:**
-- ✅ Infrastructure (loaders, storage, runner system)
-- ✅ Test suite (58 tests passing)
-- ✅ Prerequisites (MongoDB, HF, AWS Bedrock verified)
-- ✅ Phase 1 implementation (trajectory loading)
+**Completed Phases:**
+- ✅ Phase 1: Load Trajectories (50 ToolBench trajectories)
+- ✅ Phase 2: Generate Perturbations (443 perturbations, 9 conditions)
+- ✅ Phase 3: Annotation Interface (interactive CLI, stratified sampling)
+- ✅ Phase 4: Judge Evaluation (852 Claude evaluations, 64% coverage)
+- ✅ Phase 5: CCG Computation (full statistical analysis)
 
-**In Progress:**
-- 🔄 Phase 2: Perturbation generation
-- 🔄 Phase 3: Annotation interface
-- 🔄 Phase 4: Judge API integration
-- 🔄 Phase 5: CCG computation
-- 🔄 Phase 6: Visualization
+**Infrastructure:**
+- ✅ Test suite (93 tests passing)
+- ✅ MongoDB Atlas storage (5 collections)
+- ✅ AWS Bedrock integration (Claude + GPT-OSS)
+- ✅ Experiment runner (load, perturb, annotate, judge, ccg)
+
+**Ready for:**
+- 🎯 Human annotation (25 samples recommended)
+- 🎯 Full CCG analysis once annotated
+- 🔄 Phase 6: Visualization (heatmaps, scatter plots)
 
 ---
 
