@@ -162,9 +162,31 @@ class JudgeEvaluator:
         evaluation_errors = []
 
         # Process in batches
-        for i, pert in enumerate(perturbations, 1):
-            # Convert perturbation dict to Trajectory
-            trajectory = Trajectory.from_dict(pert)
+        for i, pert_record in enumerate(perturbations, 1):
+            # Load the actual perturbed trajectory
+            # (pert_record is just metadata, we need the full trajectory)
+            perturbed_traj_id = pert_record['perturbed_trajectory_id']
+            traj_dict = self.storage.get_trajectory_by_experiment(
+                perturbed_traj_id,
+                experiment_id
+            )
+
+            if not traj_dict:
+                print(f"   ⚠️  Warning: Trajectory {perturbed_traj_id} not found, skipping")
+                continue
+
+            # Remove MongoDB-specific fields before converting to Trajectory
+            # Keep only fields that Trajectory.from_dict() expects
+            clean_traj_dict = {
+                'trajectory_id': traj_dict['trajectory_id'],
+                'benchmark': traj_dict['benchmark'],
+                'steps': traj_dict['steps'],
+                'ground_truth': traj_dict['ground_truth'],
+                'metadata': traj_dict.get('metadata', {})
+            }
+
+            # Convert to Trajectory object
+            trajectory = Trajectory.from_dict(clean_traj_dict)
 
             # Evaluate multiple times (for statistical reliability)
             for sample in range(self.samples_per_trajectory):
@@ -242,18 +264,19 @@ class JudgeEvaluator:
         """
         remaining = []
 
-        for pert in perturbations:
-            trajectory_id = pert['trajectory_id']
+        for pert_record in perturbations:
+            # Perturbation records have perturbed_trajectory_id, not trajectory_id
+            perturbed_traj_id = pert_record['perturbed_trajectory_id']
 
             # Check if we already have enough samples
             existing_count = self.storage.count_judge_outputs(
                 experiment_id=experiment_id,
-                trajectory_id=trajectory_id,
+                trajectory_id=perturbed_traj_id,
                 judge_name=judge_name
             )
 
             if existing_count < self.samples_per_trajectory:
-                remaining.append(pert)
+                remaining.append(pert_record)
 
         return remaining
 

@@ -69,10 +69,10 @@ class ExperimentRunner:
         self.dry_run = self.execution.get('dry_run', False)
         self.verbose = self.execution.get('verbose', True)
 
-        # Initialize storage (unless dry run)
-        self.storage: Optional[MongoDBStorage] = None
-        if not self.dry_run:
-            self.storage = MongoDBStorage()
+        # Initialize storage
+        # Note: Even in dry-run mode, we need storage to read existing data
+        # Dry-run only prevents writing new data (API calls, etc.)
+        self.storage: Optional[MongoDBStorage] = MongoDBStorage()
 
         # Get or generate experiment ID from config
         # If experiment_id is specified in config, use it
