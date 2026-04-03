@@ -9,10 +9,42 @@ This module handles storing and retrieving all experiment data:
 """
 
 import os
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from datetime import datetime
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
+
+
+# Storage metadata fields (added by storage layer, not part of domain schema)
+STORAGE_METADATA_FIELDS = {
+    'experiment_id',
+    'stored_at',
+    'created_at',
+    'is_perturbed',
+    '_id'  # MongoDB's internal ID
+}
+
+
+def strip_storage_metadata(doc: Dict[str, Any],
+                           extra_fields: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """
+    Remove storage metadata fields from a document.
+
+    Args:
+        doc: MongoDB document
+        extra_fields: Additional fields to strip (optional)
+
+    Returns:
+        Document with only domain schema fields
+    """
+    if doc is None:
+        return None
+
+    fields_to_remove = STORAGE_METADATA_FIELDS.copy()
+    if extra_fields:
+        fields_to_remove.update(extra_fields)
+
+    return {k: v for k, v in doc.items() if k not in fields_to_remove}
 
 
 class MongoDBStorage:
@@ -171,43 +203,54 @@ class MongoDBStorage:
         """
         Save a trajectory (original or perturbed).
 
+        Storage metadata (experiment_id, stored_at, is_perturbed) should be
+        included in the trajectory dict - they will be stored at the top level
+        in MongoDB but stripped when loading.
+
         Args:
             trajectory: Trajectory dict (from Trajectory.to_dict())
+                       May include storage metadata: experiment_id, is_perturbed
 
         Returns:
             Trajectory ID
         """
-        trajectory["stored_at"] = datetime.utcnow()
+        # Create a copy to avoid mutating the input
+        doc = trajectory.copy()
+        doc["stored_at"] = datetime.utcnow()
 
         try:
-            result = self.trajectories.insert_one(trajectory)
+            result = self.trajectories.insert_one(doc)
             return str(result.inserted_id)
         except DuplicateKeyError:
             # Update existing
             self.trajectories.replace_one(
-                {"trajectory_id": trajectory["trajectory_id"]},
-                trajectory
+                {"trajectory_id": doc["trajectory_id"]},
+                doc
             )
-            return trajectory["trajectory_id"]
+            return doc["trajectory_id"]
 
     def save_trajectories_bulk(self, trajectories: List[Dict[str, Any]]) -> int:
         """
         Save multiple trajectories in bulk.
 
         Args:
-            trajectories: List of trajectory dicts
+            trajectories: List of trajectory dicts (may include storage metadata)
 
         Returns:
             Number of trajectories saved
         """
-        for traj in trajectories:
-            traj["stored_at"] = datetime.utcnow()
-
         if not trajectories:
             return 0
 
+        # Create copies with stored_at timestamp (don't mutate inputs)
+        docs = []
+        for traj in trajectories:
+            doc = traj.copy()
+            doc["stored_at"] = datetime.utcnow()
+            docs.append(doc)
+
         try:
-            result = self.trajectories.insert_many(trajectories, ordered=False)
+            result = self.trajectories.insert_many(docs, ordered=False)
             return len(result.inserted_ids)
         except Exception as e:
             # Some might be duplicates, count successful inserts
@@ -215,30 +258,57 @@ class MongoDBStorage:
             return 0
 
     def get_trajectory(self, trajectory_id: str) -> Optional[Dict[str, Any]]:
-        """Get trajectory by ID."""
-        return self.trajectories.find_one({"trajectory_id": trajectory_id})
+        """
+        Get trajectory by ID.
+
+        Returns trajectory with storage metadata stripped (experiment_id,
+        stored_at, is_perturbed, _id).
+
+        Returns:
+            Trajectory dict with only domain schema fields, or None if not found
+        """
+        doc = self.trajectories.find_one({"trajectory_id": trajectory_id})
+        if doc:
+            return strip_storage_metadata(doc)
+        return None
 
     def get_trajectory_by_experiment(
         self,
         trajectory_id: str,
         experiment_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Get trajectory by ID for a specific experiment."""
-        return self.trajectories.find_one({
+        """
+        Get trajectory by ID for a specific experiment.
+
+        Returns trajectory with storage metadata stripped.
+        Note: Can also be used to check if trajectory exists for an experiment
+        (returns None if not found).
+
+        Returns:
+            Trajectory dict with only domain schema fields, or None if not found
+        """
+        doc = self.trajectories.find_one({
             "trajectory_id": trajectory_id,
             "experiment_id": experiment_id
         })
+        if doc:
+            return strip_storage_metadata(doc)
+        return None
 
     def get_trajectories_by_benchmark(
         self,
         benchmark: str,
         limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Get all trajectories from a specific benchmark."""
+        """
+        Get all trajectories from a specific benchmark.
+
+        Returns trajectories with storage metadata stripped.
+        """
         cursor = self.trajectories.find({"benchmark": benchmark})
         if limit:
             cursor = cursor.limit(limit)
-        return list(cursor)
+        return [strip_storage_metadata(doc) for doc in cursor]
 
     def get_perturbed_trajectories(
         self,
@@ -254,12 +324,12 @@ class MongoDBStorage:
             benchmark: Filter by benchmark (optional)
 
         Returns:
-            List of perturbed trajectory dicts
+            List of perturbed trajectory dicts (with storage metadata stripped)
         """
         query = {"is_perturbed": True}
         if benchmark:
             query["benchmark"] = benchmark
-        return list(self.trajectories.find(query))
+        return [strip_storage_metadata(doc) for doc in self.trajectories.find(query)]
 
     def get_trajectories_by_experiment(
         self,
@@ -310,7 +380,7 @@ class MongoDBStorage:
         if limit:
             cursor = cursor.limit(limit)
 
-        return list(cursor)
+        return [strip_storage_metadata(doc) for doc in cursor]
 
     def count_trajectories(
         self,

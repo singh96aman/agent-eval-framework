@@ -11,6 +11,7 @@ This is the main driver class that handles:
 
 import json
 import hashlib
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
@@ -107,6 +108,8 @@ class ExperimentRunner:
             'judge': 'evaluate_judges',
             'ccg': 'compute_ccg',
             'analyze': 'analyze',
+            'visualize': 'visualize',
+            'viz': 'visualize',  # Short alias
             # Also support full names
             'load_trajectories': 'load_trajectories',
             'generate_perturbations': 'generate_perturbations',
@@ -122,7 +125,8 @@ class ExperimentRunner:
                 'annotate',
                 'evaluate_judges',
                 'compute_ccg',
-                'analyze'
+                'analyze',
+                'visualize'
             ]
 
         # Parse comma-separated list
@@ -160,6 +164,7 @@ class ExperimentRunner:
             'evaluate_judges': self._phase_evaluate_judges,
             'compute_ccg': self._phase_compute_ccg,
             'analyze': self._phase_analyze,
+            'visualize': self._phase_visualize,
         }
 
         # Run each phase in sequence
@@ -186,6 +191,29 @@ class ExperimentRunner:
         # Cleanup
         if self.storage:
             self.storage.close()
+
+    def _convert_for_json(self, obj: Any) -> Any:
+        """
+        Recursively convert numpy types to native Python types for JSON serialization.
+
+        Args:
+            obj: Object to convert (dict, list, numpy type, etc.)
+
+        Returns:
+            Converted object with all numpy types replaced
+        """
+        if isinstance(obj, dict):
+            return {key: self._convert_for_json(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_for_json(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        else:
+            return obj
 
     def _phase_load_trajectories(self):
         """
@@ -650,16 +678,20 @@ class ExperimentRunner:
 
         print(f"   Found {len(all_perturbations)} perturbations")
 
-        # Filter to those with judge evaluations
-        perturbations_with_evals = []
-        for pert in all_perturbations:
-            perturbed_traj_id = pert['perturbed_trajectory_id']
-            eval_count = self.storage.db['judge_evaluations'].count_documents({
-                'experiment_id': self.experiment_id,
-                'trajectory_id': perturbed_traj_id
-            })
-            if eval_count > 0:
-                perturbations_with_evals.append(pert)
+        # Filter to those with judge evaluations (optimized: single query)
+        # Get all trajectory IDs that have judge evaluations in one query
+        evaluated_traj_ids = set(
+            self.storage.db['judge_evaluations'].distinct(
+                'trajectory_id',
+                {'experiment_id': self.experiment_id}
+            )
+        )
+
+        # Filter perturbations based on this set
+        perturbations_with_evals = [
+            pert for pert in all_perturbations
+            if pert['perturbed_trajectory_id'] in evaluated_traj_ids
+        ]
 
         print(f"   {len(perturbations_with_evals)} have judge evaluations")
 
@@ -668,13 +700,21 @@ class ExperimentRunner:
             print("   Run the 'judge' phase first to generate evaluations")
             return
 
-        # Filter out already annotated if requested
+        # Filter out already annotated if requested (check MongoDB)
         if skip_annotated:
-            unannotated = []
-            for pert in perturbations_with_evals:
-                pert_id = pert['perturbation_id']
-                if load_annotation(pert_id) is None:
-                    unannotated.append(pert)
+            # Get set of annotated perturbation IDs from MongoDB
+            annotated_ids = set(
+                self.storage.db['annotations'].distinct(
+                    'perturbation_id',
+                    {'annotator_id': annotator_id}
+                )
+            )
+
+            # Filter to unannotated
+            unannotated = [
+                pert for pert in perturbations_with_evals
+                if pert['perturbation_id'] not in annotated_ids
+            ]
 
             print(f"   {len(unannotated)} not yet annotated")
             perturbations_to_sample = unannotated
@@ -924,6 +964,10 @@ class ExperimentRunner:
                         'by_condition': analysis.by_condition,
                         'statistical_tests': analysis.statistical_tests
                     }
+
+                    # Convert numpy types to native Python types for JSON serialization
+                    summary_data = self._convert_for_json(summary_data)
+
                     with open(summary_path, 'w') as f:
                         json.dump(summary_data, f, indent=2)
 
@@ -941,10 +985,88 @@ class ExperimentRunner:
         print()
 
     def _phase_analyze(self):
-        """Phase 6: Analysis and visualization."""
+        """Phase 6: Analysis (deprecated - use visualize phase)."""
         print("📈 PHASE: ANALYSIS")
         print("=" * 70)
         print()
-        print("⚠️  This phase is not yet implemented.")
-        print("   Coming in Phase 6 of implementation.")
+        print("⚠️  This phase is deprecated.")
+        print("   Use 'visualize' phase instead for generating visualizations.")
+        print()
+
+    def _phase_visualize(self):
+        """Phase 7: Generate visualizations from CCG results."""
+        print("📊 PHASE: VISUALIZE")
+        print("=" * 70)
+        print()
+
+        # Determine results directory
+        results_dir = Path('results') / self.experiment_id
+
+        if not results_dir.exists():
+            print(f"❌ Results directory not found: {results_dir}")
+            print("   Run 'ccg' phase first to generate results")
+            return
+
+        # Check for CCG result files
+        result_files = list(results_dir.glob('ccg_results_*.csv'))
+
+        if not result_files:
+            print(f"❌ No CCG result files found in {results_dir}")
+            print("   Run 'ccg' phase first to compute CCG scores")
+            return
+
+        print(f"📁 Results directory: {results_dir}")
+        print(f"   Found {len(result_files)} result file(s):")
+        for rf in result_files:
+            judge_name = rf.stem.replace('ccg_results_', '')
+            print(f"   - {judge_name}")
+
+        # Get visualization config from experiment config
+        viz_config = self.config.get('visualization', {})
+        figsize = viz_config.get('figsize', [12, 8])
+        dpi = viz_config.get('dpi', 300)
+        formats = viz_config.get('formats', ['png', 'pdf'])
+
+        print(f"\n⚙️  Visualization settings:")
+        print(f"   Figure size: {figsize[0]}x{figsize[1]}")
+        print(f"   DPI: {dpi}")
+        print(f"   Formats: {', '.join(formats)}")
+
+        if self.dry_run:
+            print("\n🔍 DRY RUN: Would generate visualizations")
+            return
+
+        try:
+            # Import here to avoid circular dependency
+            from visualization.plots import generate_visualizations
+
+            print(f"\n🎨 Generating visualizations...")
+
+            # Generate all visualizations
+            generated_files = generate_visualizations(
+                results_dir=str(results_dir),
+                figsize=tuple(figsize),
+                dpi=dpi,
+                save_formats=formats
+            )
+
+            # Print summary
+            total_files = sum(len(files) for files in generated_files.values())
+            print(f"\n✅ Successfully generated {total_files} visualization file(s)")
+
+            for viz_type, file_list in generated_files.items():
+                if file_list:
+                    print(f"   {viz_type.replace('_', ' ').title()}: {len(file_list)} file(s)")
+
+            viz_dir = results_dir / 'visualizations'
+            print(f"\n📂 All visualizations saved to: {viz_dir}")
+
+        except Exception as e:
+            print(f"\n❌ Error generating visualizations: {e}")
+            import traceback
+            traceback.print_exc()
+
+        print("\n" + "=" * 70)
+        print("✅ VISUALIZATION COMPLETE")
+        print("=" * 70)
         print()
