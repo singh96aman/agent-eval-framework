@@ -681,7 +681,8 @@ class MongoDBStorage:
     def store_judge_output(
         self,
         judge_output: Any,  # JudgeOutput from src/judges/schema
-        experiment_id: str
+        experiment_id: str,
+        sample_number: int = 1
     ) -> str:
         """
         Store a JudgeOutput object from the new judge system.
@@ -689,16 +690,26 @@ class MongoDBStorage:
         Args:
             judge_output: JudgeOutput object
             experiment_id: Experiment ID
+            sample_number: Sample number (1-indexed)
 
         Returns:
-            Inserted document ID
+            Inserted document ID or evaluation_id if already exists
         """
         # Convert JudgeOutput to dict
         output_dict = judge_output.to_dict()
         output_dict["experiment_id"] = experiment_id
+        output_dict["sample_number"] = sample_number
 
-        result = self.judge_evaluations.insert_one(output_dict)
-        return str(result.inserted_id)
+        # Generate unique evaluation_id
+        evaluation_id = f"{judge_output.trajectory_id}_{judge_output.judge_name}_sample{sample_number}"
+        output_dict["evaluation_id"] = evaluation_id
+
+        try:
+            result = self.judge_evaluations.insert_one(output_dict)
+            return str(result.inserted_id)
+        except DuplicateKeyError:
+            # Already exists - this is OK (resume scenario)
+            return evaluation_id
 
     def get_judge_outputs(
         self,
@@ -749,6 +760,29 @@ class MongoDBStorage:
             query["judge_name"] = judge_name
 
         return self.judge_evaluations.count_documents(query)
+
+    def check_judge_output_exists(
+        self,
+        experiment_id: str,
+        evaluation_id: str
+    ) -> bool:
+        """
+        Check if a specific judge evaluation already exists.
+
+        This is the cache check - prevents redundant API calls.
+
+        Args:
+            experiment_id: Experiment ID
+            evaluation_id: Unique evaluation identifier
+
+        Returns:
+            True if evaluation exists, False otherwise
+        """
+        existing = self.judge_evaluations.find_one({
+            "experiment_id": experiment_id,
+            "evaluation_id": evaluation_id
+        })
+        return existing is not None
 
     # === CCG Score Storage ===
 

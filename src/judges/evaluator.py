@@ -189,29 +189,47 @@ class JudgeEvaluator:
             trajectory = Trajectory.from_dict(clean_traj_dict)
 
             # Evaluate multiple times (for statistical reliability)
-            for sample in range(self.samples_per_trajectory):
+            for sample_num in range(self.samples_per_trajectory):
+                sample_number = sample_num + 1  # 1-indexed for clarity
+
                 if dry_run:
                     print(f"   [DRY RUN] Would evaluate {trajectory.trajectory_id} "
-                          f"(sample {sample + 1}/{self.samples_per_trajectory})")
+                          f"(sample {sample_number}/{self.samples_per_trajectory})")
                     continue
 
                 try:
+                    # Check if this evaluation already exists (cache check)
+                    evaluation_id = f"{trajectory.trajectory_id}_{judge.name}_sample{sample_number}"
+                    existing = self.storage.check_judge_output_exists(
+                        experiment_id=experiment_id,
+                        evaluation_id=evaluation_id
+                    )
+
+                    if existing:
+                        # Already evaluated - skip without logging (as requested)
+                        successful += 1
+                        continue
+
                     # Rate limiting
                     if successful + failed > 0:
                         time.sleep(self.rate_limit_delay)
 
-                    # Evaluate
+                    # Evaluate with LLM
                     output = judge.evaluate(trajectory)
 
                     if output:
-                        # Store result
-                        self.storage.store_judge_output(output, experiment_id)
+                        # Store result with evaluation_id
+                        self.storage.store_judge_output(
+                            output,
+                            experiment_id,
+                            sample_number=sample_number
+                        )
                         successful += 1
                         total_tokens += output.tokens_used or 0
                     else:
                         failed += 1
                         evaluation_errors.append(
-                            f"Evaluation failed for {trajectory.trajectory_id} sample {sample + 1}"
+                            f"Evaluation failed for {trajectory.trajectory_id} sample {sample_number}"
                         )
 
                 except Exception as e:
