@@ -22,15 +22,52 @@ Define a sampling strategy to achieve ~500 high-quality trajectories across mult
 
 | Source | Trajectories | Rationale |
 |--------|--------------|-----------|
-| ToolBench | 400 | Primary source, rich tool calls |
-| GAIA | 100 | Reasoning depth, different task types |
-| **Total** | **500** | Statistical power for 9-condition analysis |
+| ToolBench | 400 | Primary source, rich tool calls, API diversity |
+| GAIA | 100 | Reasoning depth, multi-step QA tasks |
+| SWE-bench | 100 | Code domain coverage, popular benchmark |
+| **Total** | **600** | Statistical power + benchmark diversity |
 
-### 2.2 Perturbations per Trajectory
+**Why SWE-bench?** Adds code/development domain which is:
+- Missing from ToolBench (API-focused) and GAIA (QA-focused)
+- Highly popular benchmark (adds credibility to paper)
+- Different error modes (syntax, logic, API misuse)
 
-- Target: 3-5 perturbations per trajectory
-- Coverage: All 9 conditions (3 types × 3 positions)
-- Estimated total: **1,500-2,500 perturbations**
+### 2.2 Perturbation Strategy: One Per Trajectory
+
+**Design decision:** Each trajectory receives exactly ONE perturbation.
+
+| Approach | Trajectories | Perturbations/Traj | Total |
+|----------|--------------|-------------------|-------|
+| ~~All perturbations~~ | 600 | 9 | 5,400 |
+| **One perturbation (chosen)** | 600 | 1 | 600 |
+
+**Rationale:**
+- **Cleaner experimental design** - no confounding between perturbation types on same trajectory
+- **Domain-agnostic validation** - can verify results hold across domains within each condition
+- **Tractable annotation** - 600 perturbations vs 5,400
+
+### 2.3 Stratified Sampling for Domain Coverage
+
+To ensure results are not domain-specific, we stratify by both **perturbation condition** and **domain**:
+
+| Condition | ToolBench | GAIA | SWE-bench | Total |
+|-----------|-----------|------|-----------|-------|
+| Planning × Early | 25 | 8 | 8 | 41 |
+| Planning × Middle | 25 | 8 | 8 | 41 |
+| Planning × Late | 25 | 8 | 8 | 41 |
+| Tool Sel × Early | 25 | 8 | 8 | 41 |
+| Tool Sel × Middle | 25 | 8 | 8 | 41 |
+| Tool Sel × Late | 25 | 8 | 8 | 41 |
+| Parameter × Early | 50 | 10 | 10 | 70 |
+| Parameter × Middle | 50 | 10 | 10 | 70 |
+| Parameter × Late | 50 | 10 | 10 | 70 |
+| **Reserve pool** | 100 | 22 | 22 | 144 |
+| **Total** | **400** | **100** | **100** | **600** |
+
+**Analysis approach:**
+1. Primary: Compare CCG across 9 conditions (type × position)
+2. Secondary: Within each condition, verify results hold across benchmarks
+3. Tertiary: Within ToolBench, verify results hold across domain categories
 
 ---
 
@@ -129,7 +166,58 @@ GAIA contains questions and answers but NOT agent trajectories. We need to **gen
 
 ---
 
-## 5. Sampling Implementation
+## 5. SWE-bench Sampling Strategy
+
+### 5.1 Why SWE-bench?
+
+SWE-bench adds the **code/development domain** which is:
+- Completely missing from ToolBench (API-focused) and GAIA (QA-focused)
+- A highly popular benchmark (adds credibility to paper)
+- Features different error modes: syntax errors, logic errors, API misuse, test failures
+
+### 5.2 Data Source
+
+**Primary:** `SWE-bench/SWE-smith-trajectories` on HuggingFace
+- 76k trajectories with full execution traces
+- Includes thoughts, tool calls (file edits, test runs), and outputs
+- Public access, no gating
+
+### 5.3 Difficulty Distribution
+
+| Difficulty | Target Count | Description |
+|------------|--------------|-------------|
+| Easy fixes | 40 | Simple bug fixes, single-file changes |
+| Medium fixes | 40 | Multi-file changes, moderate complexity |
+| Hard fixes | 20 | Complex refactors, multiple components |
+
+### 5.4 Quality Filters for SWE-bench
+
+```python
+filters = {
+    "min_steps": 4,           # Minimum tool calls
+    "max_steps": 10,          # Manageable for annotation
+    "filter_successful": True, # Only successful fixes
+    "diverse_repos": True,     # Not all from same project
+}
+```
+
+### 5.5 SWE-bench Perturbation Considerations
+
+SWE-bench trajectories have different tool calls than ToolBench:
+- `file_edit` instead of API calls
+- `run_tests` instead of data retrieval
+- `search_code` instead of web search
+
+**Perturbation mapping:**
+| ToolBench Perturbation | SWE-bench Equivalent |
+|------------------------|----------------------|
+| Wrong API tool | Wrong file edit target |
+| Wrong parameter value | Wrong code change |
+| Planning error (wrong goal) | Wrong bug diagnosis |
+
+---
+
+## 6. Sampling Implementation
 
 ### 5.1 ToolBench Sampling Code
 

@@ -188,26 +188,37 @@ However, GAIA trajectories may need to be **generated** by running agents on the
 
 ## 6. Recommendations
 
-### 6.1 Dataset Expansion (Priority Order)
+### 6.1 Dataset Expansion (Revised)
 
-1. **Increase ToolBench sample size:** 50 → 150 trajectories
-   - Filter for diversity across domains
-   - Ensure complex trajectories (5-8 steps) included
+1. **ToolBench:** 400 trajectories (up from 50)
+   - Stratified across 8 domain categories
+   - Filter for complexity (4-10 steps)
    
-2. **Add GAIA trajectories:** ~50 trajectories
+2. **GAIA:** 100 trajectories
    - Generate by running Claude/GPT on GAIA tasks
    - Focus on Level 1-2 (tractable complexity)
    
-3. **(Optional) Add SWE-bench subset:** ~25 trajectories
-   - Code-related tasks add domain diversity
+3. **SWE-bench:** 100 trajectories
+   - Code domain coverage (missing from other benchmarks)
+   - Popular benchmark (adds credibility)
    - Different error modes (syntax, logic, API misuse)
 
-### 6.2 Perturbation Expansion
+**Total: 600 trajectories**
 
-1. **Add sequencing errors:** Swap step order in middle positions
-2. **Add missing step perturbations:** Remove required intermediate step
-3. **Add intensity levels:** Subtle vs. Severe for each type
-4. **Add hallucination errors:** Reference non-existent entities
+### 6.2 Perturbation Strategy (Revised)
+
+**Key design decisions:**
+1. **One perturbation per trajectory** - cleaner experimental design, no confounding
+2. **Realism constraint** - only perturbations that allow execution to continue
+3. **Sequencing errors EXCLUDED** - they break execution (trajectory becomes incoherent)
+
+**Approved perturbation types (7 subtypes):**
+- Planning: goal substitution, scope reduction
+- Tool Selection: similar tool swap
+- Parameter: wrong value, format error, off-by-one
+- Data Reference: hallucinated reference (NEW)
+
+**Total: 600 trajectories × 1 perturbation = 600 perturbations**
 
 ### 6.3 Annotation Strategy
 

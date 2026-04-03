@@ -46,175 +46,172 @@ Define a comprehensive perturbation taxonomy that:
 
 ---
 
-## 3. Expanded Perturbation Taxonomy
+## 3. Perturbation Realism Constraint (CRITICAL)
 
-### 3.1 Category Overview
+### 3.1 The Problem with Naive Perturbations
 
-| Category | Current | Proposed | Priority |
-|----------|---------|----------|----------|
-| Planning Errors | 1 type | 3 types | HIGH |
-| Tool Selection Errors | 1 type | 2 types | MEDIUM |
-| Parameter Errors | 4 subtypes | 6 subtypes | HIGH |
-| **NEW: Sequencing Errors** | 0 | 3 types | **HIGH** |
-| **NEW: Data Errors** | 0 | 2 types | **HIGH** |
-| **NEW: Output Errors** | 0 | 2 types | LOW |
+**Question:** When we perturb step 4, what happens to steps 5, 6, 7?
+
+In reality, if step 4 fails or returns wrong data:
+1. **Error → Recovery:** Agent detects error, re-plans, trajectory diverges
+2. **Error → Propagation:** Agent doesn't detect, downstream steps use bad data
+3. **Error → Failure:** Task fails at the error point
+
+**Current approach problem:** We perturb step 4 but leave steps 5-7 unchanged. This creates an **incoherent trajectory** that would never happen in reality.
+
+### 3.2 Realism Requirement
+
+**For our study to be grounded in real-world problems, perturbations must satisfy:**
+
+> The perturbed trajectory must remain **plausibly executable** - i.e., the error should not immediately crash the execution, but rather allow the trajectory to continue with incorrect information.
+
+### 3.3 Perturbation Validity Matrix
+
+| Perturbation Type | Downstream Effect | Validity |
+|-------------------|-------------------|----------|
+| Parameter: wrong value | API returns data, but wrong data | ✅ **VALID** |
+| Parameter: missing required | API fails → agent would retry | ⚠️ Only if API has defaults |
+| Tool selection: similar tool | Different API returns valid data | ✅ **VALID** (if tool works) |
+| Planning: wrong goal | Wrong reasoning, but execution proceeds | ✅ **VALID** |
+| Sequencing: swap steps | Breaks dependency chain | ❌ Only if steps independent |
+| Data: hallucinated reference | Uses wrong ID from prior step | ✅ **VALID** (realistic error) |
+
+### 3.4 Implementation Approach
+
+For each perturbation, we must verify:
+
+1. **Execution continuity:** The perturbed step doesn't cause immediate crash
+2. **Downstream coherence:** Subsequent steps can still execute (even if with wrong data)
+3. **Detectability:** A human annotator can identify the error
+
+**Perturbations that break execution are EXCLUDED** unless we also simulate the recovery/failure path.
 
 ---
 
-## 4. Detailed Perturbation Specifications
+## 4. Expanded Perturbation Taxonomy (Revised)
 
-### 4.1 Planning Errors (Type A)
+### 4.1 Category Overview (Realism-Constrained)
+
+Based on the realism constraint, we focus on perturbations that **allow execution to continue**:
+
+| Category | Subtypes | Realism Status | Priority |
+|----------|----------|----------------|----------|
+| Planning Errors | 2 types | ✅ All valid | HIGH |
+| Tool Selection Errors | 1 type | ✅ Valid (if tool works) | HIGH |
+| Parameter Errors | 3 subtypes | ✅ Valid (returns wrong data) | **HIGHEST** |
+| ~~Sequencing Errors~~ | ~~3 types~~ | ❌ Breaks execution | EXCLUDED |
+| Data Reference Errors | 1 type | ✅ Valid (hallucination) | MEDIUM |
+
+**Total: 7 perturbation subtypes** (down from 18 proposed, up from 3 in POC)
+
+---
+
+## 5. Detailed Perturbation Specifications (Realism-Constrained)
+
+### 5.1 Planning Errors (Type A) - ✅ VALID
+
+Planning errors modify the agent's reasoning but don't break execution. The trajectory continues with wrong intent.
 
 #### A1: Goal Substitution (Existing)
 - **Description:** Replace goal with related but incorrect goal
 - **Example:** "Get latest news" → "Get historical articles"
 - **Implementation:** Regex pattern matching on Thought field
+- **Realism:** Agent pursues wrong goal but execution proceeds
 
 #### A2: Scope Reduction (Existing)
 - **Description:** Address only part of multi-part request
 - **Example:** "Compare A and B" → "Analyze A only"
 - **Implementation:** Remove second clause from planning
+- **Realism:** Agent completes partial task, common real failure
 
-#### A3: Constraint Violation (NEW)
-- **Description:** Ignore explicit constraints in task
-- **Example:** "Find hotels under $100" → Ignores price constraint
-- **Implementation:** Remove constraint mentions from Thought
-- **Priority:** MEDIUM
+### 5.2 Tool Selection Errors (Type B) - ✅ VALID (with constraint)
 
-### 4.2 Tool Selection Errors (Type B)
+Tool selection errors are valid **only if the wrong tool still returns valid output**.
 
 #### B1: Similar Tool Swap (Existing)
 - **Description:** Replace tool with semantically similar wrong tool
 - **Example:** `get_weather` → `get_forecast`
 - **Implementation:** ToolSimilarityMatcher
+- **Realism constraint:** Only swap if both tools return similar data structure
+- **Real-world analogy:** Developer uses `array.find()` instead of `array.filter()`
 
-#### B2: Category Confusion (NEW)
-- **Description:** Use tool from wrong category but similar name
-- **Example:** `search_products` → `search_articles`
-- **Implementation:** Match by action verb, ignore domain
-- **Priority:** MEDIUM
+### 5.3 Parameter Errors (Type C) - ✅ VALID (highest priority)
 
-### 4.3 Parameter Errors (Type C)
+Parameter errors are the most realistic because APIs typically return data (even if wrong) rather than crashing. This is why POC found these most under-penalized.
 
-#### C1: Missing Required Parameter (Existing)
-- **Description:** Remove a required parameter
-- **Example:** `{"user_id": "123", "date": "2024-01-01"}` → `{"date": "2024-01-01"}`
-
-#### C2: Wrong Parameter Value (Existing)
+#### C1: Wrong Parameter Value (Existing) - **PRIMARY**
 - **Description:** Replace value with incorrect but plausible value
 - **Example:** `{"id": "123"}` → `{"id": "999"}`
+- **Realism:** API returns data for wrong entity, execution continues
 
-#### C3: Wrong Parameter Name (Existing)
-- **Description:** Rename parameter key
-- **Example:** `{"user_id": "123"}` → `{"userid": "123"}`
-
-#### C4: Wrong Parameter Type (Existing)
-- **Description:** Change value type
-- **Example:** `{"count": 5}` → `{"count": "5"}`
-
-#### C5: Off-by-One Error (NEW)
-- **Description:** Numeric values slightly wrong
-- **Example:** `{"page": 1}` → `{"page": 0}` or `{"limit": 10}` → `{"limit": 11}`
-- **Priority:** HIGH (realistic, subtle)
-
-#### C6: Format Error (NEW)
+#### C2: Format Error (NEW) - **SECONDARY**
 - **Description:** Correct value, wrong format
 - **Example:** `{"date": "2024-01-15"}` → `{"date": "01/15/2024"}`
-- **Priority:** HIGH (common real-world error)
+- **Realism:** Some APIs are format-tolerant, return unexpected results
 
-### 4.4 Sequencing Errors (Type D) - NEW
+#### C3: Off-by-One Error (NEW) - **TERTIARY**
+- **Description:** Numeric values slightly wrong
+- **Example:** `{"page": 1}` → `{"page": 0}`
+- **Realism:** Common programming error, subtle impact
 
-#### D1: Step Swap
-- **Description:** Swap order of two consecutive steps
-- **Example:** Steps 3-4 become Steps 4-3
-- **Implementation:** Swap step objects, renumber
-- **Priority:** **HIGH** (tests causal understanding)
+**EXCLUDED Parameter Subtypes:**
+- ~~Missing required parameter~~ → Causes API failure, not realistic continuation
+- ~~Wrong parameter name~~ → Causes API failure
+- ~~Wrong parameter type~~ → Often causes API failure
 
-#### D2: Premature Action
-- **Description:** Execute action before prerequisite
-- **Example:** Use result before fetching it
-- **Implementation:** Move tool call before its dependency
-- **Priority:** **HIGH**
+### 5.4 Data Reference Errors (Type D) - ✅ VALID (new)
 
-#### D3: Missing Intermediate Step
-- **Description:** Remove a required intermediate step
-- **Example:** Delete step 3 in a 5-step sequence
-- **Implementation:** Remove step, don't renumber (gap visible)
-- **Priority:** **HIGH** (tests completeness checking)
+Data reference errors occur when an agent uses incorrect data from a prior step. This is highly realistic and tests judge's ability to track information flow.
 
-### 4.5 Data Errors (Type E) - NEW
-
-#### E1: Hallucinated Reference
+#### D1: Hallucinated Reference (NEW)
 - **Description:** Reference non-existent data from prior step
-- **Example:** Use `article_id: 999` when prior step returned `article_id: 123`
-- **Implementation:** Replace referenced value with random plausible value
-- **Priority:** **HIGH** (tests context tracking)
+- **Example:** Prior step returned `article_id: 123`, but agent uses `article_id: 999`
+- **Implementation:** Replace referenced value with plausible but wrong value
+- **Realism:** Very common - agents lose track of IDs, names, values across steps
 
-#### E2: Stale Data Usage
-- **Description:** Use outdated data from earlier step
-- **Example:** Use step 2's result when step 4's result should be used
-- **Implementation:** Reference wrong step's output
-- **Priority:** MEDIUM
+### 5.5 EXCLUDED Perturbation Types
 
-### 4.6 Output Errors (Type F) - NEW
+The following were considered but excluded due to realism constraints:
 
-#### F1: Incomplete Answer
-- **Description:** Final answer missing required information
-- **Example:** Asked for "name and price" → only returns name
-- **Implementation:** Truncate final answer
-- **Priority:** LOW (easy to detect)
+| Type | Reason for Exclusion |
+|------|---------------------|
+| **Sequencing: Step Swap** | Breaks dependency chain, trajectory becomes non-executable |
+| **Sequencing: Missing Step** | Subsequent steps reference missing output, breaks execution |
+| **Sequencing: Premature Action** | Uses data that doesn't exist yet, breaks execution |
+| **Parameter: Missing Required** | API typically fails with error, agent would retry |
+| **Parameter: Wrong Name** | API typically fails, not realistic continuation |
+| **Output: Incomplete Answer** | Too easy to detect, not interesting for calibration study |
 
-#### F2: Wrong Format Answer
-- **Description:** Answer correct but wrong format
-- **Example:** Asked for JSON → returns plain text
-- **Implementation:** Convert answer format
-- **Priority:** LOW
+**Note:** Sequencing errors could be included in future work if we also simulate the agent's recovery/failure response.
 
 ---
 
-## 5. Perturbation Matrix
+## 6. Final Perturbation Matrix (Realism-Constrained)
 
-### 5.1 Full Matrix (Types × Positions)
+### 6.1 Approved Perturbation Types
 
-| Type/Subtype | Early | Middle | Late | Priority |
-|--------------|-------|--------|------|----------|
-| A1: Goal Substitution | ✅ | ✅ | ✅ | HIGH |
-| A2: Scope Reduction | ✅ | ✅ | ✅ | HIGH |
-| A3: Constraint Violation | ✅ | ✅ | ❌ | MEDIUM |
-| B1: Similar Tool Swap | ✅ | ✅ | ✅ | HIGH |
-| B2: Category Confusion | ✅ | ✅ | ✅ | MEDIUM |
-| C1: Missing Parameter | ✅ | ✅ | ✅ | HIGH |
-| C2: Wrong Value | ✅ | ✅ | ✅ | HIGH |
-| C3: Wrong Name | ✅ | ✅ | ✅ | HIGH |
-| C4: Wrong Type | ✅ | ✅ | ✅ | HIGH |
-| C5: Off-by-One | ✅ | ✅ | ✅ | HIGH |
-| C6: Format Error | ✅ | ✅ | ✅ | HIGH |
-| D1: Step Swap | ❌ | ✅ | ✅ | **HIGH** |
-| D2: Premature Action | ✅ | ✅ | ❌ | **HIGH** |
-| D3: Missing Step | ✅ | ✅ | ✅ | **HIGH** |
-| E1: Hallucinated Ref | ❌ | ✅ | ✅ | **HIGH** |
-| E2: Stale Data | ❌ | ✅ | ✅ | MEDIUM |
-| F1: Incomplete Answer | ❌ | ❌ | ✅ | LOW |
-| F2: Wrong Format | ❌ | ❌ | ✅ | LOW |
+| Type | Subtype | Early | Middle | Late | Realism |
+|------|---------|-------|--------|------|---------|
+| Planning | A1: Goal Substitution | ✅ | ✅ | ✅ | Agent pursues wrong goal |
+| Planning | A2: Scope Reduction | ✅ | ✅ | ✅ | Agent does partial task |
+| Tool Selection | B1: Similar Tool Swap | ✅ | ✅ | ✅ | Returns different data |
+| Parameter | C1: Wrong Value | ✅ | ✅ | ✅ | Returns wrong entity |
+| Parameter | C2: Format Error | ✅ | ✅ | ✅ | Unexpected API behavior |
+| Parameter | C3: Off-by-One | ✅ | ✅ | ✅ | Subtle numeric error |
+| Data Reference | D1: Hallucinated Ref | ❌ | ✅ | ✅ | Lost track of data |
 
-### 5.2 Recommended Subset for Full Study
+**Total: 7 perturbation subtypes × 3 positions = 21 conditions**  
+(But D1 not applicable to early position → 19 effective conditions)
 
-For tractability, focus on **12 perturbation types** (down from 18):
+### 6.2 Condition Distribution for 600 Perturbations
 
-| Type | Subtype | Rationale |
-|------|---------|-----------|
-| Planning | Goal Substitution | POC baseline |
-| Planning | Scope Reduction | POC baseline |
-| Tool Selection | Similar Tool Swap | POC baseline |
-| Parameter | Missing Required | POC baseline |
-| Parameter | Wrong Value | POC baseline |
-| Parameter | Off-by-One | NEW: subtle, realistic |
-| Parameter | Format Error | NEW: common real error |
-| Sequencing | Step Swap | NEW: tests causality |
-| Sequencing | Missing Step | NEW: tests completeness |
-| Sequencing | Premature Action | NEW: tests dependency |
-| Data | Hallucinated Reference | NEW: tests context |
-| Data | Stale Data | NEW: tests memory |
+| Condition | Count | Notes |
+|-----------|-------|-------|
+| Planning × 3 positions | 2 × 3 × 33 = 198 | ~33 per subtype × position |
+| Tool Selection × 3 positions | 1 × 3 × 33 = 99 | |
+| Parameter × 3 positions | 3 × 3 × 33 = 297 | Highest priority (POC finding) |
+| Data Reference × 2 positions | 1 × 2 × 33 = 66 | Not applicable to early |
+| **Total** | ~**660** | Round to 600 via sampling |
 
 ---
 
@@ -239,80 +236,83 @@ For each perturbation type, generate:
 
 ---
 
-## 7. Expected Perturbation Counts
+## 7. Experimental Design: One Perturbation Per Trajectory
 
-### 7.1 Per Trajectory
+### 7.1 Design Decision
 
-| Scenario | Perturbations/Trajectory |
-|----------|-------------------------|
-| Minimum | 3 (one per position) |
-| Target | 5-6 (sampling across types) |
-| Maximum | 12 (one per selected type) |
+**Each trajectory receives exactly ONE perturbation.**
 
-### 7.2 Total Dataset
+| Approach | Trajectories | Perturbations | Pros | Cons |
+|----------|--------------|---------------|------|------|
+| ~~All perturbations~~ | 600 | 5,400 | Controls for trajectory effects | Confounding |
+| **One per trajectory** | 600 | 600 | Clean design, tractable | Need domain stratification |
 
-| Dataset | Trajectories | Perturbations (3-6 each) |
-|---------|--------------|--------------------------|
-| ToolBench | 400 | 1,600-2,400 |
-| GAIA | 100 | 400-600 |
-| **Total** | **500** | **2,000-3,000** |
+### 7.2 Stratified Assignment
 
-### 7.3 Sampling Strategy
+To ensure domain-agnostic results, each perturbation condition is spread across benchmarks:
 
-Not every trajectory gets every perturbation type. Sample to ensure:
-- Each type × position has ≥50 samples
-- Each intensity level has ≥100 samples
-- Total tractable for judge evaluation (~2,500 max)
+| Perturbation | ToolBench | GAIA | SWE-bench | Total |
+|--------------|-----------|------|-----------|-------|
+| Planning (A1+A2) × 3 pos | 120 | 30 | 30 | 180 |
+| Tool Selection (B1) × 3 pos | 60 | 15 | 15 | 90 |
+| Parameter (C1+C2+C3) × 3 pos | 180 | 45 | 45 | 270 |
+| Data Reference (D1) × 2 pos | 40 | 10 | 10 | 60 |
+| **Total** | **400** | **100** | **100** | **600** |
+
+### 7.3 Domain-Agnostic Validation
+
+After running judges, we can verify results are not domain-specific by:
+1. Comparing CCG within each condition across benchmarks
+2. Testing for interaction effects (perturbation type × benchmark)
+3. Reporting confidence intervals that span all benchmarks
 
 ---
 
 ## 8. Implementation Requirements
 
-### 8.1 New Strategy Classes
+### 8.1 New Strategy Class
 
 ```python
-# New strategies to implement
-class SequencingErrorStrategy(BasePerturbationStrategy):
-    """Type D: Sequencing errors."""
+class DataReferenceErrorStrategy(BasePerturbationStrategy):
+    """Type D: Data reference errors (hallucination)."""
     
-    def swap_steps(self, trajectory, step_a, step_b): ...
-    def remove_step(self, trajectory, step_idx): ...
-    def move_step_early(self, trajectory, step_idx): ...
-
-class DataErrorStrategy(BasePerturbationStrategy):
-    """Type E: Data reference errors."""
-    
-    def hallucinate_reference(self, step, trajectory): ...
-    def use_stale_data(self, step, trajectory, stale_step): ...
+    def hallucinate_reference(self, step, trajectory):
+        """
+        Replace a referenced value from prior step with wrong value.
+        
+        Example: If step 3 uses article_id=123 from step 2's output,
+        change to article_id=999 (plausible but wrong).
+        """
+        ...
 ```
 
-### 8.2 Generator Updates
+### 8.2 Updated Perturbation Types
 
 ```python
-# Update PerturbationGenerator to support new types
 PERTURBATION_TYPES = [
-    "planning",        # A: Planning errors
-    "tool_selection",  # B: Tool selection errors
-    "parameter",       # C: Parameter errors
-    "sequencing",      # D: Sequencing errors (NEW)
-    "data",            # E: Data errors (NEW)
+    "planning",        # A: Goal substitution, scope reduction
+    "tool_selection",  # B: Similar tool swap
+    "parameter",       # C: Wrong value, format error, off-by-one
+    "data_reference",  # D: Hallucinated reference (NEW)
 ]
+# Note: Sequencing errors EXCLUDED (break execution)
 ```
 
-### 8.3 Config Schema Updates
+### 8.3 Config Schema
 
 ```json
 {
   "perturbations": {
-    "types": ["planning", "tool_selection", "parameter", "sequencing", "data"],
+    "types": ["planning", "tool_selection", "parameter", "data_reference"],
     "positions": ["early", "middle", "late"],
     "subtypes": {
-      "parameter": ["missing", "wrong_value", "off_by_one", "format_error"],
-      "sequencing": ["step_swap", "missing_step", "premature_action"],
-      "data": ["hallucinated_ref", "stale_data"]
+      "planning": ["goal_substitution", "scope_reduction"],
+      "tool_selection": ["similar_tool_swap"],
+      "parameter": ["wrong_value", "format_error", "off_by_one"],
+      "data_reference": ["hallucinated_ref"]
     },
-    "intensity_levels": ["subtle", "moderate", "severe"],
-    "intensity_distribution": {"subtle": 0.4, "moderate": 0.4, "severe": 0.2}
+    "one_per_trajectory": true,
+    "stratify_by": ["benchmark", "domain"]
   }
 }
 ```
@@ -325,19 +325,19 @@ PERTURBATION_TYPES = [
 
 | Check | Criterion |
 |-------|-----------|
-| Syntactic validity | Perturbed trajectory is well-formed JSON |
-| Semantic coherence | Error is localized, rest of trajectory unchanged |
-| Realism | Error could plausibly occur in real agent |
-| Detectability | Human annotator can identify the error |
+| **Execution continuity** | Perturbed step doesn't crash API |
+| **Downstream coherence** | Subsequent steps can still execute |
+| **Realism** | Error could occur in real agent |
+| **Detectability** | Human annotator can identify error |
 
 ### 9.2 Coverage Validation
 
 | Metric | Target |
 |--------|--------|
-| Types covered | 12/12 |
-| Positions covered | 3/3 per type |
-| Intensity levels | 3/3 per type |
-| Min samples per cell | 50 |
+| Perturbation types covered | 7/7 |
+| Positions covered | 3/3 (2/2 for data_ref) |
+| Benchmarks covered per condition | 3/3 |
+| Min samples per condition | 30 |
 
 ---
 
@@ -347,33 +347,27 @@ PERTURBATION_TYPES = [
 
 | Risk | Probability | Mitigation |
 |------|-------------|------------|
-| Sequencing perturbations break trajectory | Medium | Validate output coherence |
-| Hallucinated references not detectable | Low | Use obviously wrong values |
-| Too many perturbation types | Medium | Subset to 12 for main study |
+| Data reference detection difficult | Medium | Validate with annotator pilot |
+| SWE-bench tool structure different | Medium | Map tool types explicitly |
+| Insufficient samples per condition | Low | Reserve pool of trajectories |
 
-### 10.2 Annotation Risks
+### 10.2 Analysis Risks
 
 | Risk | Probability | Mitigation |
 |------|-------------|------------|
-| New types confuse annotators | Medium | Clear annotation guide |
-| Intensity levels subjective | Medium | Provide calibration examples |
-| Fatigue from volume | Medium | Batch annotations, breaks |
+| Results ARE domain-specific | Medium | Report by benchmark, still valuable |
+| Parameter errors dominate | Low | Equal allocation to planning/tool |
 
 ---
 
-## 11. Questions for Researcher Review
+## 11. Open Questions (Resolved)
 
-1. **Sequencing errors:** Should step swaps preserve output references, or let them break naturally?
-
-2. **Intensity levels:** Is subtle/moderate/severe the right granularity, or should we use a 1-5 scale?
-
-3. **Perturbation subset:** Are the 12 selected types the right ones? Should we include/exclude any?
-
-4. **Data errors:** How should we validate that hallucinated references are "obviously wrong" but not "absurdly wrong"?
-
-5. **Position applicability:** Some perturbations don't make sense in all positions (e.g., step swap in early). Should we enforce this or let it be flexible?
-
-6. **Interaction effects:** Should we test combining multiple perturbations in one trajectory (e.g., planning error + parameter error)?
+| Question | Resolution |
+|----------|------------|
+| Sequencing errors? | **EXCLUDED** - break execution, not realistic |
+| All perturbations per trajectory? | **NO** - one per trajectory, stratified |
+| Intensity levels? | **DEFERRED** - focus on one intensity first |
+| Combine multiple perturbations? | **NO** - one per trajectory for clean design |
 
 ---
 
@@ -381,19 +375,28 @@ PERTURBATION_TYPES = [
 
 ### 12.1 Key Changes from POC
 
-| Aspect | POC | Proposed |
-|--------|-----|----------|
-| Types | 3 | 5 (add Sequencing, Data) |
-| Subtypes | 7 | 12 |
-| Intensity | 1 (moderate) | 3 (subtle/moderate/severe) |
-| Total perturbations | 443 | 2,000-3,000 |
+| Aspect | POC | Revised Proposal |
+|--------|-----|------------------|
+| Trajectories | 50 | 600 (400 TB + 100 GAIA + 100 SWE) |
+| Perturbation types | 3 | 4 (add Data Reference) |
+| Subtypes | 7 | 7 (realism-constrained) |
+| Perturbations/trajectory | ~9 | **1** (cleaner design) |
+| Total perturbations | 443 | 600 |
+| Sequencing errors | Proposed | **EXCLUDED** (break execution) |
 
-### 12.2 Expected Impact on Study
+### 12.2 Design Principles
 
-1. **Better causality testing:** Sequencing errors directly test if judges understand step dependencies
-2. **Subtlety testing:** Intensity levels reveal threshold for judge detection
-3. **Context testing:** Data errors reveal if judges track information flow
-4. **Statistical power:** More samples enable robust subgroup analysis
+1. **Realism first:** Only include perturbations where execution can continue
+2. **One per trajectory:** Avoid confounding, cleaner experimental design
+3. **Domain stratification:** Each condition spans all 3 benchmarks
+4. **Parameter focus:** POC showed these are most under-penalized
+
+### 12.3 Expected Impact
+
+1. **Cleaner statistical analysis:** No confounding between perturbation types
+2. **Domain-agnostic validation:** Can verify results generalize across benchmarks
+3. **Context tracking test:** Data reference errors reveal if judges track information flow
+4. **Tractable annotation:** 600 samples vs 5,400
 
 ---
 
