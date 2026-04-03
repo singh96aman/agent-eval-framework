@@ -2,17 +2,32 @@
 
 **Task:** 03_dataset_exploration  
 **Date:** 2026-04-03  
-**Status:** Draft for Review
+**Status:** Revision 1 (Addressing Reviewer Feedback)
 
 ---
 
 ## 1. Objective
 
-Define a sampling strategy to achieve ~500 high-quality trajectories across multiple domains, ensuring:
+Define a sampling strategy to achieve ~600 high-quality trajectories across multiple domains, ensuring:
 1. Domain diversity (agents work in many contexts)
 2. Complexity diversity (simple to complex tasks)
 3. Tool diversity (enables all perturbation types)
 4. Statistical power (sufficient samples per condition)
+5. **Multi-judge generalizability** (findings not model-specific)
+6. **Cross-benchmark validity** (perturbation semantics comparable)
+
+### 1.1 CRITICAL: Contribution Clarity
+
+**Primary contribution:** Empirical finding that LLM judges are systematically miscalibrated for agent trajectories, with miscalibration predicted by error salience rather than criticality.
+
+**Secondary contribution:** CCG (Criticality-Calibration Gap) metric as a diagnostic tool for evaluating judge reliability.
+
+**What this paper is NOT:**
+- A new benchmark (we use existing benchmarks)
+- A new judge model (we evaluate existing judges)
+- A method to fix calibration (that's future work)
+
+**Sharpened claim:** "We demonstrate that all tested LLM judges (Claude, GPT-4o, Llama 70B) systematically under-penalize low-salience errors in agent trajectories, with implications for RLHF reward modeling and production monitoring."
 
 ---
 
@@ -31,6 +46,58 @@ Define a sampling strategy to achieve ~500 high-quality trajectories across mult
 - Missing from ToolBench (API-focused) and GAIA (QA-focused)
 - Highly popular benchmark (adds credibility to paper)
 - Different error modes (syntax, logic, API misuse)
+
+---
+
+## 2.5 CRITICAL: Multi-Judge Design
+
+### The Problem (Reviewer Concern #5)
+
+**"Only Claude Sonnet 4.5 used as judge. Different models may have different calibration patterns. Without this, findings may be Claude-specific artifacts."**
+
+### Our Solution: Multi-Judge Evaluation
+
+Each perturbation will be evaluated by **3 different judge models**:
+
+| Judge Model | Provider | Rationale |
+|-------------|----------|-----------|
+| Claude Sonnet 4.5 | AWS Bedrock | Primary (already implemented) |
+| GPT-4o | OpenAI | Different training, architecture |
+| Llama 3.1 70B | Together/Bedrock | Open-source, different paradigm |
+
+### Analysis Implications
+
+| Finding | Interpretation |
+|---------|----------------|
+| All judges show same CCG pattern | **Strong finding** - model-independent bias |
+| Claude-specific CCG pattern | Model-specific artifact, report as limitation |
+| All judges disagree with humans similarly | Systematic LLM limitation |
+| Judges disagree with each other | Judge-specific biases (still interesting) |
+
+### Cost Estimate (3 judges × 600 perturbations)
+
+| Judge | API Cost/1K tokens | Estimated Total |
+|-------|-------------------|-----------------|
+| Claude Sonnet 4.5 | $0.003 | ~$50 |
+| GPT-4o | $0.005 | ~$80 |
+| Llama 3.1 70B | $0.001 | ~$15 |
+| **Total** | | **~$145** |
+
+### Implementation
+
+The judge framework already supports multiple models. We run each perturbation through all 3 judges and compute CCG for each (judge, perturbation_type, position) combination.
+
+```python
+JUDGE_MODELS = [
+    "claude-sonnet-4.5",
+    "gpt-4o", 
+    "llama-3.1-70b"
+]
+
+for perturbation in perturbations:
+    for judge in JUDGE_MODELS:
+        evaluate(perturbation, judge)
+```
 
 ### 2.2 Perturbation Strategy: One Per Trajectory
 
@@ -131,11 +198,49 @@ filters = {
 
 GAIA contains questions and answers but NOT agent trajectories. We need to **generate trajectories** by running an agent on GAIA tasks.
 
-**Generation Approach:**
+### 4.2 CRITICAL: Addressing the Claude-Judging-Claude Bias
+
+**Reviewer Concern #6:** "GAIA doesn't have trajectories - you're generating them by running Claude on GAIA tasks, then using Claude to judge Claude-generated trajectories. This creates potential for model-specific biases."
+
+**This is a valid concern.** If Claude generates the trajectory and Claude judges it, we may see:
+- Inflated agreement (Claude "understands" its own reasoning)
+- Deflated agreement (Claude is harsh on its own style)
+- Either way, results may not generalize to other agent-judge pairs
+
+### 4.3 Mitigation Strategies for GAIA
+
+**Strategy 1: Multi-Generator Design**
+Generate GAIA trajectories using MULTIPLE agent models:
+
+| Generator Model | Trajectories | Rationale |
+|-----------------|--------------|-----------|
+| Claude Sonnet 4.5 | 50 | Same-model baseline |
+| GPT-4o | 50 | Cross-model trajectories |
+
+This allows us to compare:
+- Claude-judging-Claude vs Claude-judging-GPT
+- GPT-judging-Claude vs GPT-judging-GPT
+- If CCG patterns differ, we report the cross-model results as primary
+
+**Strategy 2: Use Existing SWE-bench Trajectories**
+SWE-bench trajectories are **pre-generated** by SWE-Smith (a different agent system). These are truly external trajectories, not Claude-generated.
+
+| Benchmark | Generator | Judge Independence |
+|-----------|-----------|-------------------|
+| ToolBench | External (pre-existing) | Full independence |
+| SWE-bench | SWE-Smith (external) | Full independence |
+| GAIA | Claude/GPT (generated) | Partial - mitigated by multi-generator |
+
+**Strategy 3: Report by Generator-Judge Pair**
+For GAIA results, we report CCG separately for each (generator, judge) combination and flag any significant differences.
+
+### 4.4 Revised GAIA Generation Approach
+
 1. Select 100 GAIA questions (stratified by difficulty)
-2. Run Claude Sonnet 4.5 with tool access on each
+2. Run **50 with Claude Sonnet 4.5**, **50 with GPT-4o**
 3. Record the full trajectory (thoughts, tool calls, outputs)
 4. Validate trajectory quality
+5. In analysis, compare CCG for Claude-generated vs GPT-generated subsets
 
 ### 4.2 Difficulty Distribution
 
@@ -201,25 +306,213 @@ filters = {
 }
 ```
 
-### 5.5 SWE-bench Perturbation Considerations
+### 5.5 CRITICAL: SWE-bench Perturbation Semantics
+
+**Reviewer Concern #7:** "Mapping ToolBench perturbations to SWE-bench is problematic. 'Wrong API tool' → 'Wrong file edit target' are qualitatively different errors. Comparing CCG across fundamentally different perturbation semantics undermines cross-benchmark validity."
+
+### 5.5.1 The Problem
 
 SWE-bench trajectories have different tool calls than ToolBench:
 - `file_edit` instead of API calls
 - `run_tests` instead of data retrieval
 - `search_code` instead of web search
 
-**Perturbation mapping:**
-| ToolBench Perturbation | SWE-bench Equivalent |
-|------------------------|----------------------|
-| Wrong API tool | Wrong file edit target |
-| Wrong parameter value | Wrong code change |
-| Planning error (wrong goal) | Wrong bug diagnosis |
+A naive mapping creates **semantic mismatch**:
+
+| ToolBench Perturbation | Naive SWE-bench Equivalent | Problem |
+|------------------------|----------------------------|---------|
+| Wrong API tool | Wrong file edit target | Different cognitive demand |
+| Wrong parameter value | Wrong code change | Code is more complex than params |
+| Planning error (wrong goal) | Wrong bug diagnosis | Diagnosis requires domain expertise |
+
+### 5.5.2 Options for SWE-bench
+
+**Option A: Remove SWE-bench (Conservative)**
+
+Drop SWE-bench entirely. Focus on ToolBench + GAIA only.
+
+| Pro | Con |
+|-----|-----|
+| Clean perturbation semantics | Lose code domain |
+| Simpler analysis | Less benchmark diversity |
+| No mapping ambiguity | Miss popular benchmark |
+
+**Option B: Keep SWE-bench but Analyze Separately (Recommended)**
+
+Include SWE-bench but do NOT pool CCG across benchmarks for cross-benchmark comparisons.
+
+| Pro | Con |
+|-----|-----|
+| Keep code domain coverage | More complex analysis |
+| Can still report SWE-bench-specific findings | Cannot make "universal" claims |
+| Valuable as separate study | Slightly weaker paper story |
+
+**Option C: Create SWE-bench-Native Perturbations**
+
+Design perturbations that are semantically appropriate for code:
+- **Wrong file:** Edit wrong file (analogous to wrong tool)
+- **Wrong hunk:** Edit wrong location in file (analogous to wrong params)
+- **Wrong fix:** Apply incorrect code change (unique to SWE-bench)
+- **Planning error:** Diagnose wrong root cause (analogous to planning)
+
+These are NOT mappings from ToolBench - they are SWE-bench-native error types that test similar cognitive skills.
+
+### 5.5.3 Our Decision: KEEP SWE-bench, Analyze Separately (FINAL)
+
+**Decisive commitment:** We KEEP SWE-bench and commit to analyzing it separately. This is NOT hedging—it's the scientifically correct approach for benchmarks with different perturbation semantics.
+
+**Rationale for keeping (not dropping):**
+1. **Code domain matters**: Missing code would be a glaring omission for agent evaluation research
+2. **Different error modes are valuable**: If patterns hold across semantically different perturbations, that's a stronger finding
+3. **If patterns diverge, that's also interesting**: Domain-specificity of judge biases is itself a contribution
+
+**What we commit to:**
+1. Keep SWE-bench (100 trajectories)
+2. Create SWE-bench-native perturbation types (conceptually analogous, not mechanically mapped)
+3. Report SWE-bench CCG in a **dedicated section** (not pooled with ToolBench/GAIA in main results)
+4. Compare **qualitative patterns** across benchmarks in discussion
+5. **Pre-register** both the separate analysis plan AND what pattern consistency would mean
+
+### 5.5.4 Revised SWE-bench Perturbation Types
+
+| Perturbation | SWE-bench Implementation | Conceptual Category |
+|--------------|--------------------------|---------------------|
+| **Wrong file** | Edit a different file than needed | Tool selection analog |
+| **Wrong location** | Edit wrong function/class in correct file | Parameter analog (spatial) |
+| **Wrong value** | Change wrong variable/value in code | Parameter analog (value) |
+| **Wrong diagnosis** | Planning thinks bug is in wrong component | Planning analog |
+| **Data reference** | Use wrong variable name from earlier search | Data reference analog |
+
+### 5.5.5 Cross-Benchmark Validity Statement
+
+> We do NOT claim that CCG values are directly comparable across ToolBench and SWE-bench. The perturbation types are conceptually analogous but not identical. Instead, we test whether the *qualitative patterns* (e.g., parameter-like errors under-penalized, planning errors well-calibrated) hold across both domains. If patterns diverge, this is itself an interesting finding about domain-specificity of judge biases.
 
 ---
 
-## 6. Sampling Implementation
+## 6. CRITICAL: Statistical Power Analysis
 
-### 5.1 ToolBench Sampling Code
+### 6.1 Reviewer Concern #8
+
+**"With 19 conditions and 30 samples each, some cells will be thin. Data reference errors (only 2 positions) get only 60 samples total."**
+
+### 6.2 Current Design Power Analysis
+
+| Design Element | Value | Notes |
+|----------------|-------|-------|
+| Total trajectories | 600 | |
+| Conditions | 19 | 7 subtypes × 3 positions - 2 (D1 no early) |
+| Samples per condition | ~32 | 600 / 19 |
+| Judge models | 3 | Claude, GPT-4o, Llama 70B |
+| Human annotations | 275 | Target (up from 26) |
+
+### 6.3 Power Calculation for CCG Detection
+
+**Effect size from POC:**
+- Parameter CCG = +1.13, Planning CCG = -0.13
+- Difference = 1.26 points
+- SD = 2.08 (from POC)
+- Cohen's d = 1.26 / 2.08 = 0.61 (medium-large effect)
+
+**Required n for 80% power (two-sample t-test, alpha=0.05):**
+```
+n_per_group = 2 * (1.96 + 0.84)^2 / d^2
+n_per_group = 2 * (2.8)^2 / (0.61)^2
+n_per_group = 2 * 7.84 / 0.37
+n_per_group = 42 per condition
+```
+
+**Our design: 32 per condition is UNDERPOWERED for individual comparisons.**
+
+### 6.4 Mitigation: Hierarchical Analysis
+
+Instead of 19 individual conditions, we analyze at three levels:
+
+| Level | Conditions | Samples | Power |
+|-------|------------|---------|-------|
+| **Type level** | 4 (planning, tool, param, data_ref) | ~150 each | Adequate |
+| **Position level** | 3 (early, middle, late) | ~200 each | Good |
+| **Type × Position** | 12 (excl. thin cells) | ~50 each | Marginal |
+| **Subtype level** | 7 | ~85 each | Adequate |
+
+**Primary analysis:** Type level (4 conditions) and Position level (3 conditions)
+**Secondary analysis:** Type × Position interaction (powered for large effects only)
+**Exploratory:** Subtype comparisons (report with appropriate uncertainty)
+
+### 6.5 Sample Size Adjustments
+
+**Option A: Increase to 900 trajectories (50 per condition)**
+- More statistical power
+- Higher annotation burden (400+ annotations)
+- Higher API cost (~$220)
+
+**Option B: Reduce conditions (current recommendation)**
+- Collapse parameter subtypes (C1, C2, C3 → C)
+- Focus on 4 types × 3 positions = 12 conditions
+- 50 samples per condition
+- Adequate power for primary comparisons
+
+**Option C: Mixed design**
+- 550 trajectories: one perturbation each (primary)
+- 50 trajectories: all perturbations (within-subject control)
+- Use mixed-effects models to pool information
+
+### 6.6 Revised Sample Allocation (Option B Recommended)
+
+| Condition | Samples | Rationale |
+|-----------|---------|-----------|
+| Planning × Early | 50 | Primary analysis |
+| Planning × Middle | 50 | |
+| Planning × Late | 50 | |
+| Tool Selection × Early | 50 | |
+| Tool Selection × Middle | 50 | |
+| Tool Selection × Late | 50 | |
+| Parameter × Early | 50 | Collapsed subtypes |
+| Parameter × Middle | 50 | |
+| Parameter × Late | 50 | |
+| Data Reference × Middle | 50 | No early position |
+| Data Reference × Late | 50 | |
+| **Reserve pool** | 50 | For failed perturbations |
+| **Total** | **600** | |
+
+### 6.8 CRITICAL: Pre-Registration Plan
+
+**Why pre-register?** For a study explicitly about systematic biases, pre-registration adds significant credibility and prevents post-hoc hypothesis revision.
+
+**Pre-registration platform:** OSF (Open Science Framework)
+
+**Pre-registered elements:**
+1. **Hypotheses**: Salience-based miscalibration (Section 2.3, PerturbationDiversity.MD)
+2. **Falsification criteria**: Specified thresholds for null results (Section 2.5, PerturbationDiversity.MD)
+3. **Analysis plan**: Hierarchical CCG analysis, covariate adjustment
+4. **Sample sizes**: 600 trajectories, 275 annotations, 100-trajectory control group
+5. **SWE-bench decision**: Separate analysis, not pooled
+6. **Multi-judge design**: 3 models, analysis matrix specified
+
+**Timeline:** Pre-register BEFORE running judges on full dataset. POC data can inform hypothesis but full study must be pre-registered.
+
+**What we will NOT pre-register** (exploratory):
+- Exact API cost
+- Specific tool mappings
+- Annotation interface design details
+
+### 6.7 Annotation Strategy
+
+With 600 perturbations, we cannot annotate all. Strategy:
+
+| Subset | Annotations | Purpose |
+|--------|-------------|---------|
+| Stratified sample | 220 | 20 per condition × 11 conditions |
+| Control trajectories | 100 | Within-trajectory replication group |
+| Execution validation | 40 | Subset with actual API re-execution |
+| **Total annotations** | **275** | (some overlap with control/validation) |
+
+**Inter-annotator reliability:** 50 samples double-annotated to compute Krippendorff's alpha.
+
+---
+
+## 7. Sampling Implementation
+
+### 7.1 ToolBench Sampling Code
 
 ```python
 def sample_toolbench_trajectories(
@@ -391,5 +684,25 @@ Generate after sampling:
 
 ---
 
-**Document Status:** Draft for Review  
-**Next Action:** Create PerturbationDiversity.MD, then request researcher review
+## 11. Reviewer Feedback Addressed
+
+This revision addresses the following concerns from the expert reviewer:
+
+| # | Concern | Section | Resolution |
+|---|---------|---------|------------|
+| 5 | Single judge model | 2.5 | Multi-judge design (Claude, GPT-4o, Llama 70B) |
+| 6 | GAIA trajectory generation bias | 4.2-4.4 | Multi-generator design (Claude + GPT-4o) |
+| 7 | SWE-bench perturbation semantics | 5.5 | Separate analysis, SWE-bench-native perturbations |
+| 8 | Statistical power | 6.1-6.7 | Hierarchical analysis, revised sample allocation |
+
+**Concerns addressed in PerturbationDiversity.MD:**
+- #1 (POC contradicts hypothesis) → Revised hypothesis based on salience
+- #2 (Ground truth criticality) → Detailed operationalization + inter-annotator agreement
+- #3 (Selection bias) → Acknowledged with explicit scope statement
+- #4 (One-per-trajectory confound) → Stratified assignment + control group
+- #9 (Human = ground truth assumption) → Defended with reframe
+
+---
+
+**Document Status:** Revision 1 (Addressing Reviewer Feedback)  
+**Next Action:** Request researcher review of revisions

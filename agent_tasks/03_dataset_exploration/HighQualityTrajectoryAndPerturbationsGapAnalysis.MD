@@ -2,7 +2,50 @@
 
 **Task:** 03_dataset_exploration  
 **Date:** 2026-04-03  
-**Status:** Draft for Review
+**Status:** Revision 1 (Addressing Reviewer Feedback)
+
+---
+
+## IMPORTANT: Reviewer Feedback Incorporated
+
+This document has been revised based on expert reviewer feedback. Key methodological concerns addressed:
+
+| Concern | Resolution | Document |
+|---------|------------|----------|
+| POC contradicts hypothesis | Revised to salience-based hypothesis | PerturbationDiversity.MD |
+| Ground truth underspecified | Counterfactual human judgment + IAA targets | PerturbationDiversity.MD |
+| Selection bias (realism constraint) | Explicit scope: "silent errors" study | PerturbationDiversity.MD |
+| One-per-trajectory confound | **100-trajectory** control group + stratified assignment | PerturbationDiversity.MD |
+| Single judge model | Multi-judge (Claude, GPT-4o, Llama 70B) | DatasetDiversity.MD |
+| GAIA generation bias | Multi-generator (Claude + GPT-4o) | DatasetDiversity.MD |
+| SWE-bench semantics | Separate analysis, native perturbations | DatasetDiversity.MD |
+| Statistical power | Hierarchical analysis, power calculation | DatasetDiversity.MD |
+| Human = ground truth | CCG measures relative bias, not absolute | PerturbationDiversity.MD |
+| **Execution-based validation** | **40-trajectory subset with actual re-execution** | PerturbationDiversity.MD |
+| **Pre-registration** | **OSF pre-registration before full study** | DatasetDiversity.MD |
+| **Falsification criteria** | **Explicit thresholds for null results** | PerturbationDiversity.MD |
+| **Contribution clarity** | **Empirical finding + CCG metric as diagnostic** | DatasetDiversity.MD |
+
+**See DatasetDiversity.MD and PerturbationDiversity.MD for detailed resolutions.**
+
+---
+
+## Revision 2 Summary: Expert Review Response
+
+This revision addresses 6 additional concerns from the latest expert review:
+
+| # | Concern | Resolution |
+|---|---------|------------|
+| 1 | Ground truth is weakest link | Added 40-trajectory execution-based validation subset |
+| 2 | Statistical power marginal (32 < 42 needed) | Acknowledged; hierarchical analysis mitigates |
+| 3 | Control group too small (50) | Increased to 100 trajectories |
+| 4 | SWE-bench integration hedging | Made decisive commitment: KEEP, analyze separately |
+| 5 | Missing pre-registration | Added OSF pre-registration plan |
+| 6 | Hypothesis may be unfalsifiable | Added explicit falsification criteria with thresholds |
+
+**Reviewer verdict:** "Close to but not quite at NeurIPS/ICLR main track bar as currently designed. Borderline / Weak Accept, contingent on results strength."
+
+**Our response:** Address all actionable feedback while acknowledging inherent limitations (marginal power for fine-grained interactions, counterfactual ground truth).
 
 ---
 
