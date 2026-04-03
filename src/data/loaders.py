@@ -6,9 +6,169 @@ benchmarks via Hugging Face datasets library.
 """
 
 import os
+import json
 from typing import List, Optional, Dict, Any
 import random
 from .schema import Trajectory, Step, StepType, GroundTruth
+
+
+def _parse_tool_input(action_input_str: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse tool input string to dictionary.
+
+    Args:
+        action_input_str: JSON string or raw string from Action Input field
+
+    Returns:
+        Parsed dictionary or None if empty/invalid
+    """
+    if not action_input_str or not action_input_str.strip():
+        return None
+
+    # Try to parse as JSON
+    try:
+        parsed = json.loads(action_input_str)
+        # Ensure it's a dict
+        if isinstance(parsed, dict):
+            return parsed
+        else:
+            # If it's not a dict (e.g., a string or number), wrap it
+            return {"value": parsed}
+    except json.JSONDecodeError:
+        # If JSON parsing fails, return as raw string value
+        return {"raw_input": action_input_str}
+
+
+def _has_tool_diversity(trajectory: Trajectory) -> bool:
+    """
+    Check if trajectory has tools with available substitutes in all positions.
+
+    This ensures the trajectory can support tool_selection perturbations
+    by verifying that each position has at least one tool with plausible
+    alternatives.
+
+    Args:
+        trajectory: Trajectory to check
+
+    Returns:
+        True if trajectory has sufficient tool diversity
+    """
+    from src.perturbations.tool_similarity import ToolSimilarityMatcher
+
+    # Get system prompt from metadata
+    system_prompt = trajectory.metadata.get("system_prompt")
+    if not system_prompt:
+        # No system prompt means we can't check tool diversity
+        return False
+
+    # Initialize tool matcher
+    matcher = ToolSimilarityMatcher()
+    matcher.index_tools(system_prompt)
+
+    # Calculate position ranges (same as perturbation generator)
+    num_steps = len(trajectory.steps)
+    if num_steps == 0:
+        return False
+
+    early_end = max(2, num_steps // 3)
+    early_range = range(1, early_end + 1)
+
+    if num_steps <= 3:
+        middle_range = range(2, 3)
+    else:
+        third = num_steps // 3
+        middle_range = range(third + 1, third * 2 + 1)
+
+    third = num_steps // 3
+    late_start = max(num_steps - 1, num_steps - third, 1)
+    late_range = range(late_start, num_steps + 1)
+
+    # Check if each position has at least one tool with substitutes
+    has_early = False
+    has_middle = False
+    has_late = False
+
+    for step in trajectory.steps:
+        # Skip steps without tools or with Finish tool
+        if not step.tool_name or step.tool_name == "Finish":
+            continue
+
+        # Check if this tool has substitutes
+        substitutes = matcher.find_plausible_substitutes(step.tool_name, max_substitutes=1)
+        if not substitutes:
+            continue
+
+        # Check which position this step belongs to
+        if step.step_number in early_range:
+            has_early = True
+        if step.step_number in middle_range:
+            has_middle = True
+        if step.step_number in late_range:
+            has_late = True
+
+    return has_early and has_middle and has_late
+
+
+def _has_parameters_in_all_positions(trajectory: Trajectory) -> bool:
+    """
+    Check if trajectory has at least one step with non-empty parameters
+    in each position (early, middle, late).
+
+    This ensures the trajectory can support parameter perturbations
+    in all positions.
+
+    Args:
+        trajectory: Trajectory to check
+
+    Returns:
+        True if trajectory has parameters in all positions
+    """
+    num_steps = len(trajectory.steps)
+    if num_steps == 0:
+        return False
+
+    # Calculate position ranges (same logic as PerturbationGenerator._find_step_for_position)
+    # Early: first 1/3, but at least steps 1-2
+    early_end = max(2, num_steps // 3)
+    early_range = range(1, early_end + 1)
+
+    # Middle: middle 1/3
+    if num_steps <= 3:
+        middle_range = range(2, 3)
+    else:
+        third = num_steps // 3
+        middle_range = range(third + 1, third * 2 + 1)
+
+    # Late: last 1/3, but at least last 2 steps
+    third = num_steps // 3
+    late_start = max(num_steps - 1, num_steps - third, 1)
+    late_range = range(late_start, num_steps + 1)
+
+    # Check if each position has at least one step with non-empty parameters
+    has_early = False
+    has_middle = False
+    has_late = False
+
+    for step in trajectory.steps:
+        # Skip Finish tool
+        if step.tool_name == "Finish":
+            continue
+
+        # Check if step has non-empty parameters
+        has_params = bool(step.tool_input and step.tool_input != {})
+
+        if not has_params:
+            continue
+
+        # Check which position this step belongs to
+        if step.step_number in early_range:
+            has_early = True
+        if step.step_number in middle_range:
+            has_middle = True
+        if step.step_number in late_range:
+            has_late = True
+
+    return has_early and has_middle and has_late
 
 
 def load_toolbench_trajectories(
@@ -16,6 +176,8 @@ def load_toolbench_trajectories(
     min_steps: int = 1,
     max_steps: int = 100,
     filter_successful: bool = False,
+    require_parameters_all_positions: bool = False,
+    require_tool_diversity: bool = False,
     random_seed: Optional[int] = 42,
     split: str = "train",
     use_auth_token: Optional[str] = None,
@@ -29,6 +191,11 @@ def load_toolbench_trajectories(
         min_steps: Minimum number of steps required
         max_steps: Maximum number of steps allowed
         filter_successful: Only load successful trajectories
+        require_parameters_all_positions: Only load trajectories with non-empty
+            parameters in early, middle, and late positions (ensures parameter
+            perturbations can be applied)
+        require_tool_diversity: Only load trajectories where tools in each position
+            have plausible substitutes (ensures tool_selection perturbations can be applied)
         random_seed: Random seed for sampling
         split: Dataset split to load (train/eval)
         use_auth_token: HuggingFace token (or from env HUGGINGFACE_TOKEN)
@@ -119,6 +286,12 @@ def load_toolbench_trajectories(
                 if (filter_successful and
                         traj.ground_truth.task_success is False):
                     continue
+                if (require_parameters_all_positions and
+                        not _has_parameters_in_all_positions(traj)):
+                    continue
+                if (require_tool_diversity and
+                        not _has_tool_diversity(traj)):
+                    continue
 
                 trajectories.append(traj)
         except Exception as e:
@@ -187,6 +360,13 @@ def _parse_toolbench_conversations(
     if not conversations:
         return None
 
+    # Extract system prompt (first message with from="system")
+    system_prompt = None
+    for conv in conversations:
+        if conv.get("from") == "system":
+            system_prompt = conv.get("value", "")
+            break
+
     # Extract task description from "id" field or user message
     task_desc = item.get("id", "")
     for conv in conversations:
@@ -240,16 +420,27 @@ def _parse_toolbench_conversations(
                 tool_output = conversations[i + 1].get("value", "")
                 i += 1  # Skip function turn, we've consumed it
 
+            # Parse tool input from JSON string to dict
+            parsed_tool_input = _parse_tool_input(action_input) if action_input else None
+
             # Create step
+            # Store the FULL raw value in content (Thought + Action + Action Input)
+            # This allows perturbation strategies to modify Action/Action Input
             step = Step(
                 step_id=f"toolbench_{idx}_step_{step_number}",
                 step_number=step_number,
                 step_type=StepType.TOOL_EXECUTION if action else StepType.REASONING,
-                content=thought,
+                content=value,  # Full text, not just thought
                 tool_name=action if action else None,
-                tool_input=action_input if action_input else None,
+                tool_input=parsed_tool_input,
                 tool_output=tool_output,
-                metadata={"from": from_type, "raw_value": value},
+                metadata={
+                    "from": from_type,
+                    "raw_value": value,
+                    "thought": thought,
+                    "action": action,
+                    "action_input": action_input
+                },
             )
             steps.append(step)
 
@@ -285,7 +476,11 @@ def _parse_toolbench_conversations(
         benchmark="toolbench",
         steps=steps,
         ground_truth=ground_truth,
-        metadata={"source": "local_conversations", "hf_index": idx},
+        metadata={
+            "source": "local_conversations",
+            "hf_index": idx,
+            "system_prompt": system_prompt
+        },
     )
 
     return trajectory

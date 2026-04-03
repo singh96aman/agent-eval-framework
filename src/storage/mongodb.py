@@ -84,16 +84,23 @@ class MongoDBStorage:
 
         CRITICAL: Foreign key indexes for O(1) lookups and pagination.
 
-        NEW ARCHITECTURE:
-        - Trajectories: Pure cache, NO experiment_id
+        ARCHITECTURE:
+        - Trajectories: Tagged with experiment_id for cleanup
         - Perturbations: Links experiment → original → perturbed
         - All downstream entities: Have experiment_id
         """
-        # Trajectories: Pure cache layer (NO experiment_id!)
-        self.trajectories.create_index([("trajectory_id", ASCENDING)], unique=True)
+        # Trajectories: Tagged with experiment_id
+        self.trajectories.create_index([
+            ("trajectory_id", ASCENDING),
+            ("experiment_id", ASCENDING)
+        ], unique=True)
+        self.trajectories.create_index([("experiment_id", ASCENDING)])
         self.trajectories.create_index([("benchmark", ASCENDING)])
         self.trajectories.create_index([("is_perturbed", ASCENDING)])
-        self.trajectories.create_index([("original_trajectory_id", ASCENDING)])
+        self.trajectories.create_index([
+            ("experiment_id", ASCENDING),
+            ("is_perturbed", ASCENDING)
+        ])
 
         # Perturbations: Experiment-scoped (NEW collection!)
         self.perturbations.create_index([("perturbation_id", ASCENDING)], unique=True)
@@ -210,6 +217,17 @@ class MongoDBStorage:
     def get_trajectory(self, trajectory_id: str) -> Optional[Dict[str, Any]]:
         """Get trajectory by ID."""
         return self.trajectories.find_one({"trajectory_id": trajectory_id})
+
+    def get_trajectory_by_experiment(
+        self,
+        trajectory_id: str,
+        experiment_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get trajectory by ID for a specific experiment."""
+        return self.trajectories.find_one({
+            "trajectory_id": trajectory_id,
+            "experiment_id": experiment_id
+        })
 
     def get_trajectories_by_benchmark(
         self,

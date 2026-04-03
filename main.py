@@ -251,10 +251,9 @@ Examples:
     logs_dir = Path(__file__).parent / "logs"
     logs_dir.mkdir(exist_ok=True)
 
-    # Create log filename using config name (cleaner than experiment_id which may contain dates)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_config_name = args.config.replace("/", "_").replace(":", "_")
-    log_filename = f"{safe_config_name}_{timestamp}.log"
+    # Use experiment_id as log filename (append to same log for same experiment)
+    safe_experiment_id = experiment_id.replace("/", "_").replace(":", "_")
+    log_filename = f"{safe_experiment_id}.log"
     log_path = logs_dir / log_filename
 
     print(f"📝 Logging to: {log_path}")
@@ -266,14 +265,13 @@ Examples:
         sys.stdout = tee
 
         try:
-            print("=" * 70)
-            print("EXPERIMENT LOG")
+            print("\n" + "=" * 70)
+            print(f"NEW RUN - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print("=" * 70)
             print(f"Experiment: {experiment_name}")
             print(f"Experiment ID: {experiment_id}")
             print(f"Config: {args.config}")
             print(f"Runner: {config.get('execution', {}).get('runner', 'N/A')}")
-            print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"Log file: {log_path}")
             print("=" * 70)
             print()
