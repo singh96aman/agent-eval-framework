@@ -676,6 +676,80 @@ class MongoDBStorage:
             "sample_number": sample_number
         })
 
+    # === Judge Output Storage (New Schema) ===
+
+    def store_judge_output(
+        self,
+        judge_output: Any,  # JudgeOutput from src/judges/schema
+        experiment_id: str
+    ) -> str:
+        """
+        Store a JudgeOutput object from the new judge system.
+
+        Args:
+            judge_output: JudgeOutput object
+            experiment_id: Experiment ID
+
+        Returns:
+            Inserted document ID
+        """
+        # Convert JudgeOutput to dict
+        output_dict = judge_output.to_dict()
+        output_dict["experiment_id"] = experiment_id
+
+        result = self.judge_evaluations.insert_one(output_dict)
+        return str(result.inserted_id)
+
+    def get_judge_outputs(
+        self,
+        experiment_id: str,
+        judge_name: Optional[str] = None,
+        trajectory_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get judge outputs from the new judge system.
+
+        Args:
+            experiment_id: Experiment ID
+            judge_name: Filter by judge name (optional)
+            trajectory_id: Filter by trajectory (optional)
+
+        Returns:
+            List of judge output dicts
+        """
+        query = {"experiment_id": experiment_id}
+        if judge_name:
+            query["judge_name"] = judge_name
+        if trajectory_id:
+            query["trajectory_id"] = trajectory_id
+
+        return list(self.judge_evaluations.find(query))
+
+    def count_judge_outputs(
+        self,
+        experiment_id: str,
+        trajectory_id: Optional[str] = None,
+        judge_name: Optional[str] = None
+    ) -> int:
+        """
+        Count judge outputs matching criteria.
+
+        Args:
+            experiment_id: Experiment ID
+            trajectory_id: Filter by trajectory (optional)
+            judge_name: Filter by judge name (optional)
+
+        Returns:
+            Count of matching outputs
+        """
+        query = {"experiment_id": experiment_id}
+        if trajectory_id:
+            query["trajectory_id"] = trajectory_id
+        if judge_name:
+            query["judge_name"] = judge_name
+
+        return self.judge_evaluations.count_documents(query)
+
     # === CCG Score Storage ===
 
     def save_ccg_score(self, ccg_data: Dict[str, Any]) -> str:

@@ -625,8 +625,77 @@ class ExperimentRunner:
         print("⚖️  PHASE: EVALUATE JUDGES")
         print("=" * 70)
         print()
-        print("⚠️  This phase is not yet implemented.")
-        print("   Coming in Phase 4 of implementation.")
+
+        # Import judge components
+        from src.judges.claude_judge import create_claude_judge
+        from src.judges.gpt_oss_judge import create_gpt_oss_judge
+        from src.judges.evaluator import JudgeEvaluator
+
+        # Get judge configuration
+        judges_config = self.config.get('judges', {})
+        models_config = judges_config.get('models', [])
+        samples_per_trajectory = judges_config.get('samples_per_trajectory', 3)
+
+        if not models_config:
+            print("❌ No judges configured in experiment config")
+            return
+
+        # Create judge instances
+        judges = []
+        for model_config in models_config:
+            provider = model_config.get('provider', 'aws_bedrock')
+            name = model_config.get('name', 'unknown')
+
+            try:
+                if 'claude' in name.lower():
+                    judge = create_claude_judge(model_config)
+                    judges.append(judge)
+                elif 'gpt' in name.lower() or 'oss' in name.lower():
+                    judge = create_gpt_oss_judge(model_config)
+                    judges.append(judge)
+                else:
+                    print(f"⚠️  Unknown judge type: {name} (skipping)")
+
+            except Exception as e:
+                print(f"❌ Failed to create judge {name}: {e}")
+
+        if not judges:
+            print("❌ No judges could be initialized")
+            return
+
+        print(f"✓ Initialized {len(judges)} judges: {[j.name for j in judges]}")
+        print()
+
+        # Create evaluator
+        evaluator = JudgeEvaluator(
+            storage=self.storage,
+            judges=judges,
+            batch_size=10,
+            rate_limit_delay=1.0,
+            samples_per_trajectory=samples_per_trajectory
+        )
+
+        # Run evaluation
+        results = evaluator.evaluate_experiment(
+            experiment_id=self.experiment_id,
+            resume=True,
+            dry_run=self.dry_run
+        )
+
+        # Print summary
+        print("\n" + "=" * 70)
+        print("✅ JUDGE EVALUATION COMPLETE")
+        print("=" * 70)
+
+        for judge_name, result in results.items():
+            print(f"\n{judge_name}:")
+            print(f"   Evaluated: {result.total_evaluated}")
+            print(f"   Successful: {result.successful}")
+            print(f"   Failed: {result.failed}")
+            print(f"   Average score: {result.average_score:.1f}")
+            print(f"   Total time: {result.total_time_seconds:.1f}s")
+            print(f"   Total tokens: {result.total_tokens:,}")
+
         print()
 
     def _phase_compute_ccg(self):
