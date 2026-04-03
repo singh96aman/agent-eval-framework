@@ -2,7 +2,7 @@
   "task_name": "02_poc_implementation",
   "status": "in_progress",
   "created": "2026-04-02",
-  "last_updated": "2026-04-02T18:30:00",
+  "last_updated": "2026-04-02T20:00:00",
   "plan": [
     "Phase 1: Infrastructure setup (loaders, storage, prereq checks, tests)",
     "Phase 2: Load real trajectories from HuggingFace → MongoDB (ToolBench + GAIA)",
@@ -37,15 +37,24 @@
     "- Parameter errors: early/middle/late positions",
     "- 7 perturbations failed to apply (documented)",
     "- All perturbations stored in MongoDB",
-    "- Perturbation system validated and operational"
+    "- Perturbation system validated and operational",
+    "",
+    "Phase 4: Judge API integration - COMPLETE (2026-04-02)",
+    "- Implemented complete judge evaluation system",
+    "- Claude Sonnet 4.5 judge (AWS Bedrock)",
+    "- GPT-OSS 120B judge (AWS Bedrock)",
+    "- Unified judge interface with retry logic",
+    "- Batch evaluator with rate limiting",
+    "- 5-metric evaluation system (task_success, completeness, etc.)",
+    "- Resume capability for interrupted runs",
+    "- Comprehensive test suite (10 tests passing)",
+    "- Integrated into ExperimentRunner pipeline"
   ],
   "pending_steps": [
-    "Phase 4: Judge API integration - IN PROGRESS",
-    "- Implement judge evaluation system",
-    "- Configure Claude Sonnet 4.5 (Bedrock)",
-    "- Configure GPT-OSS 120B (Bedrock)",
-    "- Run judge evaluations on perturbations",
-    "- Store judge outputs in MongoDB",
+    "Phase 4b: Execute judge evaluation - NEXT",
+    "- Run judge evaluation on 443 perturbations",
+    "- Monitor costs and performance",
+    "- Validate judge outputs",
     "Phase 5: Annotation tools + CCG metrics",
     "- Build annotation interface for criticality scoring",
     "- Compute CCG metrics (Criticality-Calibration Gap)",
@@ -82,6 +91,13 @@
     "tests/test_perturbations.py (perturbation tests)",
     "src/perturbations/__init__.py",
     "src/perturbations/generator.py (9 condition perturbation system)",
+    "src/judges/__init__.py (base judge interface)",
+    "src/judges/schema.py (JudgeOutput, StepError schemas)",
+    "src/judges/prompts.py (evaluation prompt templates)",
+    "src/judges/claude_judge.py (Claude Sonnet 4.5)",
+    "src/judges/gpt_oss_judge.py (GPT-OSS 120B)",
+    "src/judges/evaluator.py (batch evaluator)",
+    "tests/test_judges.py (10 tests passing)",
     "requirements.txt",
     ".env (configured)",
     ".env.example",
@@ -90,5 +106,5 @@
     "logs/exp_poc_toolbench_20260402.log (experiment log)"
   ],
   "blockers": [],
-  "notes": "Phases 1-3 COMPLETE (2026-04-02). Successfully loaded 50 ToolBench trajectories and generated 443 perturbations (9 conditions: planning/tool_selection/parameter × early/middle/late). 7 perturbations failed (tool_selection/early on certain trajectories). All data stored in MongoDB (experiment: exp_poc_toolbench_20260402). Next step: Phase 4 - Judge API integration and evaluation."
+  "notes": "Phases 1-4 COMPLETE (2026-04-02). Infrastructure ready: 50 ToolBench trajectories, 443 perturbations, complete judge evaluation system with Claude Sonnet 4.5 and GPT-OSS 120B. All code tested (68 total tests passing). Next step: Execute judge evaluation on all perturbations (~2,658 API calls). After that: Phase 5 (annotation + CCG metrics)."
 }
