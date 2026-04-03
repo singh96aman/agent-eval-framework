@@ -753,3 +753,457 @@ def load_trajectories_from_json(json_path: str) -> List[Trajectory]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return [Trajectory.from_dict(item) for item in data]
+
+
+def load_swebench_trajectories(
+    max_trajectories: Optional[int] = None,
+    min_steps: int = 4,
+    max_steps: int = 10,
+    filter_successful: bool = True,
+    random_seed: Optional[int] = 42,
+    split: str = "train",
+    use_auth_token: Optional[str] = None,
+    difficulty: Optional[str] = None,
+) -> List[Trajectory]:
+    """
+    Load trajectories from SWE-bench SWE-smith dataset via HuggingFace.
+
+    SWE-bench trajectories represent code editing tasks where an agent
+    fixes bugs or implements features in real-world repositories.
+
+    Args:
+        max_trajectories: Maximum number of trajectories to load
+        min_steps: Minimum number of steps required
+        max_steps: Maximum number of steps allowed
+        filter_successful: Only load successful trajectories (passed tests)
+        random_seed: Random seed for sampling
+        split: Dataset split (train/test)
+        use_auth_token: HuggingFace token
+        difficulty: Filter by difficulty (easy/medium/hard)
+
+    Returns:
+        List of Trajectory objects
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "datasets library not installed. Run: pip install datasets"
+        )
+
+    # Get HF token
+    if use_auth_token is None:
+        use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+
+    try:
+        # Load SWE-smith trajectories dataset
+        # Dataset: "SWE-bench/SWE-smith-trajectories"
+        dataset = load_dataset(
+            "SWE-bench/SWE-smith-trajectories",
+            split=split,
+            token=use_auth_token,
+        )
+        print(f"   Loaded {len(dataset)} SWE-bench trajectories from HuggingFace")
+    except Exception as e:
+        print(f"   Warning: Could not load SWE-bench from HF: {e}")
+        print("   Trying alternative dataset...")
+
+        # Try alternative SWE-bench datasets
+        alternatives = [
+            "princeton-nlp/SWE-bench",
+            "bigcode/swe-bench-lite",
+        ]
+
+        dataset = None
+        for alt in alternatives:
+            try:
+                dataset = load_dataset(alt, split=split, token=use_auth_token)
+                print(f"   Loaded from alternative: {alt}")
+                break
+            except Exception:
+                continue
+
+        if dataset is None:
+            print("   Warning: No SWE-bench data available")
+            return []
+
+    trajectories = []
+
+    for idx, item in enumerate(dataset):
+        try:
+            traj = _parse_swebench_item(item, idx)
+            if traj:
+                # Apply filters
+                if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
+                    continue
+                if filter_successful and traj.ground_truth.task_success is False:
+                    continue
+                if difficulty and traj.ground_truth.difficulty != difficulty:
+                    continue
+
+                trajectories.append(traj)
+        except Exception as e:
+            if idx < 5:
+                print(f"   Warning: Failed to parse SWE-bench item {idx}: {e}")
+            continue
+
+    # Shuffle and sample
+    if random_seed is not None:
+        random.seed(random_seed)
+        random.shuffle(trajectories)
+
+    if max_trajectories is not None:
+        trajectories = trajectories[:max_trajectories]
+
+    return trajectories
+
+
+def _parse_swebench_item(
+    item: Dict[str, Any],
+    idx: int,
+) -> Optional[Trajectory]:
+    """
+    Parse SWE-bench/SWE-smith dataset item to Trajectory.
+
+    SWE-bench trajectories typically contain:
+    - instance_id: Bug/issue identifier
+    - problem_statement: Description of the bug
+    - trajectory: List of agent actions (file edits, test runs, searches)
+    - patch: The final code patch
+    - test_result: Whether tests passed after the fix
+    """
+    try:
+        # Extract task description
+        task_desc = item.get("problem_statement",
+                            item.get("issue_text",
+                            item.get("description", "Unknown task")))
+
+        # Get instance/task ID
+        instance_id = item.get("instance_id",
+                              item.get("task_id", f"swebench_{idx}"))
+
+        # Extract trajectory/actions
+        raw_trajectory = item.get("trajectory",
+                                  item.get("actions",
+                                  item.get("model_patch", [])))
+
+        steps = []
+
+        # Parse trajectory based on format
+        if isinstance(raw_trajectory, list):
+            # List of actions format
+            for i, action in enumerate(raw_trajectory, 1):
+                step = _parse_swebench_action(action, idx, i)
+                if step:
+                    steps.append(step)
+        elif isinstance(raw_trajectory, str):
+            # String format (e.g., model_patch) - parse as single edit step
+            if raw_trajectory.strip():
+                step = Step(
+                    step_id=f"swebench_{idx}_step_1",
+                    step_number=1,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content=f"Apply patch:\n{raw_trajectory[:500]}...",
+                    tool_name="file_edit",
+                    tool_input={"patch": raw_trajectory},
+                    metadata={"raw_patch": raw_trajectory}
+                )
+                steps.append(step)
+        elif isinstance(raw_trajectory, dict):
+            # Dictionary format - extract steps
+            if "steps" in raw_trajectory:
+                for i, step_data in enumerate(raw_trajectory["steps"], 1):
+                    step = _parse_swebench_action(step_data, idx, i)
+                    if step:
+                        steps.append(step)
+            elif "actions" in raw_trajectory:
+                for i, action in enumerate(raw_trajectory["actions"], 1):
+                    step = _parse_swebench_action(action, idx, i)
+                    if step:
+                        steps.append(step)
+
+        # If no steps parsed, try to create from patch/model_output
+        if not steps:
+            patch = item.get("patch", item.get("model_patch", ""))
+            if patch:
+                step = Step(
+                    step_id=f"swebench_{idx}_step_1",
+                    step_number=1,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content=f"Apply code fix",
+                    tool_name="file_edit",
+                    tool_input={"patch": str(patch)[:1000]},
+                    metadata={}
+                )
+                steps.append(step)
+
+        if not steps:
+            return None
+
+        # Determine success from test results
+        test_result = item.get("resolved",
+                               item.get("test_result",
+                               item.get("passed", None)))
+        task_success = None
+        if test_result is not None:
+            if isinstance(test_result, bool):
+                task_success = test_result
+            elif isinstance(test_result, str):
+                task_success = test_result.lower() in ["pass", "passed", "true", "success"]
+
+        # Classify difficulty based on heuristics
+        difficulty = _classify_swebench_difficulty(item, len(steps))
+
+        ground_truth = GroundTruth(
+            task_description=task_desc[:2000] if task_desc else "Unknown task",
+            expected_answer=item.get("patch", item.get("gold_patch")),
+            task_success=task_success,
+            difficulty=difficulty,
+            domain="code",
+        )
+
+        trajectory = Trajectory(
+            trajectory_id=f"swebench_{instance_id}",
+            benchmark="swebench",
+            steps=steps,
+            ground_truth=ground_truth,
+            metadata={
+                "instance_id": instance_id,
+                "repo": item.get("repo", ""),
+                "base_commit": item.get("base_commit", ""),
+                "hf_index": idx,
+            },
+        )
+
+        return trajectory
+
+    except Exception as e:
+        if idx < 5:
+            print(f"   Warning: Failed to parse SWE-bench item {idx}: {e}")
+        return None
+
+
+def _parse_swebench_action(
+    action: Any,
+    traj_idx: int,
+    step_num: int
+) -> Optional[Step]:
+    """
+    Parse a single SWE-bench action into a Step.
+
+    SWE-bench actions can be:
+    - file_edit: Edit a file
+    - search_code: Search for code patterns
+    - run_tests: Execute test suite
+    - view_file: Read a file
+    """
+    if action is None:
+        return None
+
+    step_type = StepType.TOOL_EXECUTION
+    tool_name = None
+    tool_input = {}
+    tool_output = None
+    content = ""
+
+    if isinstance(action, dict):
+        # Extract action type
+        action_type = action.get("action",
+                                 action.get("type",
+                                 action.get("tool", "unknown")))
+
+        # Normalize action type to tool name
+        action_type_lower = str(action_type).lower()
+        if "edit" in action_type_lower or "write" in action_type_lower:
+            tool_name = "file_edit"
+        elif "search" in action_type_lower or "find" in action_type_lower:
+            tool_name = "search_code"
+        elif "test" in action_type_lower or "run" in action_type_lower:
+            tool_name = "run_tests"
+        elif "view" in action_type_lower or "read" in action_type_lower:
+            tool_name = "view_file"
+        else:
+            tool_name = action_type_lower.replace(" ", "_")[:50]
+
+        # Extract input/arguments
+        tool_input = action.get("input",
+                               action.get("args",
+                               action.get("arguments", {})))
+        if not isinstance(tool_input, dict):
+            tool_input = {"value": tool_input}
+
+        # Add file path if present
+        if "file" in action:
+            tool_input["file"] = action["file"]
+        if "path" in action:
+            tool_input["path"] = action["path"]
+
+        # Extract output/observation
+        tool_output = action.get("output",
+                                action.get("observation",
+                                action.get("result")))
+        if tool_output and not isinstance(tool_output, str):
+            tool_output = str(tool_output)[:500]
+
+        # Extract thought/reasoning
+        thought = action.get("thought", action.get("reasoning", ""))
+        content = f"Thought: {thought}\nAction: {tool_name}" if thought else f"Action: {tool_name}"
+
+    elif isinstance(action, str):
+        # String action - try to parse
+        content = action
+        if "edit" in action.lower():
+            tool_name = "file_edit"
+        elif "search" in action.lower():
+            tool_name = "search_code"
+        elif "test" in action.lower():
+            tool_name = "run_tests"
+        else:
+            tool_name = "unknown_action"
+        tool_input = {"raw": action}
+    else:
+        return None
+
+    return Step(
+        step_id=f"swebench_{traj_idx}_step_{step_num}",
+        step_number=step_num,
+        step_type=step_type,
+        content=content,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_output=tool_output,
+        metadata={"raw_action": action if isinstance(action, dict) else {"raw": action}},
+    )
+
+
+def _classify_swebench_difficulty(item: Dict[str, Any], num_steps: int) -> str:
+    """
+    Classify SWE-bench task difficulty based on heuristics.
+
+    Args:
+        item: Raw dataset item
+        num_steps: Number of steps in trajectory
+
+    Returns:
+        Difficulty label: "easy", "medium", or "hard"
+    """
+    # Check if difficulty is already provided
+    if "difficulty" in item:
+        return item["difficulty"]
+
+    # Heuristics based on task complexity
+    patch = item.get("patch", item.get("model_patch", ""))
+    patch_len = len(patch) if patch else 0
+
+    # Count files changed (from patch diff headers)
+    files_changed = patch.count("diff --git") if patch else 1
+
+    # Classify based on complexity indicators
+    if num_steps <= 4 and files_changed == 1 and patch_len < 500:
+        return "easy"
+    elif num_steps <= 7 and files_changed <= 2 and patch_len < 2000:
+        return "medium"
+    else:
+        return "hard"
+
+
+def classify_trajectory_domain(trajectory: Trajectory) -> str:
+    """
+    Classify a trajectory's domain category for stratified sampling.
+
+    For ToolBench: Uses tool names to infer domain
+    For SWE-bench: Uses repo/file info
+    For GAIA: Uses task type
+
+    Args:
+        trajectory: Trajectory to classify
+
+    Returns:
+        Domain category string
+    """
+    benchmark = trajectory.benchmark.lower()
+
+    if benchmark == "toolbench":
+        return _classify_toolbench_domain(trajectory)
+    elif benchmark == "swebench":
+        return _classify_swebench_domain(trajectory)
+    elif benchmark == "gaia":
+        return _classify_gaia_domain(trajectory)
+    else:
+        return "unknown"
+
+
+def _classify_toolbench_domain(trajectory: Trajectory) -> str:
+    """Classify ToolBench trajectory by API domain."""
+    # Collect all tool names
+    tools = [s.tool_name.lower() for s in trajectory.steps if s.tool_name]
+    tools_str = " ".join(tools)
+
+    # Domain patterns
+    patterns = {
+        "data_information": ["weather", "forecast", "news", "wiki", "data"],
+        "media_entertainment": ["movie", "music", "video", "image", "photo", "spotify"],
+        "ecommerce_shopping": ["product", "shop", "coupon", "price", "amazon", "ebay"],
+        "travel_logistics": ["flight", "hotel", "travel", "booking", "track", "colis"],
+        "finance_business": ["stock", "currency", "finance", "bank", "crypto", "exchange"],
+        "social_communication": ["social", "tweet", "message", "review", "comment"],
+        "utilities_tools": ["convert", "calculate", "validate", "translate", "qr"],
+        "sports_gaming": ["sport", "game", "score", "race", "team", "player"],
+    }
+
+    for domain, keywords in patterns.items():
+        if any(kw in tools_str for kw in keywords):
+            return domain
+
+    return "other"
+
+
+def _classify_swebench_domain(trajectory: Trajectory) -> str:
+    """Classify SWE-bench trajectory by repository type."""
+    repo = trajectory.metadata.get("repo", "").lower()
+
+    if "django" in repo or "flask" in repo or "fastapi" in repo:
+        return "web_framework"
+    elif "numpy" in repo or "pandas" in repo or "scipy" in repo:
+        return "data_science"
+    elif "test" in repo or "pytest" in repo:
+        return "testing"
+    elif "requests" in repo or "http" in repo or "api" in repo:
+        return "networking"
+    else:
+        return "general_python"
+
+
+def _classify_gaia_domain(trajectory: Trajectory) -> str:
+    """Classify GAIA trajectory by task type."""
+    task = trajectory.ground_truth.task_description.lower()
+
+    if "search" in task or "find" in task or "web" in task:
+        return "web_search"
+    elif "document" in task or "pdf" in task or "file" in task:
+        return "document_analysis"
+    elif "calculate" in task or "math" in task or "compute" in task:
+        return "calculation"
+    elif "compare" in task or "multiple" in task:
+        return "multi_source"
+    else:
+        return "general_qa"
+
+
+def classify_trajectory_complexity(trajectory: Trajectory) -> str:
+    """
+    Classify trajectory complexity based on step count.
+
+    Args:
+        trajectory: Trajectory to classify
+
+    Returns:
+        Complexity level: "simple", "medium", or "complex"
+    """
+    n = len(trajectory.steps)
+    if n <= 4:
+        return "simple"
+    elif n <= 6:
+        return "medium"
+    else:
+        return "complex"

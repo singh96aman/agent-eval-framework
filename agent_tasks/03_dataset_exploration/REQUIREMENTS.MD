@@ -9,17 +9,58 @@ Human Annotation and LLMaJ are long pole items. 1 judge can take upto 8 hours ov
 
 ### Goal : 
 The goal of this tasks is as follows -
-1. Review /Users/amanzing/Paper-Research/agent_tasks/02_poc_implementation and particularly /Users/amanzing/Paper-Research/agent_tasks/02_poc_implementation/Findings&NextSteps.MD. See the LLMaJ results about the trajectories and perturbations. Come up with a HighQualityTrajectoryAndPerturbationsGapAnalysis.MD. Think about different domains where agent would be asked to work and do we have enough coverage over them.
-2. Use HighQualityTrajectoryAndPerturbationsGapAnalysis.MD to explore dataset with these trajectories and where we pertub and actually check LLMaJ performance. Toolbench is a great start - /Users/amanzing/Paper-Research/data/toolbench/data/. There is GAIA dataset as well.
-3. Use #2 to define the DatasetDiversity.MD and PerturbationDiversity.MD. We want to have ~500 samples for few domains and then we explore what types of perturbations we can make to them. We then analyze how LLMaJ would be analyzing them.
-4. STOP. Get DatasetDiversity.MD and PerturbationDiversity.MD reviewed by me
-5. Iterate on my feedback in these docs until I approve do not move to Step #6.
-6. Make code changes to account to ingest these datasets and add domains, perturbation types in config.
-7. Run Trajectories and Perturbations for these.
-8. Analyze methodically if we have good coverage over trajectories and perturbations. Show numbers
-9. Task is completed
+
+### Execution Plan
+
+| Step | Description | Status | Notes |
+|------|-------------|--------|-------|
+| 1 | Review 02_poc_implementation findings and create HighQualityTrajectoryAndPerturbationsGapAnalysis.MD | ✅ DONE | Gap analysis complete |
+| 2 | Explore datasets (ToolBench, GAIA, SWE-bench) using gap analysis | ✅ DONE | All 3 benchmarks explored |
+| 3 | Create DatasetDiversity.MD and PerturbationDiversity.MD (~600 samples) | ✅ DONE | Revision 2 complete |
+| 4 | STOP - Get documents reviewed | ✅ DONE | First review received |
+| 5 | Iterate on feedback until approved | ✅ DONE | 2 iterations, expert approved |
+| 6 | Make code changes to ingest datasets and add perturbation types | ✅ DONE | SWE-bench loader, Type D, sampling |
+| 7 | Run trajectories for 10 samples per diversity domain | ⏳ PENDING | Smoke test |
+| 8 | Validate trajectory results | ⏳ PENDING | Quality check |
+| 9 | Run trajectories for all samples | ⏳ PENDING | Full 600 trajectories |
+| 10 | Analyze coverage for all trajectories (show numbers) | ⏳ PENDING | |
+| 11 | Run perturbations | ⏳ PENDING | |
+| 12 | Validate perturbation results | ⏳ PENDING | Quality check |
+| 13 | Analyze coverage for all perturbations (show numbers) | ⏳ PENDING | |
+| 14 | Task completion | ⏳ PENDING | |
+
+### Approved Design (from Steps 1-5)
+
+**Dataset:**
+- ToolBench: 400 trajectories
+- GAIA: 100 trajectories (50 Claude + 50 GPT-4o generated)
+- SWE-bench: 100 trajectories
+- **Total: 600 trajectories**
+
+**Experimental Design:**
+- Main sample: 500 trajectories (1 perturbation each)
+- Control group: 100 trajectories (all perturbations, for confound check)
+- Execution validation: 40 trajectories (actual API re-execution)
+
+**Perturbation Types (7 subtypes):**
+- Planning: goal substitution, scope reduction
+- Tool Selection: similar tool swap
+- Parameter: wrong value, format error, off-by-one
+- Data Reference: hallucinated reference
+
+**Judges:** Claude Sonnet 4.5, GPT-4o, Llama 3.1 70B
+
+**Pre-registration:** OSF before full study run
 
 ### My help
-If you need my help or if there is experiment failure and you can't fix it. Please send me a slack message at #claude-communications. Instructions are in Claude.md
+If you need my help or if there is experiment failure and you can't fix it, trigger a notification.
+
+**How to notify me:**
+The notification hook is configured in `~/.claude/settings.json`. When Claude Code needs attention (permission prompts, blockers, etc.), a native macOS notification will appear automatically.
+
+For manual notification in urgent cases, you can run:
+```bash
+osascript -e 'display notification "Your message here" with title "Claude Code" sound name "default"'
+```
 
 Good luck!

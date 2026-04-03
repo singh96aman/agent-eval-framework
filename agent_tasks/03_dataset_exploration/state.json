@@ -1,9 +1,9 @@
 {
   "task_id": "03_dataset_exploration",
-  "status": "awaiting_review",
+  "status": "in_progress",
   "created_at": "2026-04-03T12:00:00Z",
-  "updated_at": "2026-04-03T13:00:00Z",
-  "current_step": 4,
+  "updated_at": "2026-04-03T17:30:00Z",
+  "current_step": 7,
   "steps_completed": [
     {
       "step": 1,
@@ -30,40 +30,110 @@
     },
     {
       "step": 4,
-      "description": "STOP - Get documents reviewed",
-      "status": "in_progress",
-      "notes": "Waiting for researcher review before proceeding to Step 6"
-    }
-  ],
-  "steps_pending": [
+      "description": "First review received - 9 critical concerns",
+      "status": "completed",
+      "completed_at": "2026-04-03T14:00:00Z"
+    },
     {
       "step": 5,
-      "description": "Iterate on feedback until approved"
-    },
-    {
-      "step": 6,
-      "description": "Make code changes for new datasets/perturbations"
-    },
+      "description": "Address reviewer feedback (iteration 1)",
+      "status": "completed",
+      "completed_at": "2026-04-03T15:00:00Z",
+      "feedback_addressed": [
+        "#1: POC contradicts hypothesis -> Revised to salience-based hypothesis",
+        "#2: Ground truth underspecified -> Counterfactual human judgment + IAA targets",
+        "#3: Selection bias -> Explicit scope: silent errors study",
+        "#4: One-per-trajectory confound -> Control group + stratified assignment",
+        "#5: Single judge -> Multi-judge (Claude, GPT-4o, Llama 70B)",
+        "#6: GAIA generation bias -> Multi-generator (Claude + GPT-4o)",
+        "#7: SWE-bench semantics -> Separate analysis, native perturbations",
+        "#8: Statistical power -> Hierarchical analysis, power calculation",
+        "#9: Human = ground truth -> CCG measures relative bias"
+      ]
+    }
+  ],
+  "steps_completed_recent": {
+    "step": 6,
+    "description": "Address expert review feedback (iteration 2)",
+    "status": "completed",
+    "completed_at": "2026-04-03T16:30:00Z",
+    "feedback_addressed": [
+      "#1: Ground truth weakness -> Added 40-trajectory execution-based validation subset",
+      "#2: Statistical power marginal -> Acknowledged, hierarchical analysis mitigates",
+      "#3: Control group too small (50) -> Increased to 100 trajectories",
+      "#4: SWE-bench hedging -> Made decisive commitment: KEEP, analyze separately",
+      "#5: Missing pre-registration -> Added OSF pre-registration plan",
+      "#6: Hypothesis unfalsifiable -> Added explicit falsification criteria with thresholds"
+    ]
+  },
+  "steps_completed_step6": {
+    "step": 6,
+    "description": "Implement code changes for datasets and perturbations",
+    "status": "completed",
+    "completed_at": "2026-04-03T17:30:00Z",
+    "changes": [
+      "Added SWE-bench loader (load_swebench_trajectories)",
+      "Added Data Reference error strategy (Type D)",
+      "Added parameter subtypes (format_error, off_by_one)",
+      "Added SWE-bench-native perturbation strategies",
+      "Added stratified sampling module (src/data/sampling.py)",
+      "Added domain/complexity classification functions",
+      "Added comprehensive tests (43 total tests passing)"
+    ]
+  },
+  "steps_pending": [
     {
       "step": 7,
-      "description": "Run trajectories and perturbations"
+      "description": "Run trajectories for 10 samples per diversity domain (smoke test)"
     },
     {
       "step": 8,
-      "description": "Analyze coverage"
+      "description": "Validate trajectory results"
     },
     {
       "step": 9,
+      "description": "Run trajectories for all 600 samples"
+    },
+    {
+      "step": 10,
+      "description": "Analyze coverage for all trajectories"
+    },
+    {
+      "step": 11,
+      "description": "Run perturbations"
+    },
+    {
+      "step": 12,
+      "description": "Validate perturbation results"
+    },
+    {
+      "step": 13,
+      "description": "Analyze coverage for all perturbations"
+    },
+    {
+      "step": 14,
       "description": "Task completion"
     }
   ],
   "artifacts": {
     "documents": [
-      "HighQualityTrajectoryAndPerturbationsGapAnalysis.MD",
-      "DatasetDiversity.MD",
-      "PerturbationDiversity.MD"
+      "HighQualityTrajectoryAndPerturbationsGapAnalysis.MD (Revision 2)",
+      "DatasetDiversity.MD (Revision 2)",
+      "PerturbationDiversity.MD (Revision 2)"
+    ],
+    "code": [
+      "src/data/loaders.py (SWE-bench loader added)",
+      "src/data/sampling.py (NEW - stratified sampling)",
+      "src/perturbations/strategies.py (DataReference, SWEBench strategies)",
+      "src/perturbations/generator.py (new perturbation types)"
+    ],
+    "tests": [
+      "tests/test_loaders.py (SWE-bench tests)",
+      "tests/test_perturbations.py (new strategy tests)",
+      "tests/test_sampling.py (NEW)"
     ]
   },
-  "blocking_on": "researcher_review",
-  "notes": "Created three documents analyzing gaps in trajectory/perturbation coverage. Proposed expanding from 50 to 500 trajectories, adding 2 new perturbation types (Sequencing, Data), and 3 intensity levels."
+  "blocking_on": null,
+  "iteration": 5,
+  "notes": "Step 6 COMPLETE. Code changes implemented: SWE-bench loader, Data Reference strategy (Type D), parameter subtypes, SWE-bench-native perturbations, stratified sampling. 43 tests passing. Ready for Step 7: smoke test with 10 samples per domain."
 }
