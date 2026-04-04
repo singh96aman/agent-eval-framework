@@ -1,0 +1,183 @@
+{
+  "experiment": {
+    "name": "Perturbation Quality Scoring & Primary Selection",
+    "experiment_id": "exp_perturbation_quality_v1",
+    "description": "Score perturbation validity and select primary sample for human annotation",
+    "version": "1.0",
+    "created_by": "researcher",
+    "created_date": "2026-04-03"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/toolbench_400.json",
+      "num_trajectories": 400,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 15,
+        "filter_successful": true
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/gaia_100.json",
+      "num_trajectories": 100,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 100
+      },
+      "random_seed": 42
+    },
+    "swebench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/swebench_100.json",
+      "num_trajectories": 100,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 30
+      },
+      "random_seed": 42
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment"
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection", "parameter", "data_reference"],
+    "positions": ["early", "middle", "late"],
+    "mode": "static",
+    "batch_size": 50,
+    "conditions": [
+      {"type": "planning", "position": "early"},
+      {"type": "planning", "position": "middle"},
+      {"type": "planning", "position": "late"},
+      {"type": "tool_selection", "position": "early"},
+      {"type": "tool_selection", "position": "middle"},
+      {"type": "tool_selection", "position": "late"},
+      {"type": "parameter", "position": "early"},
+      {"type": "parameter", "position": "middle"},
+      {"type": "parameter", "position": "late"},
+      {"type": "data_reference", "position": "middle"},
+      {"type": "data_reference", "position": "late"}
+    ],
+    "assignment_strategy": "round_robin",
+    "num_per_trajectory": 1
+  },
+
+  "quality_scoring": {
+    "enabled": true,
+    "judge_model": {
+      "name": "claude-sonnet-4-5",
+      "provider": "aws_bedrock",
+      "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "config": {
+        "temperature": 0.3,
+        "max_tokens": 500
+      }
+    },
+    "metrics": {
+      "content_changed": {
+        "description": "Did the content actually change from original?",
+        "score_range": [0, 1],
+        "weight": 1.0
+      },
+      "syntactically_valid": {
+        "description": "Is the perturbed content well-formed (not broken JSON, coherent text)?",
+        "score_range": [0, 1],
+        "weight": 1.0
+      },
+      "semantically_meaningful": {
+        "description": "Is the change semantically meaningful (not just whitespace)?",
+        "score_range": [0, 1],
+        "weight": 1.0
+      },
+      "type_matches_intent": {
+        "description": "Does the error match the intended perturbation type?",
+        "score_range": [0, 1],
+        "weight": 1.0
+      },
+      "realistic_error": {
+        "description": "Could this error plausibly occur in a real agent execution?",
+        "score_range": [0, 3],
+        "weight": 1.0
+      }
+    },
+    "total_score_range": [0, 7],
+    "tier_thresholds": {
+      "high": 6,
+      "medium": 4,
+      "low": 1,
+      "invalid": 0
+    },
+    "batch_size": 10,
+    "retry_on_failure": true,
+    "max_retries": 2
+  },
+
+  "primary_selection": {
+    "enabled": true,
+    "total_primary": 600,
+    "tier_distribution": {
+      "high": 0.33,
+      "medium": 0.50,
+      "low": 0.17
+    },
+    "quota_strategy": "balanced_conditions",
+    "min_per_condition": 40,
+    "conditions": [
+      {"type": "planning", "position": "early"},
+      {"type": "planning", "position": "middle"},
+      {"type": "planning", "position": "late"},
+      {"type": "tool_selection", "position": "early"},
+      {"type": "tool_selection", "position": "middle"},
+      {"type": "tool_selection", "position": "late"},
+      {"type": "parameter", "position": "early"},
+      {"type": "parameter", "position": "middle"},
+      {"type": "parameter", "position": "late"},
+      {"type": "data_reference", "position": "middle"},
+      {"type": "data_reference", "position": "late"}
+    ],
+    "random_seed": 42
+  },
+
+  "judges": {
+    "models": [
+      {
+        "name": "claude-sonnet-4-5",
+        "provider": "aws_bedrock",
+        "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      },
+      {
+        "name": "gpt-4o",
+        "provider": "aws_bedrock",
+        "model_id": "openai.gpt-4o-1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      }
+    ],
+    "samples_per_trajectory": 3
+  },
+
+  "execution": {
+    "runner": "load,perturb",
+    "dry_run": false,
+    "enable_checkpointing": true,
+    "checkpoint_dir": "results/checkpoints",
+    "verbose": true,
+    "max_retries": 3
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "experiment": {
+    "name": "Test: Quality Scoring Integration",
+    "experiment_id": "exp_test_quality_scoring_v1",
+    "description": "Small test to validate quality scoring integration",
+    "version": "1.0"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/toolbench_400.json",
+      "num_trajectories": 5,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 15
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "enabled": false
+    },
+    "swebench": {
+      "enabled": false
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment"
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection"],
+    "positions": ["early", "middle"],
+    "mode": "static",
+    "batch_size": 10,
+    "conditions": [
+      {"type": "planning", "position": "early"},
+      {"type": "planning", "position": "middle"},
+      {"type": "tool_selection", "position": "early"},
+      {"type": "tool_selection", "position": "middle"}
+    ],
+    "num_per_trajectory": 1
+  },
+
+  "quality_scoring": {
+    "enabled": false,
+    "judge_model": {
+      "name": "claude-sonnet-4-5",
+      "provider": "aws_bedrock",
+      "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "config": {
+        "temperature": 0.3,
+        "max_tokens": 500
+      }
+    },
+    "tier_thresholds": {
+      "high": 6,
+      "medium": 4,
+      "low": 1,
+      "invalid": 0
+    }
+  },
+
+  "primary_selection": {
+    "enabled": false,
+    "total_primary": 10,
+    "min_per_condition": 2,
+    "random_seed": 42
+  },
+
+  "execution": {
+    "runner": "load,perturb",
+    "dry_run": true,
+    "verbose": true
+  }
+}

@@ -116,12 +116,32 @@ class TestAnnotationInterface:
         """Test loading perturbation from MongoDB."""
         mock_db = MagicMock()
         mock_storage.db = mock_db
-        mock_db['perturbations'].find_one.return_value = {'perturbation_id': 'test_1'}
+
+        # Mock perturbation record with all required fields
+        mock_db['perturbations'].find_one.return_value = {
+            'perturbation_id': 'test_1',
+            'original_trajectory_id': 'orig_traj_1',
+            'perturbed_trajectory_id': 'pert_traj_1',
+            'perturbation_type': 'planning',
+            'perturbation_position': 'early',
+            'perturbed_step_number': 1,
+            'original_step_content': 'original content',
+            'perturbed_step_content': 'perturbed content',
+            'perturbation_metadata': {}
+        }
+
+        # Mock trajectory retrieval
+        mock_orig_traj = {'trajectory_id': 'orig_traj_1', 'steps': []}
+        mock_pert_traj = {'trajectory_id': 'pert_traj_1', 'steps': []}
+        mock_storage.get_trajectory.side_effect = [mock_orig_traj, mock_pert_traj]
 
         interface = AnnotationInterface(storage=mock_storage)
         result = interface.load_perturbation('test_1')
 
-        assert result == {'perturbation_id': 'test_1'}
+        assert result is not None
+        assert result['_perturbation_id'] == 'test_1'
+        assert result['perturbation_type'] == 'planning'
+        assert result['original_trajectory'] == mock_orig_traj
         mock_db['perturbations'].find_one.assert_called_once_with({'perturbation_id': 'test_1'})
 
 

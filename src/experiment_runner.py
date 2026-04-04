@@ -497,6 +497,22 @@ class ExperimentRunner:
         conditions = pert_config.get("conditions", [])
         batch_size = pert_config.get("batch_size", 10)
 
+        # Get quality scoring config
+        quality_config = self.config.get("quality_scoring", {})
+        quality_scoring_enabled = quality_config.get("enabled", False)
+        scorer = None
+
+        if quality_scoring_enabled:
+            from src.scoring.quality_scorer import PerturbationQualityScorer
+            scorer = PerturbationQualityScorer(
+                model_config=quality_config.get("judge_model", {}),
+                metrics=quality_config.get("metrics", {}),
+                tier_thresholds=quality_config.get("tier_thresholds", {})
+            )
+            print("Quality scoring: ENABLED")
+        else:
+            print("Quality scoring: disabled")
+
         print(f"Perturbation mode: {mode}")
         print(f"Conditions to generate: {len(conditions)}")
         print(f"Batch size: {batch_size} (memory-efficient storage)")
@@ -592,10 +608,12 @@ class ExperimentRunner:
         # BATCHED GENERATION + STORAGE to avoid OOM
         # Store in batches instead of accumulating all in memory
         batch = []
+        batch_scores = []  # Quality scores for batch
         success_count = 0
         failed_count = 0
         stored_count = 0
         cache_hits = 0
+        scored_count = 0
 
         for i, traj in enumerate(trajectories):
             # Extract system prompt from trajectory metadata (if available)
@@ -616,17 +634,36 @@ class ExperimentRunner:
                     )
 
                     if perturbed:
+                        # Score quality inline if enabled
+                        quality_score = None
+                        if scorer:
+                            try:
+                                score_input = {
+                                    "original_step_content": perturbed.original_step_content,
+                                    "perturbed_step_content": perturbed.perturbed_step_content,
+                                    "perturbation_type": perturbed.perturbation_type,
+                                    "perturbation_position": perturbed.perturbation_position,
+                                    "perturbation_metadata": perturbed.perturbation_metadata
+                                }
+                                quality_score = scorer.score_perturbation(score_input)
+                                scored_count += 1
+                            except Exception as e:
+                                print(f"   ⚠️  Quality scoring failed: {e}")
+
                         batch.append(perturbed)
+                        batch_scores.append(quality_score)
                         success_count += 1
 
                         # Store batch when it reaches batch_size
                         if len(batch) >= batch_size:
                             new_stored, new_cached = self._store_perturbation_batch(
-                                batch, self.experiment_id, generator
+                                batch, self.experiment_id, generator,
+                                quality_scores=batch_scores
                             )
                             stored_count += new_stored
                             cache_hits += new_cached
-                            batch.clear()  # Release memory
+                            batch.clear()
+                            batch_scores.clear()
                     else:
                         failed_count += 1
 
@@ -639,25 +676,70 @@ class ExperimentRunner:
 
             if (i + 1) % 10 == 0:
                 total_stored = stored_count + cache_hits
-                print(
-                    f"   ... processed {i + 1}/{len(trajectories)} "
-                    f"trajectories (stored: {total_stored})"
-                )
+                msg = f"   ... processed {i + 1}/{len(trajectories)} trajectories (stored: {total_stored})"
+                if scorer:
+                    msg += f" (scored: {scored_count})"
+                print(msg)
 
         # Store remaining batch
         if batch:
             new_stored, new_cached = self._store_perturbation_batch(
-                batch, self.experiment_id, generator
+                batch, self.experiment_id, generator,
+                quality_scores=batch_scores
             )
             stored_count += new_stored
             cache_hits += new_cached
             batch.clear()
+            batch_scores.clear()
 
         print()
         print(f"   ✓ Generated {success_count} perturbations")
+        if scorer:
+            print(f"   ✓ Scored {scored_count} perturbations")
         if failed_count > 0:
             print(f"   ⚠️  Failed: {failed_count}")
         print()
+
+        # Primary selection (after all perturbations stored)
+        primary_config = self.config.get("primary_selection", {})
+        if primary_config.get("enabled", False):
+            print()
+            print("=" * 70)
+            print("🎯 PRIMARY SELECTION")
+            print("=" * 70)
+            print()
+
+            from src.sampling.primary_selector import PrimarySelector
+
+            selector = PrimarySelector(
+                total_primary=primary_config.get("total_primary", 600),
+                tier_distribution=primary_config.get("tier_distribution"),
+                min_per_condition=primary_config.get("min_per_condition", 40),
+                random_seed=primary_config.get("random_seed", 42)
+            )
+
+            # Load all perturbations for this experiment
+            all_perturbations = list(
+                self.storage.get_perturbations_by_experiment(self.experiment_id)
+            )
+
+            if all_perturbations:
+                # Select primaries
+                primary_ids = selector.select(
+                    all_perturbations,
+                    conditions=primary_config.get("conditions")
+                )
+
+                # Mark primaries in DB
+                if primary_ids:
+                    self._mark_primaries(primary_ids, all_perturbations, selector)
+                    print(f"   ✓ Selected {len(primary_ids)} primary perturbations")
+
+                    # Generate and save selection stats
+                    stats = selector.get_selection_stats(all_perturbations, primary_ids)
+                    self._save_primary_selection_report(stats)
+            else:
+                print("   ⚠️  No perturbations found for primary selection")
 
         print("=" * 70)
         print("✅ PERTURBATION GENERATION COMPLETE")
@@ -666,16 +748,25 @@ class ExperimentRunner:
         print(f"Total perturbations: {success_count}")
         print(f"New stored: {stored_count}")
         print(f"Cache hits: {cache_hits}")
+        if scorer:
+            print(f"Quality scored: {scored_count}")
         print()
 
     def _store_perturbation_batch(
         self,
         batch: List,
         experiment_id: str,
-        generator
+        generator,
+        quality_scores: Optional[List[dict]] = None
     ) -> tuple[int, int]:
         """
         Store a batch of perturbations to MongoDB.
+
+        Args:
+            batch: List of perturbation objects
+            experiment_id: Experiment identifier
+            generator: PerturbationGenerator instance
+            quality_scores: Optional list of quality scores (same order as batch)
 
         Returns:
             Tuple of (new_stored_count, cache_hits_count)
@@ -683,7 +774,11 @@ class ExperimentRunner:
         stored = 0
         cached = 0
 
-        for perturbed in batch:
+        # Ensure quality_scores list matches batch size
+        if quality_scores is None:
+            quality_scores = [None] * len(batch)
+
+        for perturbed, quality_score in zip(batch, quality_scores):
             # Store perturbed trajectory with experiment_id
             perturbed_traj_dict = perturbed.perturbed_trajectory.to_dict()
             perturbed_traj_dict["experiment_id"] = experiment_id
@@ -720,6 +815,15 @@ class ExperimentRunner:
                 "perturbed_step_content": perturbed.perturbed_step_content,
             }
 
+            # Add quality score if available
+            if quality_score:
+                perturbation_record["quality_score"] = quality_score
+                perturbation_record["quality_tier"] = quality_score.get("quality_tier")
+
+            # Initialize primary selection fields
+            perturbation_record["is_primary_for_experiment"] = False
+            perturbation_record["primary_selection_reason"] = None
+
             # Check if perturbation already exists
             existing_pert = self.storage.get_perturbation(perturbation_id)
             if existing_pert:
@@ -729,6 +833,127 @@ class ExperimentRunner:
                 stored += 1
 
         return stored, cached
+
+    def _mark_primaries(
+        self,
+        primary_ids: List[str],
+        all_perturbations: List[dict],
+        selector
+    ):
+        """
+        Mark selected perturbations as primary in MongoDB.
+
+        Args:
+            primary_ids: List of perturbation_ids to mark as primary
+            all_perturbations: All perturbations (for stats lookup)
+            selector: PrimarySelector instance
+        """
+        primary_set = set(primary_ids)
+
+        for p in all_perturbations:
+            if p["perturbation_id"] in primary_set:
+                # Update in MongoDB
+                self.storage.db["perturbations"].update_one(
+                    {"perturbation_id": p["perturbation_id"]},
+                    {
+                        "$set": {
+                            "is_primary_for_experiment": True,
+                            "primary_selection_reason": "quota_fill"
+                        }
+                    }
+                )
+
+    def _save_primary_selection_report(self, stats: dict):
+        """
+        Save primary selection distribution report.
+
+        Args:
+            stats: Selection statistics from PrimarySelector
+        """
+        from pathlib import Path
+        import json
+
+        results_dir = Path("results/primary_selection")
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save JSON stats
+        stats_path = results_dir / f"selection_stats_{self.experiment_id}.json"
+        with open(stats_path, "w") as f:
+            json.dump(stats, f, indent=2)
+
+        # Generate markdown report
+        report_path = results_dir / f"distribution_report_{self.experiment_id}.md"
+        report = self._generate_distribution_report(stats)
+        with open(report_path, "w") as f:
+            f.write(report)
+
+        print(f"   ✓ Saved selection report to {results_dir}")
+
+    def _generate_distribution_report(self, stats: dict) -> str:
+        """
+        Generate markdown distribution report.
+
+        Args:
+            stats: Selection statistics
+
+        Returns:
+            Markdown report string
+        """
+        lines = [
+            "# Primary Sample Distribution Report",
+            "",
+            "## Overall",
+            f"- Total primary perturbations: {stats['total_selected']}",
+            f"- Unique trajectories: {stats['unique_trajectories']}",
+            "",
+            "## By Perturbation Type",
+            "| Type | Count | % |",
+            "|------|-------|---|",
+        ]
+
+        total = stats["total_selected"] or 1
+        for ptype, count in sorted(stats.get("by_type", {}).items()):
+            pct = (count / total) * 100
+            lines.append(f"| {ptype} | {count} | {pct:.1f}% |")
+
+        lines.extend([
+            "",
+            "## By Position",
+            "| Position | Count | % |",
+            "|----------|-------|---|",
+        ])
+
+        for pos, count in sorted(stats.get("by_position", {}).items()):
+            pct = (count / total) * 100
+            lines.append(f"| {pos} | {count} | {pct:.1f}% |")
+
+        lines.extend([
+            "",
+            "## By Condition (Type x Position)",
+            "| Condition | Count |",
+            "|-----------|-------|",
+        ])
+
+        for cond, count in sorted(stats.get("by_condition", {}).items()):
+            lines.append(f"| {cond} | {count} |")
+
+        lines.extend([
+            "",
+            "## By Quality Tier",
+            "| Tier | Count | % |",
+            "|------|-------|---|",
+        ])
+
+        for tier, count in sorted(stats.get("by_tier", {}).items()):
+            pct = (count / total) * 100
+            lines.append(f"| {tier} | {count} | {pct:.1f}% |")
+
+        lines.extend([
+            "",
+            f"*Generated: {stats.get('selection_timestamp', 'N/A')}*"
+        ])
+
+        return "\n".join(lines)
 
     def _phase_validate_perturbations(self):
         """

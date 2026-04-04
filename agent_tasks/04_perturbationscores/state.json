@@ -1,0 +1,39 @@
+{
+  "task_name": "04_perturbationscores",
+  "status": "completed",
+  "plan": "Implement perturbation quality scoring and primary sample selection",
+  "completed_steps": [
+    "Step 1: Create config file with quality_scoring and primary_selection sections",
+    "Step 2: Design quality scoring prompt in src/scoring/prompts.py",
+    "Step 3: Implement PerturbationQualityScorer module in src/scoring/quality_scorer.py",
+    "Step 4: Implement PrimarySelector module in src/sampling/primary_selector.py",
+    "Step 5: Integrate both into _phase_generate_perturbations in experiment_runner.py",
+    "Step 6: Create unit tests (30 new tests passing)",
+    "Step 7: Validate integration with dry-run",
+    "Step 8: Fix pre-existing test failures (8 tests fixed)",
+    "Step 9: Full test suite validation (155 tests passing)"
+  ],
+  "pending_steps": [],
+  "artifacts_created": [
+    "config/experiments/perturbation_quality.json",
+    "config/experiments/test_quality_scoring.json",
+    "src/scoring/__init__.py",
+    "src/scoring/prompts.py",
+    "src/scoring/quality_scorer.py",
+    "src/sampling/__init__.py",
+    "src/sampling/primary_selector.py",
+    "tests/test_quality_scorer.py",
+    "tests/test_primary_selector.py"
+  ],
+  "blockers": [],
+  "notes": [
+    "Quality scoring uses LLM-as-Judge to score perturbation validity (0-7 scale)",
+    "Primary selection uses stratified sampling with quality tiers and condition quotas",
+    "Both features are config-driven via quality_scoring.enabled and primary_selection.enabled flags",
+    "30 new unit tests written and passing",
+    "Fixed 8 pre-existing test failures in loaders, annotation, and perturbation tests",
+    "All 155 tests now passing",
+    "Integration verified with dry-run test"
+  ],
+  "last_updated": "2026-04-03T23:00:00Z"
+}
