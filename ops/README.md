@@ -1,8 +1,39 @@
 # Operations Scripts
 
-This folder contains utility scripts for managing experiments and database operations.
+This folder contains utility scripts for one-time operations, ad-hoc analysis, and database management.
+
+**Note:** The primary interface is `python main.py --config <config> --runner <phases>`. These scripts are for bootstrap/debugging only.
 
 ## Scripts
+
+### One-time Bootstrap
+
+#### `sample_trajectories.py`
+Initial sampling of trajectories from raw datasets to create `data/sampled/*.json` files.
+
+```bash
+python ops/sample_trajectories.py  # Creates toolbench_400.json, gaia_100.json, etc.
+```
+
+**Note:** After JSON files exist, use `python main.py --config dataset_full_study --runner load` instead.
+
+### Development Utilities
+
+#### `smoke_test_loaders.py`
+Quick smoke test for dataset loaders (loads small samples).
+
+```bash
+python ops/smoke_test_loaders.py
+```
+
+#### `validate_trajectory_coverage.py`
+Ad-hoc analysis of trajectory coverage across domains/complexity.
+
+```bash
+python ops/validate_trajectory_coverage.py
+```
+
+### Database Management
 
 ### `clear_experiment.py`
 

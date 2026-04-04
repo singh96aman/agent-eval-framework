@@ -106,3 +106,16 @@ Use it for restartability. Track:
 * artifacts created,
 * blockers,
 * last updated
+
+### My help
+If you need my help or if there is experiment failure and you can't fix it, trigger a notification.
+
+**How to notify me:**
+The notification hook is configured in `~/.claude/settings.json`. When Claude Code needs attention (permission prompts, blockers, etc.), a native macOS notification will appear automatically.
+
+For manual notification in urgent cases, you can run:
+```bash
+osascript -e 'display notification "Your message here" with title "Claude Code" sound name "default"'
+```
+
+Good luck!
