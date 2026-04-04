@@ -53,22 +53,17 @@ python main.py --config poc_experiment --runner judge,ccg,analyze
 
 The study uses 600 trajectories (400 ToolBench + 100 GAIA + 100 SWE-bench) with 492 perturbations. To reproduce from scratch:
 
-**Option 1: Use the unified config (recommended)**
+**Single command (recommended):**
 ```bash
-# Generate trajectories and perturbations in one command
-python main.py --config dataset_full_study --runner load,perturb
+# Generate trajectories, perturbations, and validate
+python main.py --config dataset_full_study --runner load,perturb,validate
 ```
 
-**Option 2: Step-by-step generation**
+**Or run phases individually:**
 ```bash
-# Step 1: Sample trajectories from source datasets
-python scripts/sample_trajectories.py
-
-# Step 2: Generate perturbations for all sampled trajectories
-python scripts/regenerate_perturbations.py
-
-# Step 3: Validate perturbation quality
-python scripts/validate_perturbations.py
+python main.py --config dataset_full_study --runner load      # Load trajectories
+python main.py --config dataset_full_study --runner perturb   # Generate perturbations
+python main.py --config dataset_full_study --runner validate  # Validate quality
 ```
 
 ### Dataset Files
@@ -240,13 +235,14 @@ Controls which phases execute:
 
 | Runner | Phases | Description |
 |--------|--------|-------------|
-| `all` | 1→2→3→4→5→6 | Full experiment pipeline |
-| `load` | 1 | Load trajectories from HuggingFace |
+| `all` | 1→2→3→4→5→6→7 | Full experiment pipeline |
+| `load` | 1 | Load trajectories from JSON or HuggingFace |
 | `perturb` | 2 | Generate perturbed versions |
-| `annotate` | 3 | Human annotation interface |
-| `judge` | 4 | Run LLM judge evaluations |
-| `ccg` | 5 | Compute CCG metrics |
-| `analyze` | 6 | Generate visualizations |
+| `validate` | 3 | Validate perturbation quality |
+| `annotate` | 4 | Human annotation interface |
+| `judge` | 5 | Run LLM judge evaluations |
+| `ccg` | 6 | Compute CCG metrics |
+| `analyze` | 7 | Generate visualizations |
 
 ### Common Workflows
 
@@ -281,12 +277,13 @@ python main.py --config poc_experiment --runner load --dry-run
 
 | Phase | Name | Input | Output | Time |
 |-------|------|-------|--------|------|
-| 1 | **Load Trajectories** | HuggingFace datasets | 50 baseline trajectories in MongoDB | 5-10 min |
-| 2 | **Generate Perturbations** | Baseline trajectories | 443 perturbed trajectories (9 conditions) | 1-2 min |
-| 3 | **Annotate Criticality** | Perturbed trajectories | Human annotations (TSD, SER, TCS) | ~1 hour for 25 samples |
-| 4 | **Evaluate Judges** | Trajectories + perturbations | Judge ratings (JPS) | ~2 hours for 852 evals |
-| 5 | **Compute CCG** | Annotations + Judge ratings | CCG scores by condition | 1-2 min |
-| 6 | **Analyze Results** | CCG results | Heatmaps, statistical tests, reports | 5-10 min |
+| 1 | **Load Trajectories** | JSON files or HuggingFace | 600 baseline trajectories | 1-2 min |
+| 2 | **Generate Perturbations** | Baseline trajectories | 492 perturbed trajectories (11 conditions) | 2-5 min |
+| 3 | **Validate Perturbations** | Perturbed trajectories | Quality report (pass/fail) | <1 min |
+| 4 | **Annotate Criticality** | Perturbed trajectories | Human annotations (TSD, SER, TCS) | ~2 hours for 50 samples |
+| 5 | **Evaluate Judges** | Trajectories + perturbations | Judge ratings (JPS) | ~4 hours for 1500 evals |
+| 6 | **Compute CCG** | Annotations + Judge ratings | CCG scores by condition | 1-2 min |
+| 7 | **Analyze Results** | CCG results | Heatmaps, statistical tests, reports | 5-10 min |
 
 ### Phase 3: Annotation Details
 

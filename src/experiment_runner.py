@@ -111,6 +111,7 @@ class ExperimentRunner:
         phase_map = {
             'load': 'load_trajectories',
             'perturb': 'generate_perturbations',
+            'validate': 'validate_perturbations',
             'annotate': 'annotate',
             'judge': 'evaluate_judges',
             'ccg': 'compute_ccg',
@@ -120,6 +121,7 @@ class ExperimentRunner:
             # Also support full names
             'load_trajectories': 'load_trajectories',
             'generate_perturbations': 'generate_perturbations',
+            'validate_perturbations': 'validate_perturbations',
             'evaluate_judges': 'evaluate_judges',
             'compute_ccg': 'compute_ccg',
         }
@@ -129,6 +131,7 @@ class ExperimentRunner:
             return [
                 'load_trajectories',
                 'generate_perturbations',
+                'validate_perturbations',
                 'annotate',
                 'evaluate_judges',
                 'compute_ccg',
@@ -167,6 +170,7 @@ class ExperimentRunner:
         phase_handlers = {
             'load_trajectories': self._phase_load_trajectories,
             'generate_perturbations': self._phase_generate_perturbations,
+            'validate_perturbations': self._phase_validate_perturbations,
             'annotate': self._phase_annotate,
             'evaluate_judges': self._phase_evaluate_judges,
             'compute_ccg': self._phase_compute_ccg,
@@ -725,6 +729,56 @@ class ExperimentRunner:
                 stored += 1
 
         return stored, cached
+
+    def _phase_validate_perturbations(self):
+        """
+        Phase 2b: Validate generated perturbations.
+
+        Checks for quality issues:
+        - No template fallback usage
+        - Planning perturbations are semantic
+        - Position and type coverage
+        - Uniqueness
+        """
+        print("✅ PHASE: VALIDATE PERTURBATIONS")
+        print("=" * 70)
+        print()
+
+        from src.perturbations.validator import (
+            PerturbationValidator,
+            load_perturbations_from_files,
+        )
+
+        # Load perturbations from JSON files
+        perturbed_dir = Path("data/perturbed")
+
+        if not perturbed_dir.exists():
+            print(f"❌ Perturbation directory not found: {perturbed_dir}")
+            print("   Run 'perturb' phase first to generate perturbations")
+            return
+
+        print(f"📁 Loading perturbations from: {perturbed_dir}")
+        perturbations = load_perturbations_from_files(perturbed_dir)
+
+        if not any(perturbations.values()):
+            print("❌ No perturbation files found!")
+            print("   Run 'perturb' phase first")
+            return
+
+        # Run validation
+        validator = PerturbationValidator()
+        all_pass = validator.print_report(perturbations, verbose=self.verbose)
+
+        print()
+        if all_pass:
+            print("=" * 70)
+            print("✅ VALIDATION PASSED - Dataset is ready for annotation")
+            print("=" * 70)
+        else:
+            print("=" * 70)
+            print("⚠️  VALIDATION ISSUES FOUND - Review before proceeding")
+            print("=" * 70)
+        print()
 
     def _phase_annotate(self):
         """Phase 3: Human annotation interface."""
