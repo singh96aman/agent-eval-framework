@@ -16,9 +16,16 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 
-from data.loaders import load_toolbench_trajectories, load_gaia_trajectories
-from storage.mongodb import MongoDBStorage
-from data.schema import Trajectory
+from src.data.loaders import (
+    load_toolbench_trajectories,
+    load_gaia_trajectories,
+    load_swebench_trajectories,
+    load_trajectories_from_json,
+    classify_trajectory_domain,
+    classify_trajectory_complexity,
+)
+from src.storage.mongodb import MongoDBStorage
+from src.data.schema import Trajectory
 
 
 def generate_experiment_id(config: Dict[str, Any]) -> str:
@@ -217,9 +224,14 @@ class ExperimentRunner:
 
     def _phase_load_trajectories(self):
         """
-        Phase 1: Load trajectories from HuggingFace datasets.
+        Phase 1: Load trajectories from HuggingFace datasets or JSON files.
 
-        Loads trajectories from ToolBench and GAIA, then stores them in MongoDB.
+        Supports two modes per dataset:
+        - source: "huggingface" (default) - Load from HuggingFace datasets
+        - source: "json" - Load from pre-sampled JSON file (json_path required)
+
+        Loads trajectories from ToolBench, GAIA, and SWE-bench, then stores
+        them in MongoDB.
         """
         print("📥 PHASE: LOAD TRAJECTORIES")
         print("=" * 70)
@@ -228,47 +240,28 @@ class ExperimentRunner:
         datasets_config = self.config.get('datasets', {})
         toolbench_config = datasets_config.get('toolbench', {})
         gaia_config = datasets_config.get('gaia', {})
+        swebench_config = datasets_config.get('swebench', {})
 
         trajectories = []
 
         # Load ToolBench
         if toolbench_config.get('enabled', True):
-            num_traj = toolbench_config.get('num_trajectories', 25)
-            filters = toolbench_config.get('filters', {})
-
-            print(f"📊 Loading {num_traj} ToolBench trajectories...")
-            toolbench_trajs = load_toolbench_trajectories(
-                max_trajectories=num_traj,
-                min_steps=filters.get('min_steps', 2),
-                max_steps=filters.get('max_steps', 20),
-                filter_successful=filters.get('filter_successful', False),
-                require_parameters_all_positions=filters.get(
-                    'require_parameters_all_positions', False
-                ),
-                require_tool_diversity=filters.get(
-                    'require_tool_diversity', False
-                ),
-                random_seed=toolbench_config.get('random_seed', 42)
+            toolbench_trajs = self._load_dataset_trajectories(
+                'toolbench', toolbench_config
             )
-            print(f"   ✓ Loaded {len(toolbench_trajs)} ToolBench trajectories")
             trajectories.extend(toolbench_trajs)
-            print()
 
         # Load GAIA
-        if gaia_config.get('enabled', True):
-            num_traj = gaia_config.get('num_trajectories', 25)
-            filters = gaia_config.get('filters', {})
-
-            print(f"📊 Loading {num_traj} GAIA trajectories...")
-            gaia_trajs = load_gaia_trajectories(
-                max_trajectories=num_traj,
-                min_steps=filters.get('min_steps', 1),
-                max_steps=filters.get('max_steps', 20),
-                random_seed=gaia_config.get('random_seed', 42)
-            )
-            print(f"   ✓ Loaded {len(gaia_trajs)} GAIA trajectories")
+        if gaia_config.get('enabled', False):
+            gaia_trajs = self._load_dataset_trajectories('gaia', gaia_config)
             trajectories.extend(gaia_trajs)
-            print()
+
+        # Load SWE-bench
+        if swebench_config.get('enabled', False):
+            swebench_trajs = self._load_dataset_trajectories(
+                'swebench', swebench_config
+            )
+            trajectories.extend(swebench_trajs)
 
         print(f"📊 Total trajectories loaded: {len(trajectories)}")
         print()
@@ -286,6 +279,100 @@ class ExperimentRunner:
         print("💾 Storing trajectories in MongoDB...")
         self._store_trajectories(trajectories)
 
+        return trajectories
+
+    def _load_dataset_trajectories(
+        self,
+        dataset_name: str,
+        config: Dict[str, Any]
+    ) -> List[Trajectory]:
+        """
+        Load trajectories for a single dataset (ToolBench, GAIA, or SWE-bench).
+
+        Supports two source modes:
+        - source: "json" - Load from pre-sampled JSON file
+        - source: "huggingface" or "local" (default) - Load from source
+
+        Args:
+            dataset_name: Name of the dataset (toolbench, gaia, swebench)
+            config: Dataset configuration
+
+        Returns:
+            List of Trajectory objects
+        """
+        source = config.get('source', 'local')
+        num_traj = config.get('num_trajectories', 100)
+        filters = config.get('filters', {})
+
+        print(f"📊 Loading {dataset_name.upper()} trajectories...")
+        print(f"   Source: {source}")
+
+        trajectories = []
+
+        if source == 'json':
+            # Load from pre-sampled JSON file
+            json_path = config.get('json_path')
+            if not json_path:
+                print(f"   ❌ ERROR: json_path required for source='json'")
+                return []
+
+            # Resolve relative path from project root
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent
+            full_path = project_root / json_path
+
+            if not full_path.exists():
+                print(f"   ❌ ERROR: JSON file not found: {full_path}")
+                return []
+
+            print(f"   Loading from: {json_path}")
+            trajectories = load_trajectories_from_json(str(full_path))
+
+            # Populate domain/complexity metadata if missing
+            for traj in trajectories:
+                if not hasattr(traj, 'domain') or not traj.domain:
+                    traj.domain = classify_trajectory_domain(traj)
+                if not hasattr(traj, 'complexity') or not traj.complexity:
+                    traj.complexity = classify_trajectory_complexity(traj)
+
+            # Limit to num_trajectories if specified
+            if num_traj and len(trajectories) > num_traj:
+                trajectories = trajectories[:num_traj]
+
+        else:
+            # Load from HuggingFace or local files
+            if dataset_name == 'toolbench':
+                trajectories = load_toolbench_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 2),
+                    max_steps=filters.get('max_steps', 20),
+                    filter_successful=filters.get('filter_successful', False),
+                    require_parameters_all_positions=filters.get(
+                        'require_parameters_all_positions', False
+                    ),
+                    require_tool_diversity=filters.get(
+                        'require_tool_diversity', False
+                    ),
+                    random_seed=config.get('random_seed', 42)
+                )
+            elif dataset_name == 'gaia':
+                trajectories = load_gaia_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 1),
+                    max_steps=filters.get('max_steps', 100),
+                    random_seed=config.get('random_seed', 42)
+                )
+            elif dataset_name == 'swebench':
+                trajectories = load_swebench_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 4),
+                    max_steps=filters.get('max_steps', 30),
+                    filter_successful=filters.get('filter_successful', True),
+                    random_seed=config.get('random_seed', 42)
+                )
+
+        print(f"   ✓ Loaded {len(trajectories)} {dataset_name} trajectories")
+        print()
         return trajectories
 
     def _store_trajectories(self, trajectories: List[Trajectory]):

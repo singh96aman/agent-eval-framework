@@ -13,8 +13,35 @@ import re
 from typing import Dict, Any, Optional, List
 from copy import deepcopy
 
-from src.data.schema import Trajectory, Step, StepType
+from src.data.schema import Trajectory, Step
 from src.perturbations.tool_similarity import ToolSimilarityMatcher
+
+
+def _reduce_scope(thought: str) -> Optional[str]:
+    """
+    Reduce scope of multi-part task to single part.
+
+    Transforms "X and Y" patterns to just "X".
+    """
+    # Pattern: "get/find/check X and Y" -> "get/find/check X"
+    patterns = [
+        (r"(get|find|check|retrieve|look up)\s+(.+?)\s+and\s+(.+?)(?:\.|$)",
+         r"\1 \2."),
+        (r"(both|also)\s+(.+?)\s+and\s+(.+?)(?:\.|$)",
+         r"\2."),
+        (r"(.+?)\s+as well as\s+(.+?)(?:\.|$)",
+         r"\1."),
+    ]
+
+    for pattern, replacement in patterns:
+        match = re.search(pattern, thought, re.IGNORECASE)
+        if match:
+            result = re.sub(pattern, replacement, thought, count=1,
+                            flags=re.IGNORECASE)
+            if result != thought:
+                return result
+
+    return None
 
 
 class BasePerturbationStrategy:
@@ -48,7 +75,8 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
     """
     Type A: Planning errors.
 
-    Inject wrong reasoning that misinterprets the task.
+    Inject wrong reasoning that misinterprets the task SEMANTICALLY.
+    Changes must be grammatically correct and represent plausible agent mistakes.
 
     Examples:
     - User asks for "schedule + details" → Agent only plans to get schedule
@@ -56,27 +84,47 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
     - User asks "compare X and Y" → Agent only analyzes X
     """
 
-    PLANNING_ERROR_TEMPLATES = [
+    # Semantic planning error strategies (not text corruption)
+    PLANNING_ERROR_STRATEGIES = [
         {
-            "pattern": r"(schedule|upcoming|future)",
-            "replacement": "historical data",
-            "reasoning": "Agent confuses future with past"
+            "name": "temporal_confusion",
+            "trigger_words": ["schedule", "upcoming", "future", "next", "tomorrow"],
+            "transformation": lambda t: re.sub(
+                r"(get|find|check|look up)\s+(the\s+)?(upcoming|next|future|scheduled)",
+                r"\1 \2past",
+                t,
+                flags=re.IGNORECASE
+            ) if re.search(r"(upcoming|next|future|scheduled)", t, re.IGNORECASE) else None,
+            "reasoning": "Agent confuses future with past events"
         },
         {
-            "pattern": r"(latest|recent|current)",
-            "replacement": "historical trends",
+            "name": "recency_ignored",
+            "trigger_words": ["latest", "recent", "current", "new", "today"],
+            "transformation": lambda t: re.sub(
+                r"(get|find|check|retrieve)\s+(the\s+)?(latest|recent|current|newest)",
+                r"\1 \2available",
+                t,
+                flags=re.IGNORECASE
+            ) if re.search(r"(latest|recent|current|newest)", t, re.IGNORECASE) else None,
             "reasoning": "Agent ignores recency requirement"
         },
         {
-            "pattern": r"(compare|both|and)",
-            "replacement": "analyze the first one",
-            "reasoning": "Agent misses comparison requirement"
+            "name": "scope_reduction",
+            "trigger_words": ["and", "both", "also", "as well", "plus"],
+            "transformation": lambda t: _reduce_scope(t),
+            "reasoning": "Agent addresses only first part of multi-part task"
         },
         {
-            "pattern": r"(details?|information|data) (?:for|about|on) (.+) and (.+)",
-            "replacement": r"information about \2",
-            "reasoning": "Agent ignores second requirement"
-        }
+            "name": "comparison_missed",
+            "trigger_words": ["compare", "difference", "versus", "vs", "between"],
+            "transformation": lambda t: re.sub(
+                r"(compare|find the difference between|contrast)\s+(.+?)\s+(and|with|versus|vs\.?)\s+(.+)",
+                r"analyze \2",
+                t,
+                flags=re.IGNORECASE
+            ) if re.search(r"(compare|difference|versus|vs|between)", t, re.IGNORECASE) else None,
+            "reasoning": "Agent misses comparison requirement, only analyzes one item"
+        },
     ]
 
     def perturb_step(
@@ -86,12 +134,12 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         system_prompt: Optional[str] = None
     ) -> Step:
         """
-        Inject planning error by modifying the Thought field.
+        Inject planning error by modifying the Thought field SEMANTICALLY.
 
-        Strategy:
-        1. Parse the step content to extract "Thought" section
-        2. Apply error template to inject wrong reasoning
-        3. Keep Action/Action Input unchanged (they'll be wrong given the thought)
+        The perturbed thought must be:
+        1. Grammatically correct
+        2. A plausible agent mistake
+        3. Semantically different from original (not just text insertion)
 
         Args:
             step: Step to perturb
@@ -102,81 +150,102 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
             Step with perturbed reasoning
         """
         perturbed = deepcopy(step)
+        content = step.content
+        task_desc = trajectory.ground_truth.task_description or ""
 
         # Extract Thought from content
-        content = step.content
         thought_match = re.search(r"Thought:\s*(.+?)(?:\nAction:|$)", content, re.DOTALL)
 
-        if not thought_match:
-            # No clear thought field, inject generic planning error
-            perturbed.content = (
-                "Thought: I need to handle this task, but I'll focus on a subset "
-                "of the requirements for now.\n" + content
-            )
-            perturbed.metadata["perturbation"] = {
-                "type": "planning_error",
-                "template": "generic_incomplete_planning",
-                "reasoning": "Agent plans to address only part of the task"
-            }
-            return perturbed
+        if thought_match:
+            original_thought = thought_match.group(1).strip()
+            perturbed_thought = self._apply_semantic_error(original_thought, task_desc)
 
-        original_thought = thought_match.group(1).strip()
+            if perturbed_thought and perturbed_thought != original_thought:
+                # Successfully modified thought
+                new_content = content.replace(
+                    f"Thought: {original_thought}",
+                    f"Thought: {perturbed_thought}"
+                )
+                perturbed.content = new_content
+                perturbed.metadata["perturbation"] = {
+                    "type": "planning_error",
+                    "original_thought": original_thought,
+                    "perturbed_thought": perturbed_thought
+                }
+                return perturbed
 
-        # Apply error template
-        perturbed_thought = self._apply_error_template(
-            original_thought,
-            trajectory.ground_truth.task_description
-        )
-
-        # Replace thought in content
-        new_content = content.replace(
-            f"Thought: {original_thought}",
-            f"Thought: {perturbed_thought}"
-        )
-
-        perturbed.content = new_content
+        # For steps without Thought: or where semantic modification failed,
+        # create a new grammatically correct planning statement
+        perturbed_content, reasoning = self._create_planning_prefix(content, task_desc)
+        perturbed.content = perturbed_content
         perturbed.metadata["perturbation"] = {
             "type": "planning_error",
-            "original_thought": original_thought,
-            "perturbed_thought": perturbed_thought
+            "template": "semantic_prefix",
+            "reasoning": reasoning
         }
-
         return perturbed
 
-    def _apply_error_template(self, thought: str, task: str) -> str:
+    def _apply_semantic_error(self, thought: str, task: str) -> Optional[str]:
         """
-        Apply an error template to inject wrong reasoning.
+        Apply semantic transformation to thought.
 
-        Args:
-            thought: Original thought
-            task: Task description for context
-
-        Returns:
-            Perturbed thought with planning error
+        Returns modified thought or None if no transformation applies.
         """
-        # Try to match against error templates
-        for template in self.PLANNING_ERROR_TEMPLATES:
-            pattern = template["pattern"]
-            if re.search(pattern, task.lower()) or re.search(pattern, thought.lower()):
-                replacement = template["replacement"]
+        combined_text = f"{task} {thought}".lower()
 
-                # Inject the error into the thought
-                perturbed = re.sub(
-                    pattern,
-                    replacement,
-                    thought,
-                    count=1,
-                    flags=re.IGNORECASE
-                )
+        for strategy in self.PLANNING_ERROR_STRATEGIES:
+            # Check if trigger words are present
+            if not any(word in combined_text for word in strategy["trigger_words"]):
+                continue
 
-                if perturbed != thought:
-                    return perturbed
+            # Try transformation
+            result = strategy["transformation"](thought)
+            if result and result != thought:
+                return result
 
-        # Fallback: Generic incomplete planning
-        return (
-            f"{thought.split('.')[0]}. "
-            "I'll focus on the main requirement and address other aspects if needed."
-        )
+        return None
+
+    def _create_planning_prefix(self, content: str, task_desc: str) -> tuple:
+        """
+        Create a semantically meaningful planning prefix.
+
+        Returns (modified_content, reasoning).
+        """
+        # Analyze task to create appropriate wrong planning
+        task_lower = task_desc.lower()
+
+        # Check for multi-part tasks
+        if " and " in task_lower or " also " in task_lower or "both" in task_lower:
+            prefix = "I'll start by addressing the first part of this request."
+            reasoning = "Agent plans to only handle first part of multi-part task"
+        elif "all" in task_lower or "every" in task_lower or "each" in task_lower:
+            prefix = "I'll focus on one representative example to answer this."
+            reasoning = "Agent reduces scope from 'all' to 'one'"
+        elif "compare" in task_lower or "difference" in task_lower:
+            prefix = "I'll look up information about the first item mentioned."
+            reasoning = "Agent misses comparison, only researches one item"
+        elif "latest" in task_lower or "recent" in task_lower or "current" in task_lower:
+            prefix = "I'll find some relevant information about this topic."
+            reasoning = "Agent ignores recency constraint"
+        else:
+            # Generic but grammatically correct prefix
+            prefix = "I'll address the main aspect of this request first."
+            reasoning = "Agent simplifies task scope"
+
+        # Construct the perturbed content
+        if "Thought:" in content:
+            # Insert after Thought:
+            perturbed = re.sub(
+                r"(Thought:\s*)",
+                f"\\1{prefix} ",
+                content,
+                count=1
+            )
+        else:
+            # Prepend with Thought section
+            perturbed = f"Thought: {prefix}\n{content}"
+
+        return perturbed, reasoning
 
 
 class ToolSelectionErrorStrategy(BasePerturbationStrategy):
@@ -884,6 +953,268 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
         return result
 
 
+class GAIAPerturbationStrategy(BasePerturbationStrategy):
+    """
+    GAIA-native perturbation strategies.
+
+    GAIA trajectories are plain text steps without "Thought:" prefix.
+    These perturbations create realistic errors appropriate for GAIA's format.
+
+    Perturbation types (mapped to standard categories):
+    - scope_reduction: Reduce task scope (planning analog)
+    - wrong_source: Use wrong website/source (tool_selection analog)
+    - wrong_query: Modify search query incorrectly (parameter analog)
+    - wrong_extraction: Extract wrong data from results (data_reference analog)
+    """
+
+    # Semantic scope reduction patterns for planning errors
+    SCOPE_REDUCTION_PATTERNS = [
+        # "X and Y" -> just X
+        (r"(.+)\s+and\s+(.+)", r"\1", "Ignoring second requirement"),
+        # "both X and Y" -> just X
+        (r"both\s+(.+)\s+and\s+(.+)", r"\1", "Only addressing first item"),
+        # "compare X with Y" -> just X
+        (r"compare\s+(.+)\s+(?:with|to|against)\s+(.+)", r"find \1", "Missing comparison"),
+        # "all X" -> "one X"
+        (r"all\s+(?:the\s+)?(\w+)", r"one \1", "Limiting scope to one"),
+        # "each X" -> "the first X"
+        (r"each\s+(\w+)", r"the first \1", "Only doing first"),
+    ]
+
+    # Wrong source patterns
+    WRONG_SOURCES = [
+        ("wikipedia", "a random blog"),
+        ("official", "unofficial"),
+        ("arxiv", "ResearchGate"),
+        ("documentation", "Stack Overflow"),
+        ("the source", "a cached version"),
+        ("google", "Bing"),
+    ]
+
+    # Query modification patterns
+    QUERY_MODIFICATIONS = [
+        (r'"([^"]+)"', lambda m: f'"{m.group(1)[:len(m.group(1))//2]}"'),  # Truncate quoted query
+        (r"search for (.+)", r"search for part of \1"),
+        (r"look up (.+)", r"briefly check \1"),
+    ]
+
+    def __init__(self, random_seed: Optional[int] = None):
+        """Initialize with random seed."""
+        super().__init__(random_seed)
+        self.subtype = "scope_reduction"  # Default
+
+    def perturb_step(
+        self,
+        step: Step,
+        trajectory: Trajectory,
+        system_prompt: Optional[str] = None,
+        subtype: Optional[str] = None
+    ) -> Step:
+        """
+        Apply GAIA-specific perturbation.
+
+        Args:
+            step: Step to perturb
+            trajectory: Full trajectory for context
+            system_prompt: Not used
+            subtype: Perturbation subtype (scope_reduction, wrong_source, wrong_query, wrong_extraction)
+
+        Returns:
+            Perturbed step
+        """
+        if subtype:
+            self.subtype = subtype
+
+        if self.subtype == "scope_reduction":
+            return self._scope_reduction_perturbation(step, trajectory)
+        elif self.subtype == "wrong_source":
+            return self._wrong_source_perturbation(step, trajectory)
+        elif self.subtype == "wrong_query":
+            return self._wrong_query_perturbation(step, trajectory)
+        elif self.subtype == "wrong_extraction":
+            return self._wrong_extraction_perturbation(step, trajectory)
+        else:
+            # Random choice
+            perturbation_func = self.random.choice([
+                self._scope_reduction_perturbation,
+                self._wrong_source_perturbation,
+                self._wrong_query_perturbation,
+            ])
+            return perturbation_func(step, trajectory)
+
+    def _scope_reduction_perturbation(
+        self, step: Step, trajectory: Trajectory
+    ) -> Step:
+        """
+        Planning analog: Reduce the scope of the task incorrectly.
+
+        Changes step content to indicate incomplete task understanding.
+        """
+        perturbed = deepcopy(step)
+        original_content = step.content
+        task_desc = trajectory.ground_truth.task_description or ""
+
+        # Try pattern matching on step content or task description
+        modified = None
+        reasoning = None
+
+        for pattern, replacement, reason in self.SCOPE_REDUCTION_PATTERNS:
+            # Try on step content first
+            match = re.search(pattern, original_content, re.IGNORECASE)
+            if match:
+                modified = re.sub(pattern, replacement, original_content, count=1, flags=re.IGNORECASE)
+                reasoning = reason
+                break
+
+            # Try on task description and apply to step
+            if not modified and task_desc:
+                match = re.search(pattern, task_desc, re.IGNORECASE)
+                if match:
+                    # Create a modified instruction
+                    modified = f"[Focus on partial task] {original_content}"
+                    reasoning = reason
+                    break
+
+        if not modified or modified == original_content:
+            # Fallback: Add explicit scope limitation
+            scope_phrases = [
+                "Just focusing on the main part:",
+                "Simplifying to the core task:",
+                "Starting with the basic version:",
+            ]
+            prefix = self.random.choice(scope_phrases)
+            modified = f"{prefix} {original_content}"
+            reasoning = "Explicit scope reduction"
+
+        perturbed.content = modified
+        perturbed.metadata["perturbation"] = {
+            "type": "gaia_planning",
+            "error_subtype": "scope_reduction",
+            "original_content": original_content[:200],
+            "reasoning": reasoning,
+        }
+
+        return perturbed
+
+    def _wrong_source_perturbation(
+        self, step: Step, trajectory: Trajectory
+    ) -> Step:
+        """
+        Tool selection analog: Use wrong source/website for information.
+        """
+        perturbed = deepcopy(step)
+        original_content = step.content
+
+        modified = original_content
+        source_change = None
+
+        for correct, wrong in self.WRONG_SOURCES:
+            if correct.lower() in original_content.lower():
+                modified = re.sub(
+                    correct, wrong, original_content, count=1, flags=re.IGNORECASE
+                )
+                source_change = f"{correct} -> {wrong}"
+                break
+
+        if modified == original_content:
+            # No direct source mention, add wrong source instruction
+            wrong_source_phrases = [
+                "Using a quick summary site instead of the original source:",
+                "Checking a secondary source rather than the primary one:",
+                "Looking at cached/archived version:",
+            ]
+            prefix = self.random.choice(wrong_source_phrases)
+            modified = f"{prefix} {original_content}"
+            source_change = "Generic wrong source"
+
+        perturbed.content = modified
+        perturbed.metadata["perturbation"] = {
+            "type": "gaia_tool_selection",
+            "error_subtype": "wrong_source",
+            "original_content": original_content[:200],
+            "source_change": source_change,
+        }
+
+        return perturbed
+
+    def _wrong_query_perturbation(
+        self, step: Step, trajectory: Trajectory
+    ) -> Step:
+        """
+        Parameter analog: Modify search query incorrectly.
+        """
+        perturbed = deepcopy(step)
+        original_content = step.content
+
+        modified = original_content
+
+        # Try query modification patterns
+        for pattern, replacement in self.QUERY_MODIFICATIONS:
+            match = re.search(pattern, original_content, re.IGNORECASE)
+            if match:
+                if callable(replacement):
+                    modified = re.sub(pattern, replacement, original_content, count=1)
+                else:
+                    modified = re.sub(pattern, replacement, original_content, count=1, flags=re.IGNORECASE)
+                break
+
+        if modified == original_content:
+            # Fallback: Add query limitation
+            modified = original_content.replace("search", "briefly search", 1) if "search" in original_content.lower() else original_content
+            if modified == original_content:
+                # Ultimate fallback: truncate content if it's a query-like step
+                words = original_content.split()
+                if len(words) > 5:
+                    modified = " ".join(words[:len(words)//2 + 1]) + "..."
+
+        perturbed.content = modified
+        perturbed.metadata["perturbation"] = {
+            "type": "gaia_parameter",
+            "error_subtype": "wrong_query",
+            "original_content": original_content[:200],
+        }
+
+        return perturbed
+
+    def _wrong_extraction_perturbation(
+        self, step: Step, trajectory: Trajectory
+    ) -> Step:
+        """
+        Data reference analog: Extract wrong data from prior results.
+        """
+        perturbed = deepcopy(step)
+        original_content = step.content
+
+        # Look for numbers, specific values to modify
+        modified = original_content
+
+        # Find numbers in parentheses (common in GAIA for expected values)
+        num_match = re.search(r'\((\d+)\)', original_content)
+        if num_match:
+            old_num = num_match.group(1)
+            new_num = str(int(old_num) + self.random.randint(1, 10))
+            modified = original_content.replace(f"({old_num})", f"({new_num})")
+        else:
+            # Find any numbers
+            num_match = re.search(r'\b(\d+)\b', original_content)
+            if num_match:
+                old_num = num_match.group(1)
+                new_num = str(int(old_num) + self.random.randint(1, 5))
+                modified = re.sub(r'\b' + old_num + r'\b', new_num, original_content, count=1)
+            else:
+                # Add wrong extraction note
+                modified = f"[Using approximate value] {original_content}"
+
+        perturbed.content = modified
+        perturbed.metadata["perturbation"] = {
+            "type": "gaia_data_reference",
+            "error_subtype": "wrong_extraction",
+            "original_content": original_content[:200],
+        }
+
+        return perturbed
+
+
 class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
     """
     SWE-bench-native perturbation strategies.
@@ -951,40 +1282,48 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         """
         Edit wrong file (analogous to wrong tool selection).
 
-        Changes the file path in a file_edit action to a related but wrong file.
+        Changes file paths in content to related but wrong paths.
+        Works with SWE-bench raw text format.
         """
         perturbed = deepcopy(step)
+        content = step.content
 
-        if not step.tool_input:
-            return perturbed
+        # Find file paths in content (common patterns)
+        path_patterns = [
+            r'<parameter=path>([^<]+)</parameter>',
+            r'"path":\s*"([^"]+)"',
+            r'/testbed/([^\s<>"]+\.py)',
+        ]
 
-        # Find file path in input
-        file_path = step.tool_input.get("file") or step.tool_input.get("path")
+        modified = False
+        for pattern in path_patterns:
+            match = re.search(pattern, content)
+            if match:
+                original_path = match.group(1)
+                wrong_path = self._generate_wrong_file_path(original_path)
+                perturbed.content = content.replace(original_path, wrong_path, 1)
+                perturbed.metadata["perturbation"] = {
+                    "type": "swebench_error",
+                    "error_subtype": "wrong_file",
+                    "original_file": original_path,
+                    "wrong_file": wrong_path,
+                }
+                modified = True
+                break
 
-        if not file_path:
-            return perturbed
-
-        # Generate wrong but plausible file path
-        original_path = str(file_path)
-        wrong_path = self._generate_wrong_file_path(original_path)
-
-        # Apply perturbation
-        perturbed.tool_input = deepcopy(step.tool_input)
-        if "file" in perturbed.tool_input:
-            perturbed.tool_input["file"] = wrong_path
-        if "path" in perturbed.tool_input:
-            perturbed.tool_input["path"] = wrong_path
-
-        # Update content
-        if original_path in step.content:
-            perturbed.content = step.content.replace(original_path, wrong_path)
-
-        perturbed.metadata["perturbation"] = {
-            "type": "swebench_error",
-            "error_subtype": "wrong_file",
-            "original_file": original_path,
-            "wrong_file": wrong_path,
-        }
+        if not modified:
+            # Fallback: modify any path-like string
+            path_match = re.search(r'(/\w+)+\.py', content)
+            if path_match:
+                orig = path_match.group(0)
+                wrong = orig.replace('.py', '_utils.py')
+                perturbed.content = content.replace(orig, wrong, 1)
+                perturbed.metadata["perturbation"] = {
+                    "type": "swebench_error",
+                    "error_subtype": "wrong_file",
+                    "original": orig,
+                    "modified": wrong,
+                }
 
         return perturbed
 
@@ -994,47 +1333,60 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         """
         Edit wrong location in file (analogous to wrong parameter - spatial).
 
-        Changes line numbers or function names in the edit target.
+        Modifies line numbers, function names, or class names in content.
         """
         perturbed = deepcopy(step)
+        content = step.content
 
-        if not step.tool_input:
+        # Try to find and modify line numbers in content
+        line_match = re.search(r'line[_\s]*(\d+)', content, re.IGNORECASE)
+        if line_match:
+            orig_line = line_match.group(1)
+            offset = self.random.choice([-20, -10, 10, 20])
+            new_line = str(max(1, int(orig_line) + offset))
+            perturbed.content = content.replace(
+                line_match.group(0),
+                line_match.group(0).replace(orig_line, new_line),
+                1
+            )
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_location",
+                "original_line": orig_line,
+                "wrong_line": new_line,
+            }
             return perturbed
 
-        perturbed.tool_input = deepcopy(step.tool_input)
+        # Try to modify function/class names
+        func_match = re.search(
+            r'(def|class|function)\s+(\w+)',
+            content,
+            re.IGNORECASE
+        )
+        if func_match:
+            orig_name = func_match.group(2)
+            wrong_name = orig_name + "_helper"
+            perturbed.content = content.replace(orig_name, wrong_name, 1)
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_location",
+                "original": orig_name,
+                "modified": wrong_name,
+            }
+            return perturbed
 
-        # Try to find and modify line numbers
-        for key in ["line", "start_line", "line_number", "lineno"]:
-            if key in perturbed.tool_input:
-                original_line = perturbed.tool_input[key]
-                if isinstance(original_line, int):
-                    # Shift line number
-                    offset = self.random.choice([-20, -10, 10, 20])
-                    perturbed.tool_input[key] = max(1, original_line + offset)
-
-                    perturbed.metadata["perturbation"] = {
-                        "type": "swebench_error",
-                        "error_subtype": "wrong_location",
-                        "original_line": original_line,
-                        "wrong_line": perturbed.tool_input[key],
-                    }
-                    return perturbed
-
-        # Try to modify function/class name
-        for key in ["function", "method", "class", "target"]:
-            if key in perturbed.tool_input:
-                original = perturbed.tool_input[key]
-                if isinstance(original, str):
-                    # Add suffix to name
-                    perturbed.tool_input[key] = original + "_helper"
-
-                    perturbed.metadata["perturbation"] = {
-                        "type": "swebench_error",
-                        "error_subtype": "wrong_location",
-                        "original_target": original,
-                        "wrong_target": perturbed.tool_input[key],
-                    }
-                    return perturbed
+        # Fallback: modify any identifier
+        id_match = re.search(r'`(\w{4,})`', content)
+        if id_match:
+            orig = id_match.group(1)
+            wrong = orig + "_v2"
+            perturbed.content = content.replace(f"`{orig}`", f"`{wrong}`", 1)
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_location",
+                "original": orig,
+                "modified": wrong,
+            }
 
         return perturbed
 
@@ -1044,32 +1396,20 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         """
         Wrong code value (analogous to wrong parameter value).
 
-        Changes a value in the code patch/edit.
+        Modifies values, numbers, or booleans in the content.
         """
         perturbed = deepcopy(step)
+        content = step.content
 
-        if not step.tool_input:
-            return perturbed
+        # Apply value modification to content
+        modified_content = self._modify_code_value(content)
 
-        perturbed.tool_input = deepcopy(step.tool_input)
-
-        # Find code/patch content
-        for key in ["patch", "code", "content", "new_content"]:
-            if key in perturbed.tool_input:
-                original_code = str(perturbed.tool_input[key])
-
-                # Find and modify a value in the code
-                modified_code = self._modify_code_value(original_code)
-
-                if modified_code != original_code:
-                    perturbed.tool_input[key] = modified_code
-                    perturbed.metadata["perturbation"] = {
-                        "type": "swebench_error",
-                        "error_subtype": "wrong_value",
-                        "original_code_snippet": original_code[:200],
-                        "modified_code_snippet": modified_code[:200],
-                    }
-                    return perturbed
+        if modified_content != content:
+            perturbed.content = modified_content
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_value",
+            }
 
         return perturbed
 
@@ -1079,43 +1419,49 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         """
         Wrong bug diagnosis (analogous to planning error).
 
-        Modifies the reasoning/thought to indicate wrong root cause.
+        Injects wrong reasoning about the bug's root cause.
+        Works with SWE-bench raw text format (no Thought: prefix).
         """
         perturbed = deepcopy(step)
-
-        # Find thought in content
         content = step.content
-        thought_match = re.search(
-            r"Thought:\s*(.+?)(?:\nAction:|$)", content, re.DOTALL
-        )
 
-        if thought_match:
-            original_thought = thought_match.group(1).strip()
+        # Wrong diagnoses to inject
+        wrong_diagnoses = [
+            "The bug is likely in the initialization code",
+            "This appears to be a caching issue",
+            "The problem is probably in the error handling",
+            "This looks like a race condition",
+            "The issue is in the data validation logic",
+            "I think the bug is in the import statements",
+        ]
 
-            # Inject wrong diagnosis
-            wrong_diagnoses = [
-                "The bug is likely in the initialization code",
-                "This appears to be a caching issue",
-                "The problem is probably in the error handling",
-                "This looks like a race condition",
-                "The issue is in the data validation logic",
-            ]
+        # SWE-bench format: plain text with reasoning
+        # Look for first sentence to inject after
+        first_sentence_match = re.search(r'^([^.!?]+[.!?])', content)
 
-            wrong_thought = (
-                f"{original_thought.split('.')[0]}. "
-                f"However, {self.random.choice(wrong_diagnoses)}."
-            )
+        if first_sentence_match:
+            first_sentence = first_sentence_match.group(1)
+            diagnosis = self.random.choice(wrong_diagnoses)
+            injection = f" However, {diagnosis}."
 
             perturbed.content = content.replace(
-                f"Thought: {original_thought}",
-                f"Thought: {wrong_thought}"
+                first_sentence,
+                first_sentence + injection,
+                1
             )
-
             perturbed.metadata["perturbation"] = {
                 "type": "swebench_error",
                 "error_subtype": "wrong_diagnosis",
-                "original_thought": original_thought[:200],
-                "wrong_thought": wrong_thought[:200],
+                "injected": injection,
+            }
+        else:
+            # Fallback: prepend wrong diagnosis
+            diagnosis = self.random.choice(wrong_diagnoses)
+            perturbed.content = f"[Note: {diagnosis}] {content}"
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_diagnosis",
+                "prepended": diagnosis,
             }
 
         return perturbed
@@ -1126,27 +1472,41 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         """
         Use wrong variable/reference (analogous to data reference error).
 
-        Changes a variable name that should reference earlier search results.
+        Modifies variable names or identifiers in content.
         """
         perturbed = deepcopy(step)
+        content = step.content
 
-        if not step.tool_input:
+        # Find variable-like identifiers in content
+        # Look for self.something or module.something patterns
+        var_match = re.search(r'(self\.(\w+)|(\w+)\.(\w+))', content)
+        if var_match:
+            orig = var_match.group(0)
+            # Modify the last part
+            parts = orig.split('.')
+            parts[-1] = parts[-1] + "_old"
+            wrong = '.'.join(parts)
+            perturbed.content = content.replace(orig, wrong, 1)
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_reference",
+                "original": orig,
+                "modified": wrong,
+            }
             return perturbed
 
-        # Find variable-like strings in input
-        for key, val in step.tool_input.items():
-            if isinstance(val, str) and re.match(r'^[a-z_][a-z0-9_]*$', val):
-                # Looks like a variable name
-                perturbed.tool_input = deepcopy(step.tool_input)
-                perturbed.tool_input[key] = val + "_old"
-
-                perturbed.metadata["perturbation"] = {
-                    "type": "swebench_error",
-                    "error_subtype": "wrong_reference",
-                    "original_reference": val,
-                    "wrong_reference": val + "_old",
-                }
-                return perturbed
+        # Try to find any identifier (snake_case)
+        id_match = re.search(r'\b([a-z][a-z0-9_]{3,})\b', content)
+        if id_match:
+            orig = id_match.group(1)
+            wrong = orig + "_v1"
+            perturbed.content = content.replace(orig, wrong, 1)
+            perturbed.metadata["perturbation"] = {
+                "type": "swebench_error",
+                "error_subtype": "wrong_reference",
+                "original": orig,
+                "modified": wrong,
+            }
 
         return perturbed
 

@@ -47,6 +47,83 @@ python main.py --config poc_experiment --runner judge,ccg,analyze
 
 ---
 
+## Dataset Generation
+
+### Reproduce the Full Study Dataset
+
+The study uses 600 trajectories (400 ToolBench + 100 GAIA + 100 SWE-bench) with 492 perturbations. To reproduce from scratch:
+
+**Option 1: Use the unified config (recommended)**
+```bash
+# Generate trajectories and perturbations in one command
+python main.py --config dataset_full_study --runner load,perturb
+```
+
+**Option 2: Step-by-step generation**
+```bash
+# Step 1: Sample trajectories from source datasets
+python scripts/sample_trajectories.py
+
+# Step 2: Generate perturbations for all sampled trajectories
+python scripts/regenerate_perturbations.py
+
+# Step 3: Validate perturbation quality
+python scripts/validate_perturbations.py
+```
+
+### Dataset Files
+
+After generation, find the data in:
+```
+data/
+├── sampled/
+│   ├── toolbench_400.json    # 400 ToolBench trajectories
+│   ├── gaia_100.json         # 100 GAIA trajectories
+│   └── swebench_100.json     # 100 SWE-bench trajectories
+└── perturbed/
+    ├── toolbench_perturbations.json
+    ├── gaia_perturbations.json
+    └── swebench_perturbations.json
+```
+
+### Config Options for Dataset Loading
+
+The config supports two data sources:
+
+**1. Load from pre-sampled JSON (faster, reproducible):**
+```json
+{
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/toolbench_400.json",
+      "num_trajectories": 400
+    }
+  }
+}
+```
+
+**2. Load fresh from HuggingFace/local:**
+```json
+{
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "local",
+      "num_trajectories": 50,
+      "filters": {
+        "min_steps": 3,
+        "max_steps": 15,
+        "filter_successful": false
+      }
+    }
+  }
+}
+```
+
+---
+
 ## Experiment Configuration
 
 ### Design: 1 Config = 1 Complete Experiment
@@ -300,7 +377,8 @@ repo/
 │
 ├── config/                      # Experiment configurations
 │   └── experiments/
-│       ├── poc_experiment.json  # Full POC experiment
+│       ├── dataset_full_study.json  # Full study dataset generation
+│       ├── poc_experiment_toolbench.json  # POC with ToolBench only
 │       └── test_load.json       # Small test config
 │
 ├── agent_tasks/                 # Task tracking for agents
@@ -414,9 +492,14 @@ All data for an experiment is linked by `experiment_id` from the config. This en
 
 ## Current Status
 
+**Dataset Ready:**
+- ✅ 600 trajectories sampled (400 ToolBench + 100 GAIA + 100 SWE-bench)
+- ✅ 492 perturbations generated (all 4 types, all 3 positions)
+- ✅ Expert validation passed (Realism=3.75, Detectability=3.58)
+
 **Completed Phases:**
-- ✅ Phase 1: Load Trajectories (50 ToolBench trajectories)
-- ✅ Phase 2: Generate Perturbations (443 perturbations, 9 conditions)
+- ✅ Phase 1: Load Trajectories (600 trajectories from 3 benchmarks)
+- ✅ Phase 2: Generate Perturbations (492 perturbations, 11 conditions)
 - ✅ Phase 3: Annotation Interface (interactive CLI, stratified sampling)
 - ✅ Phase 4: Judge Evaluation (852 Claude evaluations, 64% coverage)
 - ✅ Phase 5: CCG Computation (full statistical analysis)
@@ -426,10 +509,11 @@ All data for an experiment is linked by `experiment_id` from the config. This en
 - ✅ MongoDB Atlas storage (5 collections)
 - ✅ AWS Bedrock integration (Claude + GPT-OSS)
 - ✅ Experiment runner (load, perturb, annotate, judge, ccg)
+- ✅ JSON-based dataset loading for reproducibility
 
 **Ready for:**
-- 🎯 Human annotation (25 samples recommended)
-- 🎯 Full CCG analysis once annotated
+- 🎯 LLM judge evaluation (experiment_id: exp_20260403_v2)
+- 🎯 Human annotation (50 samples recommended)
 - 🔄 Phase 6: Visualization (heatmaps, scatter plots)
 
 ---

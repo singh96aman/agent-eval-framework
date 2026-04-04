@@ -15,6 +15,7 @@ from src.perturbations.strategies import (
     ToolSelectionErrorStrategy,
     ParameterErrorStrategy,
     DataReferenceErrorStrategy,
+    GAIAPerturbationStrategy,
     SWEBenchPerturbationStrategy,
 )
 
@@ -48,7 +49,24 @@ class PerturbationGenerator:
             "tool_selection": ToolSelectionErrorStrategy(random_seed),
             "parameter": ParameterErrorStrategy(random_seed),
             "data_reference": DataReferenceErrorStrategy(random_seed),
+            "gaia": GAIAPerturbationStrategy(random_seed),
             "swebench": SWEBenchPerturbationStrategy(random_seed),
+        }
+
+        # Map standard types to GAIA-native subtypes
+        self.gaia_type_map = {
+            "planning": "scope_reduction",
+            "tool_selection": "wrong_source",
+            "parameter": "wrong_query",
+            "data_reference": "wrong_extraction",
+        }
+
+        # Map standard types to SWE-bench-native subtypes
+        self.swebench_type_map = {
+            "planning": "wrong_diagnosis",
+            "tool_selection": "wrong_file",
+            "parameter": "wrong_location",
+            "data_reference": "wrong_reference",
         }
 
     def generate_perturbation(
@@ -73,10 +91,12 @@ class PerturbationGenerator:
             PerturbedTrajectory object or None if perturbation not applicable
         """
         # Validate inputs
-        if perturbation_type not in self.strategies:
+        standard_types = ["planning", "tool_selection", "parameter",
+                         "data_reference"]
+        if perturbation_type not in standard_types:
             raise ValueError(
                 f"Unknown perturbation type: {perturbation_type}. "
-                f"Must be one of: {list(self.strategies.keys())}"
+                f"Must be one of: {standard_types}"
             )
 
         if position not in ["early", "middle", "late"]:
@@ -85,26 +105,50 @@ class PerturbationGenerator:
                 f"Must be one of: early, middle, late"
             )
 
-        # Find step to perturb based on position and perturbation type
-        # Parameter perturbations need steps with actual parameters
-        require_params = (perturbation_type == "parameter")
+        # Detect benchmark and route to appropriate strategy
+        benchmark = trajectory.benchmark.lower() if trajectory.benchmark else ""
+
+        # Find step to perturb based on position
+        # Only ToolBench parameter perturbations need steps with params
+        require_params = (perturbation_type == "parameter"
+                         and benchmark == "toolbench")
         step_to_perturb = self._find_step_for_position(
             trajectory, position, require_params=require_params
         )
 
         if not step_to_perturb:
-            print(f"   Warning: No suitable step found for position={position} in trajectory {trajectory.trajectory_id}")
+            traj_id = trajectory.trajectory_id
+            print(f"   Warning: No step for position={position} "
+                  f"in trajectory {traj_id}")
             return None
 
-        # Get strategy
-        strategy = self.strategies[perturbation_type]
-
-        # Apply perturbation to the step
-        perturbed_step = strategy.perturb_step(
-            step=step_to_perturb,
-            trajectory=trajectory,
-            system_prompt=system_prompt
-        )
+        # Route to benchmark-native strategy
+        if benchmark == "gaia":
+            strategy = self.strategies["gaia"]
+            subtype = self.gaia_type_map.get(perturbation_type)
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt,
+                subtype=subtype
+            )
+        elif benchmark == "swebench":
+            strategy = self.strategies["swebench"]
+            subtype = self.swebench_type_map.get(perturbation_type)
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt,
+                subtype=subtype
+            )
+        else:
+            # ToolBench or unknown - use standard strategies
+            strategy = self.strategies[perturbation_type]
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt
+            )
 
         # Check if perturbation was actually applied
         # (content changed OR perturbation metadata exists)

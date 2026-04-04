@@ -37,16 +37,17 @@ def sample_toolbench(target_count=400):
     )
 
     # Load all available trajectories with quality filters
-    print("\n1. Loading with quality filters...")
+    # Using training set for larger pool and more complex trajectories
+    print("\n1. Loading with quality filters (training set)...")
     trajectories = load_toolbench_trajectories(
-        max_trajectories=None,  # Load all
+        max_trajectories=2000,  # Sample from larger pool
         min_steps=4,
-        max_steps=10,
+        max_steps=15,  # Allow longer trajectories for complex category
         filter_successful=True,
         require_parameters_all_positions=False,  # Relaxed for coverage
         require_tool_diversity=False,  # Relaxed for coverage
         random_seed=42,
-        split="eval"
+        split="train"  # Use training set for more trajectories
     )
 
     print(f"   Available: {len(trajectories)} trajectories")
@@ -85,14 +86,20 @@ def sample_toolbench(target_count=400):
 
     print(f"\n   Total sampled: {len(sampled)}")
 
+    # Populate domain and complexity fields on each trajectory
+    print("\n3. Populating domain/complexity metadata...")
+    for traj in sampled:
+        traj.domain = classify_trajectory_domain(traj)
+        traj.complexity = classify_trajectory_complexity(traj)
+
     # Analyze final sample
-    print("\n3. Final sample analysis:")
+    print("\n4. Final sample analysis:")
     domain_counts = defaultdict(int)
     complexity_counts = defaultdict(int)
 
     for traj in sampled:
-        domain_counts[classify_trajectory_domain(traj)] += 1
-        complexity_counts[classify_trajectory_complexity(traj)] += 1
+        domain_counts[traj.domain] += 1
+        complexity_counts[traj.complexity] += 1
 
     print("   Domains:")
     for domain, count in sorted(domain_counts.items()):
@@ -106,7 +113,7 @@ def sample_toolbench(target_count=400):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / "toolbench_400.json"
 
-    print(f"\n4. Saving to {output_path}...")
+    print(f"\n5. Saving to {output_path}...")
     save_trajectories(sampled, str(output_path))
     print(f"   Saved {len(sampled)} trajectories")
 
