@@ -497,8 +497,8 @@ class ExperimentRunner:
         conditions = pert_config.get("conditions", [])
         batch_size = pert_config.get("batch_size", 10)
 
-        # Get quality scoring config
-        quality_config = self.config.get("quality_scoring", {})
+        # Get quality scoring config (nested inside perturbations)
+        quality_config = pert_config.get("quality_scoring", {})
         quality_scoring_enabled = quality_config.get("enabled", False)
         scorer = None
 
@@ -701,7 +701,8 @@ class ExperimentRunner:
         print()
 
         # Primary selection (after all perturbations stored)
-        primary_config = self.config.get("primary_selection", {})
+        # Config is nested inside perturbations
+        primary_config = pert_config.get("primary_selection", {})
         if primary_config.get("enabled", False):
             print()
             print("=" * 70)
@@ -724,10 +725,10 @@ class ExperimentRunner:
             )
 
             if all_perturbations:
-                # Select primaries
+                # Select primaries (use conditions from parent perturbations config)
                 primary_ids = selector.select(
                     all_perturbations,
-                    conditions=primary_config.get("conditions")
+                    conditions=pert_config.get("conditions")
                 )
 
                 # Mark primaries in DB

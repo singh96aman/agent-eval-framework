@@ -42,33 +42,33 @@
       {"type": "tool_selection", "position": "early"},
       {"type": "tool_selection", "position": "middle"}
     ],
-    "num_per_trajectory": 1
-  },
+    "num_per_trajectory": 1,
 
-  "quality_scoring": {
-    "enabled": false,
-    "judge_model": {
-      "name": "claude-sonnet-4-5",
-      "provider": "aws_bedrock",
-      "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-      "config": {
-        "temperature": 0.3,
-        "max_tokens": 500
+    "quality_scoring": {
+      "enabled": false,
+      "judge_model": {
+        "name": "claude-sonnet-4-5",
+        "provider": "aws_bedrock",
+        "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "config": {
+          "temperature": 0.3,
+          "max_tokens": 500
+        }
+      },
+      "tier_thresholds": {
+        "high": 6,
+        "medium": 4,
+        "low": 1,
+        "invalid": 0
       }
     },
-    "tier_thresholds": {
-      "high": 6,
-      "medium": 4,
-      "low": 1,
-      "invalid": 0
-    }
-  },
 
-  "primary_selection": {
-    "enabled": false,
-    "total_primary": 10,
-    "min_per_condition": 2,
-    "random_seed": 42
+    "primary_selection": {
+      "enabled": false,
+      "total_primary": 10,
+      "min_per_condition": 2,
+      "random_seed": 42
+    }
   },
 
   "execution": {
