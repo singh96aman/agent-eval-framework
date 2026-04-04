@@ -14,6 +14,9 @@ from src.perturbations.strategies import (
     PlanningErrorStrategy,
     ToolSelectionErrorStrategy,
     ParameterErrorStrategy,
+    DataReferenceErrorStrategy,
+    GAIAPerturbationStrategy,
+    SWEBenchPerturbationStrategy,
 )
 
 
@@ -45,6 +48,25 @@ class PerturbationGenerator:
             "planning": PlanningErrorStrategy(random_seed),
             "tool_selection": ToolSelectionErrorStrategy(random_seed),
             "parameter": ParameterErrorStrategy(random_seed),
+            "data_reference": DataReferenceErrorStrategy(random_seed),
+            "gaia": GAIAPerturbationStrategy(random_seed),
+            "swebench": SWEBenchPerturbationStrategy(random_seed),
+        }
+
+        # Map standard types to GAIA-native subtypes
+        self.gaia_type_map = {
+            "planning": "scope_reduction",
+            "tool_selection": "wrong_source",
+            "parameter": "wrong_query",
+            "data_reference": "wrong_extraction",
+        }
+
+        # Map standard types to SWE-bench-native subtypes
+        self.swebench_type_map = {
+            "planning": "wrong_diagnosis",
+            "tool_selection": "wrong_file",
+            "parameter": "wrong_location",
+            "data_reference": "wrong_reference",
         }
 
     def generate_perturbation(
@@ -69,10 +91,12 @@ class PerturbationGenerator:
             PerturbedTrajectory object or None if perturbation not applicable
         """
         # Validate inputs
-        if perturbation_type not in self.strategies:
+        standard_types = ["planning", "tool_selection", "parameter",
+                         "data_reference"]
+        if perturbation_type not in standard_types:
             raise ValueError(
                 f"Unknown perturbation type: {perturbation_type}. "
-                f"Must be one of: {list(self.strategies.keys())}"
+                f"Must be one of: {standard_types}"
             )
 
         if position not in ["early", "middle", "late"]:
@@ -81,26 +105,50 @@ class PerturbationGenerator:
                 f"Must be one of: early, middle, late"
             )
 
-        # Find step to perturb based on position and perturbation type
-        # Parameter perturbations need steps with actual parameters
-        require_params = (perturbation_type == "parameter")
+        # Detect benchmark and route to appropriate strategy
+        benchmark = trajectory.benchmark.lower() if trajectory.benchmark else ""
+
+        # Find step to perturb based on position
+        # Only ToolBench parameter perturbations need steps with params
+        require_params = (perturbation_type == "parameter"
+                         and benchmark == "toolbench")
         step_to_perturb = self._find_step_for_position(
             trajectory, position, require_params=require_params
         )
 
         if not step_to_perturb:
-            print(f"   Warning: No suitable step found for position={position} in trajectory {trajectory.trajectory_id}")
+            traj_id = trajectory.trajectory_id
+            print(f"   Warning: No step for position={position} "
+                  f"in trajectory {traj_id}")
             return None
 
-        # Get strategy
-        strategy = self.strategies[perturbation_type]
-
-        # Apply perturbation to the step
-        perturbed_step = strategy.perturb_step(
-            step=step_to_perturb,
-            trajectory=trajectory,
-            system_prompt=system_prompt
-        )
+        # Route to benchmark-native strategy
+        if benchmark == "gaia":
+            strategy = self.strategies["gaia"]
+            subtype = self.gaia_type_map.get(perturbation_type)
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt,
+                subtype=subtype
+            )
+        elif benchmark == "swebench":
+            strategy = self.strategies["swebench"]
+            subtype = self.swebench_type_map.get(perturbation_type)
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt,
+                subtype=subtype
+            )
+        else:
+            # ToolBench or unknown - use standard strategies
+            strategy = self.strategies[perturbation_type]
+            perturbed_step = strategy.perturb_step(
+                step=step_to_perturb,
+                trajectory=trajectory,
+                system_prompt=system_prompt
+            )
 
         # Check if perturbation was actually applied
         # (content changed OR perturbation metadata exists)
@@ -278,24 +326,29 @@ class PerturbationGenerator:
         self,
         trajectory: Trajectory,
         system_prompt: Optional[str] = None,
-        mode: str = "static"
+        mode: str = "static",
+        include_data_reference: bool = True
     ) -> List[PerturbedTrajectory]:
         """
-        Generate all 9 perturbation conditions for a trajectory.
+        Generate all perturbation conditions for a trajectory.
 
-        Conditions: 3 types × 3 positions = 9 total
+        Standard conditions: 3 types × 3 positions = 9
+        With data_reference: +2 (middle, late only) = 11
 
         Args:
             trajectory: Original trajectory
             system_prompt: System prompt with tool definitions
             mode: Perturbation mode
+            include_data_reference: Include Type D (data reference) errors
 
         Returns:
-            List of PerturbedTrajectory objects (up to 9)
+            List of PerturbedTrajectory objects
         """
         perturbations = []
 
-        for ptype in ["planning", "tool_selection", "parameter"]:
+        # Standard perturbation types
+        standard_types = ["planning", "tool_selection", "parameter"]
+        for ptype in standard_types:
             for position in ["early", "middle", "late"]:
                 perturbed = self.generate_perturbation(
                     trajectory=trajectory,
@@ -304,11 +357,124 @@ class PerturbationGenerator:
                     system_prompt=system_prompt,
                     mode=mode
                 )
+                if perturbed:
+                    perturbations.append(perturbed)
 
+        # Data reference errors (not applicable to early position)
+        if include_data_reference:
+            for position in ["middle", "late"]:
+                perturbed = self.generate_perturbation(
+                    trajectory=trajectory,
+                    perturbation_type="data_reference",
+                    position=position,
+                    system_prompt=system_prompt,
+                    mode=mode
+                )
                 if perturbed:
                     perturbations.append(perturbed)
 
         return perturbations
+
+    def generate_swebench_perturbations(
+        self,
+        trajectory: Trajectory,
+        mode: str = "static"
+    ) -> List[PerturbedTrajectory]:
+        """
+        Generate SWE-bench-specific perturbations.
+
+        SWE-bench uses native perturbation types that are semantically
+        appropriate for code editing tasks.
+
+        Args:
+            trajectory: SWE-bench trajectory
+            mode: Perturbation mode
+
+        Returns:
+            List of PerturbedTrajectory objects
+        """
+        perturbations = []
+        swebench_subtypes = [
+            "wrong_file",
+            "wrong_location",
+            "wrong_value",
+            "wrong_diagnosis",
+            "wrong_reference"
+        ]
+
+        for subtype in swebench_subtypes:
+            for position in ["early", "middle", "late"]:
+                # Skip wrong_reference for early (same as data_reference)
+                if subtype == "wrong_reference" and position == "early":
+                    continue
+
+                perturbed = self._generate_swebench_perturbation(
+                    trajectory=trajectory,
+                    subtype=subtype,
+                    position=position,
+                    mode=mode
+                )
+                if perturbed:
+                    perturbations.append(perturbed)
+
+        return perturbations
+
+    def _generate_swebench_perturbation(
+        self,
+        trajectory: Trajectory,
+        subtype: str,
+        position: str,
+        mode: str
+    ) -> Optional[PerturbedTrajectory]:
+        """Generate a single SWE-bench perturbation."""
+        # Find step for position
+        step_to_perturb = self._find_step_for_position(
+            trajectory, position, require_params=False
+        )
+
+        if not step_to_perturb:
+            return None
+
+        # Get SWE-bench strategy and configure subtype
+        strategy = self.strategies["swebench"]
+        strategy.subtype = subtype
+
+        # Apply perturbation
+        perturbed_step = strategy.perturb_step(
+            step=step_to_perturb,
+            trajectory=trajectory,
+            system_prompt=None,
+            subtype=subtype
+        )
+
+        # Check if perturbation applied
+        if perturbed_step.content == step_to_perturb.content:
+            if "perturbation" not in perturbed_step.metadata:
+                return None
+
+        # Build perturbed trajectory
+        perturbed_trajectory = self._build_perturbed_trajectory(
+            original_trajectory=trajectory,
+            perturbed_step=perturbed_step,
+            perturbation_type=f"swebench_{subtype}",
+            perturbation_position=position,
+            mode=mode
+        )
+
+        return PerturbedTrajectory(
+            original_trajectory=trajectory,
+            perturbed_trajectory=perturbed_trajectory,
+            perturbation_type=f"swebench_{subtype}",
+            perturbation_position=position,
+            perturbed_step_number=perturbed_step.step_number,
+            original_step_content=step_to_perturb.content,
+            perturbed_step_content=perturbed_step.content,
+            perturbation_metadata={
+                "mode": mode,
+                "swebench_subtype": subtype,
+                "details": perturbed_step.metadata.get("perturbation", {}),
+            }
+        )
 
     def get_perturbation_id(
         self,

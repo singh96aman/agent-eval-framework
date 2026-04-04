@@ -9,8 +9,11 @@ from unittest.mock import Mock, patch
 from src.data.loaders import (
     load_toolbench_trajectories,
     load_gaia_trajectories,
+    load_swebench_trajectories,
     save_trajectories,
     load_trajectories_from_json,
+    classify_trajectory_domain,
+    classify_trajectory_complexity,
 )
 from src.data.schema import Trajectory
 
@@ -309,6 +312,151 @@ class TestSaveLoad:
 
         finally:
             Path(tmp_path).unlink()
+
+
+class TestSWEBenchLoader:
+    """Tests for SWE-bench dataset loader.
+
+    NOTE: These tests use mocks to avoid downloading actual datasets.
+    The mocks patch 'datasets.load_dataset' to prevent any network calls.
+    """
+
+    @pytest.fixture
+    def sample_swebench_data(self):
+        """Sample SWE-bench trajectory data."""
+        return {
+            "instance_id": "test_repo__12345",
+            "problem_statement": "Fix the bug in utils.py",
+            "trajectory": [
+                {
+                    "action": "search_code",
+                    "input": {"query": "bug", "path": "src/"},
+                    "output": "Found bug in utils.py:42",
+                    "thought": "Looking for the bug location"
+                },
+                {
+                    "action": "file_edit",
+                    "input": {"file": "src/utils.py", "line": 42},
+                    "output": "Edit applied",
+                    "thought": "Fixing the bug"
+                },
+            ],
+            "patch": "diff --git a/utils.py...",
+            "resolved": True,
+            "repo": "test/repo"
+        }
+
+    def test_swebench_missing_dataset_graceful(self):
+        """Test that missing dataset returns empty list gracefully."""
+        # This test doesn't need mocking - it tests the error handling
+        # by using an invalid token that will cause auth failure
+        with patch('datasets.load_dataset') as mock_load:
+            mock_load.side_effect = Exception("Dataset not found")
+            trajectories = load_swebench_trajectories()
+            assert trajectories == []
+
+    def test_parse_swebench_item_directly(self, sample_swebench_data):
+        """Test parsing SWE-bench item without loading dataset."""
+        from src.data.loaders import _parse_swebench_item
+
+        traj = _parse_swebench_item(sample_swebench_data, idx=0)
+
+        assert traj is not None
+        assert traj.benchmark == "swebench"
+        assert "swebench" in traj.trajectory_id
+        assert len(traj.steps) == 2
+        assert traj.ground_truth.task_success is True
+
+    def test_parse_swebench_action(self, sample_swebench_data):
+        """Test parsing individual SWE-bench action."""
+        from src.data.loaders import _parse_swebench_action
+
+        action = sample_swebench_data["trajectory"][0]
+        step = _parse_swebench_action(action, traj_idx=0, step_num=1)
+
+        assert step is not None
+        assert step.tool_name == "search_code"
+        assert step.step_number == 1
+
+
+class TestDomainClassification:
+    """Tests for trajectory domain classification."""
+
+    def test_classify_toolbench_domain(self):
+        """Test classifying ToolBench trajectory domains."""
+        from src.data.schema import Step, StepType, GroundTruth
+
+        # Create trajectory with weather-related tool
+        traj = Trajectory(
+            trajectory_id="test_1",
+            benchmark="toolbench",
+            steps=[
+                Step(
+                    step_id="s1",
+                    step_number=1,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content="Get weather",
+                    tool_name="get_weather_forecast",
+                    tool_input={}
+                )
+            ],
+            ground_truth=GroundTruth(task_description="Get weather")
+        )
+
+        domain = classify_trajectory_domain(traj)
+        assert domain == "data_information"
+
+    def test_classify_complexity(self):
+        """Test classifying trajectory complexity."""
+        from src.data.schema import Step, StepType, GroundTruth
+
+        # Simple trajectory (<=4 steps)
+        simple_traj = Trajectory(
+            trajectory_id="simple",
+            benchmark="toolbench",
+            steps=[
+                Step(
+                    step_id=f"s{i}",
+                    step_number=i,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content="step"
+                ) for i in range(1, 4)
+            ],
+            ground_truth=GroundTruth(task_description="Simple task")
+        )
+        assert classify_trajectory_complexity(simple_traj) == "simple"
+
+        # Medium trajectory (5-6 steps)
+        medium_traj = Trajectory(
+            trajectory_id="medium",
+            benchmark="toolbench",
+            steps=[
+                Step(
+                    step_id=f"s{i}",
+                    step_number=i,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content="step"
+                ) for i in range(1, 6)
+            ],
+            ground_truth=GroundTruth(task_description="Medium task")
+        )
+        assert classify_trajectory_complexity(medium_traj) == "medium"
+
+        # Complex trajectory (7+ steps)
+        complex_traj = Trajectory(
+            trajectory_id="complex",
+            benchmark="toolbench",
+            steps=[
+                Step(
+                    step_id=f"s{i}",
+                    step_number=i,
+                    step_type=StepType.TOOL_EXECUTION,
+                    content="step"
+                ) for i in range(1, 9)
+            ],
+            ground_truth=GroundTruth(task_description="Complex task")
+        )
+        assert classify_trajectory_complexity(complex_traj) == "complex"
 
 
 if __name__ == "__main__":

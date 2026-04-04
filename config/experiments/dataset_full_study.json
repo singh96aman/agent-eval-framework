@@ -1,0 +1,121 @@
+{
+  "experiment": {
+    "name": "Full Study: Dataset Generation (ToolBench + GAIA + SWE-bench)",
+    "experiment_id": "exp_dataset_full_study_v1",
+    "description": "Generate the complete research dataset: 600 trajectories (400 ToolBench + 100 GAIA + 100 SWE-bench) with 492 perturbations across all 4 types (planning, tool_selection, parameter, data_reference) and 3 positions (early, middle, late).",
+    "version": "1.0",
+    "created_by": "researcher",
+    "created_date": "2026-04-03"
+  },
+
+  "datasets": {
+    "toolbench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/toolbench_400.json",
+      "num_trajectories": 400,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 15,
+        "filter_successful": true
+      },
+      "random_seed": 42
+    },
+    "gaia": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/gaia_100.json",
+      "num_trajectories": 100,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 100
+      },
+      "random_seed": 42
+    },
+    "swebench": {
+      "enabled": true,
+      "source": "json",
+      "json_path": "data/sampled/swebench_100.json",
+      "num_trajectories": 100,
+      "filters": {
+        "min_steps": 4,
+        "max_steps": 30
+      },
+      "random_seed": 42
+    }
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment"
+  },
+
+  "perturbations": {
+    "types": ["planning", "tool_selection", "parameter", "data_reference"],
+    "positions": ["early", "middle", "late"],
+    "mode": "static",
+    "batch_size": 50,
+    "conditions": [
+      {"type": "planning", "position": "early"},
+      {"type": "planning", "position": "middle"},
+      {"type": "planning", "position": "late"},
+      {"type": "tool_selection", "position": "early"},
+      {"type": "tool_selection", "position": "middle"},
+      {"type": "tool_selection", "position": "late"},
+      {"type": "parameter", "position": "early"},
+      {"type": "parameter", "position": "middle"},
+      {"type": "parameter", "position": "late"},
+      {"type": "data_reference", "position": "middle"},
+      {"type": "data_reference", "position": "late"}
+    ],
+    "assignment_strategy": "round_robin",
+    "num_per_trajectory": 1
+  },
+
+  "judges": {
+    "models": [
+      {
+        "name": "claude-sonnet-4.5",
+        "provider": "aws_bedrock",
+        "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      },
+      {
+        "name": "gpt-oss-120b",
+        "provider": "aws_bedrock",
+        "model_id": "openai.gpt-oss-120b-1:0",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000
+        }
+      }
+    ],
+    "samples_per_trajectory": 3
+  },
+
+  "annotation": {
+    "num_samples": 50,
+    "annotator_id": "researcher1",
+    "sampling_strategy": "stratified",
+    "skip_annotated": true,
+    "random_seed": 42
+  },
+
+  "ccg": {
+    "judges": ["claude-sonnet-4.5", "gpt-oss-120b"],
+    "output_formats": ["csv", "json"],
+    "generate_plots": true
+  },
+
+  "execution": {
+    "runner": "load,perturb",
+    "dry_run": false,
+    "enable_checkpointing": true,
+    "checkpoint_dir": "results/checkpoints",
+    "verbose": true,
+    "max_retries": 3
+  }
+}

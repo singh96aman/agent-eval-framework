@@ -11,13 +11,21 @@ This is the main driver class that handles:
 
 import json
 import hashlib
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 
-from data.loaders import load_toolbench_trajectories, load_gaia_trajectories
-from storage.mongodb import MongoDBStorage
-from data.schema import Trajectory
+from src.data.loaders import (
+    load_toolbench_trajectories,
+    load_gaia_trajectories,
+    load_swebench_trajectories,
+    load_trajectories_from_json,
+    classify_trajectory_domain,
+    classify_trajectory_complexity,
+)
+from src.storage.mongodb import MongoDBStorage
+from src.data.schema import Trajectory
 
 
 def generate_experiment_id(config: Dict[str, Any]) -> str:
@@ -103,13 +111,17 @@ class ExperimentRunner:
         phase_map = {
             'load': 'load_trajectories',
             'perturb': 'generate_perturbations',
+            'validate': 'validate_perturbations',
             'annotate': 'annotate',
             'judge': 'evaluate_judges',
             'ccg': 'compute_ccg',
             'analyze': 'analyze',
+            'visualize': 'visualize',
+            'viz': 'visualize',  # Short alias
             # Also support full names
             'load_trajectories': 'load_trajectories',
             'generate_perturbations': 'generate_perturbations',
+            'validate_perturbations': 'validate_perturbations',
             'evaluate_judges': 'evaluate_judges',
             'compute_ccg': 'compute_ccg',
         }
@@ -119,10 +131,12 @@ class ExperimentRunner:
             return [
                 'load_trajectories',
                 'generate_perturbations',
+                'validate_perturbations',
                 'annotate',
                 'evaluate_judges',
                 'compute_ccg',
-                'analyze'
+                'analyze',
+                'visualize'
             ]
 
         # Parse comma-separated list
@@ -156,10 +170,12 @@ class ExperimentRunner:
         phase_handlers = {
             'load_trajectories': self._phase_load_trajectories,
             'generate_perturbations': self._phase_generate_perturbations,
+            'validate_perturbations': self._phase_validate_perturbations,
             'annotate': self._phase_annotate,
             'evaluate_judges': self._phase_evaluate_judges,
             'compute_ccg': self._phase_compute_ccg,
             'analyze': self._phase_analyze,
+            'visualize': self._phase_visualize,
         }
 
         # Run each phase in sequence
@@ -187,11 +203,39 @@ class ExperimentRunner:
         if self.storage:
             self.storage.close()
 
+    def _convert_for_json(self, obj: Any) -> Any:
+        """
+        Recursively convert numpy types to native Python types for JSON serialization.
+
+        Args:
+            obj: Object to convert (dict, list, numpy type, etc.)
+
+        Returns:
+            Converted object with all numpy types replaced
+        """
+        if isinstance(obj, dict):
+            return {key: self._convert_for_json(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_for_json(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        else:
+            return obj
+
     def _phase_load_trajectories(self):
         """
-        Phase 1: Load trajectories from HuggingFace datasets.
+        Phase 1: Load trajectories from HuggingFace datasets or JSON files.
 
-        Loads trajectories from ToolBench and GAIA, then stores them in MongoDB.
+        Supports two modes per dataset:
+        - source: "huggingface" (default) - Load from HuggingFace datasets
+        - source: "json" - Load from pre-sampled JSON file (json_path required)
+
+        Loads trajectories from ToolBench, GAIA, and SWE-bench, then stores
+        them in MongoDB.
         """
         print("📥 PHASE: LOAD TRAJECTORIES")
         print("=" * 70)
@@ -200,47 +244,28 @@ class ExperimentRunner:
         datasets_config = self.config.get('datasets', {})
         toolbench_config = datasets_config.get('toolbench', {})
         gaia_config = datasets_config.get('gaia', {})
+        swebench_config = datasets_config.get('swebench', {})
 
         trajectories = []
 
         # Load ToolBench
         if toolbench_config.get('enabled', True):
-            num_traj = toolbench_config.get('num_trajectories', 25)
-            filters = toolbench_config.get('filters', {})
-
-            print(f"📊 Loading {num_traj} ToolBench trajectories...")
-            toolbench_trajs = load_toolbench_trajectories(
-                max_trajectories=num_traj,
-                min_steps=filters.get('min_steps', 2),
-                max_steps=filters.get('max_steps', 20),
-                filter_successful=filters.get('filter_successful', False),
-                require_parameters_all_positions=filters.get(
-                    'require_parameters_all_positions', False
-                ),
-                require_tool_diversity=filters.get(
-                    'require_tool_diversity', False
-                ),
-                random_seed=toolbench_config.get('random_seed', 42)
+            toolbench_trajs = self._load_dataset_trajectories(
+                'toolbench', toolbench_config
             )
-            print(f"   ✓ Loaded {len(toolbench_trajs)} ToolBench trajectories")
             trajectories.extend(toolbench_trajs)
-            print()
 
         # Load GAIA
-        if gaia_config.get('enabled', True):
-            num_traj = gaia_config.get('num_trajectories', 25)
-            filters = gaia_config.get('filters', {})
-
-            print(f"📊 Loading {num_traj} GAIA trajectories...")
-            gaia_trajs = load_gaia_trajectories(
-                max_trajectories=num_traj,
-                min_steps=filters.get('min_steps', 1),
-                max_steps=filters.get('max_steps', 20),
-                random_seed=gaia_config.get('random_seed', 42)
-            )
-            print(f"   ✓ Loaded {len(gaia_trajs)} GAIA trajectories")
+        if gaia_config.get('enabled', False):
+            gaia_trajs = self._load_dataset_trajectories('gaia', gaia_config)
             trajectories.extend(gaia_trajs)
-            print()
+
+        # Load SWE-bench
+        if swebench_config.get('enabled', False):
+            swebench_trajs = self._load_dataset_trajectories(
+                'swebench', swebench_config
+            )
+            trajectories.extend(swebench_trajs)
 
         print(f"📊 Total trajectories loaded: {len(trajectories)}")
         print()
@@ -258,6 +283,100 @@ class ExperimentRunner:
         print("💾 Storing trajectories in MongoDB...")
         self._store_trajectories(trajectories)
 
+        return trajectories
+
+    def _load_dataset_trajectories(
+        self,
+        dataset_name: str,
+        config: Dict[str, Any]
+    ) -> List[Trajectory]:
+        """
+        Load trajectories for a single dataset (ToolBench, GAIA, or SWE-bench).
+
+        Supports two source modes:
+        - source: "json" - Load from pre-sampled JSON file
+        - source: "huggingface" or "local" (default) - Load from source
+
+        Args:
+            dataset_name: Name of the dataset (toolbench, gaia, swebench)
+            config: Dataset configuration
+
+        Returns:
+            List of Trajectory objects
+        """
+        source = config.get('source', 'local')
+        num_traj = config.get('num_trajectories', 100)
+        filters = config.get('filters', {})
+
+        print(f"📊 Loading {dataset_name.upper()} trajectories...")
+        print(f"   Source: {source}")
+
+        trajectories = []
+
+        if source == 'json':
+            # Load from pre-sampled JSON file
+            json_path = config.get('json_path')
+            if not json_path:
+                print(f"   ❌ ERROR: json_path required for source='json'")
+                return []
+
+            # Resolve relative path from project root
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent
+            full_path = project_root / json_path
+
+            if not full_path.exists():
+                print(f"   ❌ ERROR: JSON file not found: {full_path}")
+                return []
+
+            print(f"   Loading from: {json_path}")
+            trajectories = load_trajectories_from_json(str(full_path))
+
+            # Populate domain/complexity metadata if missing
+            for traj in trajectories:
+                if not hasattr(traj, 'domain') or not traj.domain:
+                    traj.domain = classify_trajectory_domain(traj)
+                if not hasattr(traj, 'complexity') or not traj.complexity:
+                    traj.complexity = classify_trajectory_complexity(traj)
+
+            # Limit to num_trajectories if specified
+            if num_traj and len(trajectories) > num_traj:
+                trajectories = trajectories[:num_traj]
+
+        else:
+            # Load from HuggingFace or local files
+            if dataset_name == 'toolbench':
+                trajectories = load_toolbench_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 2),
+                    max_steps=filters.get('max_steps', 20),
+                    filter_successful=filters.get('filter_successful', False),
+                    require_parameters_all_positions=filters.get(
+                        'require_parameters_all_positions', False
+                    ),
+                    require_tool_diversity=filters.get(
+                        'require_tool_diversity', False
+                    ),
+                    random_seed=config.get('random_seed', 42)
+                )
+            elif dataset_name == 'gaia':
+                trajectories = load_gaia_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 1),
+                    max_steps=filters.get('max_steps', 100),
+                    random_seed=config.get('random_seed', 42)
+                )
+            elif dataset_name == 'swebench':
+                trajectories = load_swebench_trajectories(
+                    max_trajectories=num_traj,
+                    min_steps=filters.get('min_steps', 4),
+                    max_steps=filters.get('max_steps', 30),
+                    filter_successful=filters.get('filter_successful', True),
+                    random_seed=config.get('random_seed', 42)
+                )
+
+        print(f"   ✓ Loaded {len(trajectories)} {dataset_name} trajectories")
+        print()
         return trajectories
 
     def _store_trajectories(self, trajectories: List[Trajectory]):
@@ -611,6 +730,56 @@ class ExperimentRunner:
 
         return stored, cached
 
+    def _phase_validate_perturbations(self):
+        """
+        Phase 2b: Validate generated perturbations.
+
+        Checks for quality issues:
+        - No template fallback usage
+        - Planning perturbations are semantic
+        - Position and type coverage
+        - Uniqueness
+        """
+        print("✅ PHASE: VALIDATE PERTURBATIONS")
+        print("=" * 70)
+        print()
+
+        from src.perturbations.validator import (
+            PerturbationValidator,
+            load_perturbations_from_files,
+        )
+
+        # Load perturbations from JSON files
+        perturbed_dir = Path("data/perturbed")
+
+        if not perturbed_dir.exists():
+            print(f"❌ Perturbation directory not found: {perturbed_dir}")
+            print("   Run 'perturb' phase first to generate perturbations")
+            return
+
+        print(f"📁 Loading perturbations from: {perturbed_dir}")
+        perturbations = load_perturbations_from_files(perturbed_dir)
+
+        if not any(perturbations.values()):
+            print("❌ No perturbation files found!")
+            print("   Run 'perturb' phase first")
+            return
+
+        # Run validation
+        validator = PerturbationValidator()
+        all_pass = validator.print_report(perturbations, verbose=self.verbose)
+
+        print()
+        if all_pass:
+            print("=" * 70)
+            print("✅ VALIDATION PASSED - Dataset is ready for annotation")
+            print("=" * 70)
+        else:
+            print("=" * 70)
+            print("⚠️  VALIDATION ISSUES FOUND - Review before proceeding")
+            print("=" * 70)
+        print()
+
     def _phase_annotate(self):
         """Phase 3: Human annotation interface."""
         print("✍️  PHASE: ANNOTATION")
@@ -650,16 +819,20 @@ class ExperimentRunner:
 
         print(f"   Found {len(all_perturbations)} perturbations")
 
-        # Filter to those with judge evaluations
-        perturbations_with_evals = []
-        for pert in all_perturbations:
-            perturbed_traj_id = pert['perturbed_trajectory_id']
-            eval_count = self.storage.db['judge_evaluations'].count_documents({
-                'experiment_id': self.experiment_id,
-                'trajectory_id': perturbed_traj_id
-            })
-            if eval_count > 0:
-                perturbations_with_evals.append(pert)
+        # Filter to those with judge evaluations (optimized: single query)
+        # Get all trajectory IDs that have judge evaluations in one query
+        evaluated_traj_ids = set(
+            self.storage.db['judge_evaluations'].distinct(
+                'trajectory_id',
+                {'experiment_id': self.experiment_id}
+            )
+        )
+
+        # Filter perturbations based on this set
+        perturbations_with_evals = [
+            pert for pert in all_perturbations
+            if pert['perturbed_trajectory_id'] in evaluated_traj_ids
+        ]
 
         print(f"   {len(perturbations_with_evals)} have judge evaluations")
 
@@ -668,13 +841,21 @@ class ExperimentRunner:
             print("   Run the 'judge' phase first to generate evaluations")
             return
 
-        # Filter out already annotated if requested
+        # Filter out already annotated if requested (check MongoDB)
         if skip_annotated:
-            unannotated = []
-            for pert in perturbations_with_evals:
-                pert_id = pert['perturbation_id']
-                if load_annotation(pert_id) is None:
-                    unannotated.append(pert)
+            # Get set of annotated perturbation IDs from MongoDB
+            annotated_ids = set(
+                self.storage.db['annotations'].distinct(
+                    'perturbation_id',
+                    {'annotator_id': annotator_id}
+                )
+            )
+
+            # Filter to unannotated
+            unannotated = [
+                pert for pert in perturbations_with_evals
+                if pert['perturbation_id'] not in annotated_ids
+            ]
 
             print(f"   {len(unannotated)} not yet annotated")
             perturbations_to_sample = unannotated
@@ -924,6 +1105,10 @@ class ExperimentRunner:
                         'by_condition': analysis.by_condition,
                         'statistical_tests': analysis.statistical_tests
                     }
+
+                    # Convert numpy types to native Python types for JSON serialization
+                    summary_data = self._convert_for_json(summary_data)
+
                     with open(summary_path, 'w') as f:
                         json.dump(summary_data, f, indent=2)
 
@@ -941,10 +1126,88 @@ class ExperimentRunner:
         print()
 
     def _phase_analyze(self):
-        """Phase 6: Analysis and visualization."""
+        """Phase 6: Analysis (deprecated - use visualize phase)."""
         print("📈 PHASE: ANALYSIS")
         print("=" * 70)
         print()
-        print("⚠️  This phase is not yet implemented.")
-        print("   Coming in Phase 6 of implementation.")
+        print("⚠️  This phase is deprecated.")
+        print("   Use 'visualize' phase instead for generating visualizations.")
+        print()
+
+    def _phase_visualize(self):
+        """Phase 7: Generate visualizations from CCG results."""
+        print("📊 PHASE: VISUALIZE")
+        print("=" * 70)
+        print()
+
+        # Determine results directory
+        results_dir = Path('results') / self.experiment_id
+
+        if not results_dir.exists():
+            print(f"❌ Results directory not found: {results_dir}")
+            print("   Run 'ccg' phase first to generate results")
+            return
+
+        # Check for CCG result files
+        result_files = list(results_dir.glob('ccg_results_*.csv'))
+
+        if not result_files:
+            print(f"❌ No CCG result files found in {results_dir}")
+            print("   Run 'ccg' phase first to compute CCG scores")
+            return
+
+        print(f"📁 Results directory: {results_dir}")
+        print(f"   Found {len(result_files)} result file(s):")
+        for rf in result_files:
+            judge_name = rf.stem.replace('ccg_results_', '')
+            print(f"   - {judge_name}")
+
+        # Get visualization config from experiment config
+        viz_config = self.config.get('visualization', {})
+        figsize = viz_config.get('figsize', [12, 8])
+        dpi = viz_config.get('dpi', 300)
+        formats = viz_config.get('formats', ['png', 'pdf'])
+
+        print(f"\n⚙️  Visualization settings:")
+        print(f"   Figure size: {figsize[0]}x{figsize[1]}")
+        print(f"   DPI: {dpi}")
+        print(f"   Formats: {', '.join(formats)}")
+
+        if self.dry_run:
+            print("\n🔍 DRY RUN: Would generate visualizations")
+            return
+
+        try:
+            # Import here to avoid circular dependency
+            from visualization.plots import generate_visualizations
+
+            print(f"\n🎨 Generating visualizations...")
+
+            # Generate all visualizations
+            generated_files = generate_visualizations(
+                results_dir=str(results_dir),
+                figsize=tuple(figsize),
+                dpi=dpi,
+                save_formats=formats
+            )
+
+            # Print summary
+            total_files = sum(len(files) for files in generated_files.values())
+            print(f"\n✅ Successfully generated {total_files} visualization file(s)")
+
+            for viz_type, file_list in generated_files.items():
+                if file_list:
+                    print(f"   {viz_type.replace('_', ' ').title()}: {len(file_list)} file(s)")
+
+            viz_dir = results_dir / 'visualizations'
+            print(f"\n📂 All visualizations saved to: {viz_dir}")
+
+        except Exception as e:
+            print(f"\n❌ Error generating visualizations: {e}")
+            import traceback
+            traceback.print_exc()
+
+        print("\n" + "=" * 70)
+        print("✅ VISUALIZATION COMPLETE")
+        print("=" * 70)
         print()

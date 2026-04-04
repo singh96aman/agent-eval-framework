@@ -644,6 +644,43 @@ def load_gaia_trajectories(
     return trajectories
 
 
+def _parse_gaia_steps_string(steps_str: str) -> List[str]:
+    """
+    Parse GAIA Steps string into list of individual steps.
+
+    GAIA stores steps as a numbered string like:
+    "1. Go to arxiv.org...
+     2. Enter search query...
+     3. Filter by date..."
+    """
+    import re
+
+    # Split by numbered patterns (1. 2. 3. etc)
+    # Match pattern: newline or start, followed by number and period
+    parts = re.split(r'(?:^|\n)\s*(\d+)\.\s*', steps_str.strip())
+
+    steps = []
+    # parts will be: ['', '1', 'step1 text', '2', 'step2 text', ...]
+    i = 1
+    while i < len(parts) - 1:
+        step_num = parts[i]
+        step_text = parts[i + 1].strip()
+        if step_text:
+            steps.append(step_text)
+        i += 2
+
+    # If regex didn't work, try simple newline split
+    if not steps:
+        for line in steps_str.split('\n'):
+            line = line.strip()
+            # Remove leading number and period
+            line = re.sub(r'^\d+\.\s*', '', line)
+            if line:
+                steps.append(line)
+
+    return steps
+
+
 def _parse_gaia_item(
     item: Dict[str, Any],
     idx: int,
@@ -655,23 +692,47 @@ def _parse_gaia_item(
         final_answer = item.get("Final answer", item.get("final_answer"))
         level = item.get("Level", item.get("level"))
 
-        # GAIA doesn't have explicit trajectory steps in the dataset
-        # Create minimal trajectory structure
         steps = []
 
-        # If there's an annotator_metadata or steps field, parse it
+        # Parse Annotator Metadata Steps field
         if "Annotator Metadata" in item:
             metadata = item["Annotator Metadata"]
-            if "Steps" in metadata:
+            if isinstance(metadata, dict) and "Steps" in metadata:
                 raw_steps = metadata["Steps"]
-                for i, step_text in enumerate(raw_steps, 1):
-                    step = Step(
-                        step_id=f"gaia_{idx}_step_{i}",
-                        step_number=i,
-                        step_type=StepType.REASONING,
-                        content=step_text,
-                    )
-                    steps.append(step)
+
+                # Handle string format (numbered list)
+                if isinstance(raw_steps, str):
+                    parsed_steps = _parse_gaia_steps_string(raw_steps)
+                    for i, step_text in enumerate(parsed_steps, 1):
+                        # Infer step type from content
+                        step_type = StepType.REASONING
+                        tool_name = None
+                        if any(kw in step_text.lower() for kw in ['search', 'go to', 'navigate', 'click', 'open']):
+                            step_type = StepType.TOOL_EXECUTION
+                            if 'search' in step_text.lower():
+                                tool_name = 'web_search'
+                            elif any(kw in step_text.lower() for kw in ['go to', 'navigate', 'open']):
+                                tool_name = 'web_browse'
+
+                        step = Step(
+                            step_id=f"gaia_{idx}_step_{i}",
+                            step_number=i,
+                            step_type=step_type,
+                            content=step_text,
+                            tool_name=tool_name,
+                        )
+                        steps.append(step)
+
+                # Handle list format (original code path)
+                elif isinstance(raw_steps, list):
+                    for i, step_text in enumerate(raw_steps, 1):
+                        step = Step(
+                            step_id=f"gaia_{idx}_step_{i}",
+                            step_number=i,
+                            step_type=StepType.REASONING,
+                            content=str(step_text),
+                        )
+                        steps.append(step)
 
         # If no steps, create a single reasoning step
         if not steps:
@@ -753,3 +814,344 @@ def load_trajectories_from_json(json_path: str) -> List[Trajectory]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return [Trajectory.from_dict(item) for item in data]
+
+
+def load_swebench_trajectories(
+    max_trajectories: Optional[int] = None,
+    min_steps: int = 4,
+    max_steps: int = 30,
+    filter_successful: bool = True,
+    random_seed: Optional[int] = 42,
+    split: str = "tool",
+    use_auth_token: Optional[str] = None,
+    difficulty: Optional[str] = None,
+) -> List[Trajectory]:
+    """
+    Load trajectories from SWE-bench SWE-smith dataset via HuggingFace.
+
+    SWE-bench trajectories represent code editing tasks where an agent
+    fixes bugs or implements features in real-world repositories.
+
+    Args:
+        max_trajectories: Maximum number of trajectories to load
+        min_steps: Minimum number of steps required
+        max_steps: Maximum number of steps allowed
+        filter_successful: Only load successful trajectories (passed tests)
+        random_seed: Random seed for sampling
+        split: Dataset split ('tool', 'xml', or 'ticks')
+        use_auth_token: HuggingFace token
+        difficulty: Filter by difficulty (easy/medium/hard)
+
+    Returns:
+        List of Trajectory objects
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "datasets library not installed. Run: pip install datasets"
+        )
+
+    # Get HF token
+    if use_auth_token is None:
+        use_auth_token = os.getenv("HUGGINGFACE_TOKEN")
+
+    try:
+        # Load SWE-smith trajectories dataset
+        # Dataset has splits: 'tool', 'xml', 'ticks'
+        dataset = load_dataset(
+            "SWE-bench/SWE-smith-trajectories",
+            split=split,
+            token=use_auth_token,
+        )
+        print(f"   Loaded {len(dataset)} SWE-bench trajectories from HuggingFace (split={split})")
+    except Exception as e:
+        print(f"   Warning: Could not load SWE-bench from HF: {e}")
+        return []
+
+    trajectories = []
+
+    for idx, item in enumerate(dataset):
+        try:
+            traj = _parse_swebench_item(item, idx)
+            if traj:
+                # Apply filters
+                if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
+                    continue
+                if filter_successful and traj.ground_truth.task_success is False:
+                    continue
+                if difficulty and traj.ground_truth.difficulty != difficulty:
+                    continue
+
+                trajectories.append(traj)
+        except Exception as e:
+            if idx < 5:
+                print(f"   Warning: Failed to parse SWE-bench item {idx}: {e}")
+            continue
+
+    # Shuffle and sample
+    if random_seed is not None:
+        random.seed(random_seed)
+        random.shuffle(trajectories)
+
+    if max_trajectories is not None:
+        trajectories = trajectories[:max_trajectories]
+
+    return trajectories
+
+
+def _parse_swebench_item(
+    item: Dict[str, Any],
+    idx: int,
+) -> Optional[Trajectory]:
+    """
+    Parse SWE-bench/SWE-smith dataset item to Trajectory.
+
+    SWE-smith format:
+    - messages: JSON string containing list of {role, content} messages
+    - instance_id: Bug/issue identifier
+    - resolved: Boolean success indicator
+    - model: Model used for generation
+    - traj_id: Trajectory identifier
+    - patch: The final code patch
+    """
+    try:
+        # Get instance/task ID
+        instance_id = item.get("instance_id", f"swebench_{idx}")
+        traj_id = item.get("traj_id", instance_id)
+
+        # Parse messages JSON string
+        messages_str = item.get("messages", "")
+        if not messages_str:
+            return None
+
+        messages = json.loads(messages_str) if isinstance(messages_str, str) else messages_str
+
+        # Extract task description from first user message
+        task_desc = "Unknown task"
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    # Content may be list of content blocks
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            task_desc = block.get("text", "")[:2000]
+                            break
+                        elif isinstance(block, str):
+                            task_desc = block[:2000]
+                            break
+                elif isinstance(content, str):
+                    task_desc = content[:2000]
+                break
+
+        # Parse assistant messages into steps
+        steps = []
+        step_num = 0
+
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+
+            step_num += 1
+            content = msg.get("content", "")
+
+            # Determine tool name from content
+            tool_name = None
+            step_type = StepType.REASONING
+
+            content_lower = content.lower() if content else ""
+            if any(kw in content_lower for kw in ["edit", "write", "create file", "modify"]):
+                tool_name = "file_edit"
+                step_type = StepType.TOOL_EXECUTION
+            elif any(kw in content_lower for kw in ["search", "find", "grep", "locate"]):
+                tool_name = "search_code"
+                step_type = StepType.TOOL_EXECUTION
+            elif any(kw in content_lower for kw in ["test", "run test", "pytest"]):
+                tool_name = "run_tests"
+                step_type = StepType.TOOL_EXECUTION
+            elif any(kw in content_lower for kw in ["view", "read", "cat ", "open file"]):
+                tool_name = "view_file"
+                step_type = StepType.TOOL_EXECUTION
+
+            step = Step(
+                step_id=f"swebench_{idx}_step_{step_num}",
+                step_number=step_num,
+                step_type=step_type,
+                content=content[:5000] if content else "",
+                tool_name=tool_name,
+                tool_input={"raw": content[:1000]} if tool_name else None,
+                metadata={"role": "assistant"},
+            )
+            steps.append(step)
+
+        if not steps:
+            return None
+
+        # Determine success from resolved field
+        resolved = item.get("resolved")
+        task_success = resolved if isinstance(resolved, bool) else None
+
+        # Classify difficulty based on step count
+        difficulty = _classify_swebench_difficulty(item, len(steps))
+
+        ground_truth = GroundTruth(
+            task_description=task_desc,
+            expected_answer=item.get("patch", ""),
+            task_success=task_success,
+            difficulty=difficulty,
+            domain="code",
+        )
+
+        trajectory = Trajectory(
+            trajectory_id=f"swebench_{traj_id}",
+            benchmark="swebench",
+            steps=steps,
+            ground_truth=ground_truth,
+            metadata={
+                "instance_id": instance_id,
+                "traj_id": traj_id,
+                "model": item.get("model", ""),
+                "hf_index": idx,
+            },
+        )
+
+        return trajectory
+
+    except Exception as e:
+        if idx < 5:
+            print(f"   Warning: Failed to parse SWE-bench item {idx}: {e}")
+        return None
+
+
+def _classify_swebench_difficulty(item: Dict[str, Any], num_steps: int) -> str:
+    """
+    Classify SWE-bench task difficulty based on heuristics.
+
+    Args:
+        item: Raw dataset item
+        num_steps: Number of steps in trajectory
+
+    Returns:
+        Difficulty label: "easy", "medium", or "hard"
+    """
+    # Check if difficulty is already provided
+    if "difficulty" in item:
+        return item["difficulty"]
+
+    # Heuristics based on task complexity
+    patch = item.get("patch", item.get("model_patch", ""))
+    patch_len = len(patch) if patch else 0
+
+    # Count files changed (from patch diff headers)
+    files_changed = patch.count("diff --git") if patch else 1
+
+    # Classify based on complexity indicators
+    if num_steps <= 4 and files_changed == 1 and patch_len < 500:
+        return "easy"
+    elif num_steps <= 7 and files_changed <= 2 and patch_len < 2000:
+        return "medium"
+    else:
+        return "hard"
+
+
+def classify_trajectory_domain(trajectory: Trajectory) -> str:
+    """
+    Classify a trajectory's domain category for stratified sampling.
+
+    For ToolBench: Uses tool names to infer domain
+    For SWE-bench: Uses repo/file info
+    For GAIA: Uses task type
+
+    Args:
+        trajectory: Trajectory to classify
+
+    Returns:
+        Domain category string
+    """
+    benchmark = trajectory.benchmark.lower()
+
+    if benchmark == "toolbench":
+        return _classify_toolbench_domain(trajectory)
+    elif benchmark == "swebench":
+        return _classify_swebench_domain(trajectory)
+    elif benchmark == "gaia":
+        return _classify_gaia_domain(trajectory)
+    else:
+        return "unknown"
+
+
+def _classify_toolbench_domain(trajectory: Trajectory) -> str:
+    """Classify ToolBench trajectory by API domain."""
+    # Collect all tool names
+    tools = [s.tool_name.lower() for s in trajectory.steps if s.tool_name]
+    tools_str = " ".join(tools)
+
+    # Domain patterns
+    patterns = {
+        "data_information": ["weather", "forecast", "news", "wiki", "data"],
+        "media_entertainment": ["movie", "music", "video", "image", "photo", "spotify"],
+        "ecommerce_shopping": ["product", "shop", "coupon", "price", "amazon", "ebay"],
+        "travel_logistics": ["flight", "hotel", "travel", "booking", "track", "colis"],
+        "finance_business": ["stock", "currency", "finance", "bank", "crypto", "exchange"],
+        "social_communication": ["social", "tweet", "message", "review", "comment"],
+        "utilities_tools": ["convert", "calculate", "validate", "translate", "qr"],
+        "sports_gaming": ["sport", "game", "score", "race", "team", "player"],
+    }
+
+    for domain, keywords in patterns.items():
+        if any(kw in tools_str for kw in keywords):
+            return domain
+
+    return "other"
+
+
+def _classify_swebench_domain(trajectory: Trajectory) -> str:
+    """Classify SWE-bench trajectory by repository type."""
+    repo = trajectory.metadata.get("repo", "").lower()
+
+    if "django" in repo or "flask" in repo or "fastapi" in repo:
+        return "web_framework"
+    elif "numpy" in repo or "pandas" in repo or "scipy" in repo:
+        return "data_science"
+    elif "test" in repo or "pytest" in repo:
+        return "testing"
+    elif "requests" in repo or "http" in repo or "api" in repo:
+        return "networking"
+    else:
+        return "general_python"
+
+
+def _classify_gaia_domain(trajectory: Trajectory) -> str:
+    """Classify GAIA trajectory by task type."""
+    task = trajectory.ground_truth.task_description.lower()
+
+    if "search" in task or "find" in task or "web" in task:
+        return "web_search"
+    elif "document" in task or "pdf" in task or "file" in task:
+        return "document_analysis"
+    elif "calculate" in task or "math" in task or "compute" in task:
+        return "calculation"
+    elif "compare" in task or "multiple" in task:
+        return "multi_source"
+    else:
+        return "general_qa"
+
+
+def classify_trajectory_complexity(trajectory: Trajectory) -> str:
+    """
+    Classify trajectory complexity based on step count.
+
+    Args:
+        trajectory: Trajectory to classify
+
+    Returns:
+        Complexity level: "simple", "medium", or "complex"
+    """
+    n = len(trajectory.steps)
+    if n <= 4:
+        return "simple"
+    elif n <= 6:
+        return "medium"
+    else:
+        return "complex"

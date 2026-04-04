@@ -115,12 +115,16 @@ class Trajectory:
         steps: Ordered list of steps
         ground_truth: Ground truth information
         metadata: Additional metadata (timestamps, agent config, etc.)
+        domain: Classified domain category for stratified sampling
+        complexity: Classified complexity level (simple/medium/complex)
     """
     trajectory_id: str
     benchmark: str
     steps: List[Step]
     ground_truth: GroundTruth
     metadata: Dict[str, Any] = field(default_factory=dict)
+    domain: Optional[str] = None
+    complexity: Optional[str] = None
 
     def __len__(self) -> int:
         """Return number of steps in trajectory."""
@@ -162,6 +166,8 @@ class Trajectory:
             "steps": [step.to_dict() for step in self.steps],
             "ground_truth": self.ground_truth.to_dict(),
             "metadata": self.metadata,
+            "domain": self.domain,
+            "complexity": self.complexity,
         }
 
     @classmethod
@@ -170,6 +176,9 @@ class Trajectory:
         data = data.copy()
         data["steps"] = [Step.from_dict(s) for s in data["steps"]]
         data["ground_truth"] = GroundTruth.from_dict(data["ground_truth"])
+        # Handle backward compatibility for old files without domain/complexity
+        data.setdefault("domain", None)
+        data.setdefault("complexity", None)
         return cls(**data)
 
     def get_text_representation(self) -> str:

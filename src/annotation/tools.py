@@ -88,66 +88,264 @@ class AnnotationInterface:
 
     def load_perturbation(self, perturbation_id: str) -> Optional[Dict[str, Any]]:
         """
-        Load perturbation from MongoDB.
+        Load perturbation from MongoDB and reconstruct full object with trajectories.
 
         Args:
             perturbation_id: ID of perturbed trajectory
 
         Returns:
-            Perturbation document or None if not found
+            Perturbation document with embedded trajectories, or None if not found
         """
-        return self.storage.db['perturbations'].find_one({'perturbation_id': perturbation_id})
+        # Load perturbation record (contains trajectory IDs)
+        pert_record = self.storage.db['perturbations'].find_one({'perturbation_id': perturbation_id})
+        if not pert_record:
+            return None
+
+        # Load the referenced trajectories
+        # Note: get_trajectory() automatically strips storage metadata
+        orig_traj = self.storage.get_trajectory(pert_record['original_trajectory_id'])
+        pert_traj = self.storage.get_trajectory(pert_record['perturbed_trajectory_id'])
+
+        if not orig_traj or not pert_traj:
+            print(f"⚠️  Missing trajectories for perturbation {perturbation_id}")
+            return None
+
+        # Reconstruct full perturbation object with only schema-expected fields
+        # Note: perturbation_id is NOT part of PerturbedTrajectory schema
+        full_perturbation = {
+            'original_trajectory': orig_traj,
+            'perturbed_trajectory': pert_traj,
+            'perturbation_type': pert_record['perturbation_type'],
+            'perturbation_position': pert_record['perturbation_position'],
+            'perturbed_step_number': pert_record['perturbed_step_number'],
+            'original_step_content': pert_record['original_step_content'],
+            'perturbed_step_content': pert_record['perturbed_step_content'],
+            'perturbation_metadata': pert_record.get(
+                'perturbation_metadata', {}
+            )
+        }
+
+        # Store perturbation_id separately for annotation saving
+        full_perturbation['_perturbation_id'] = pert_record['perturbation_id']
+
+        return full_perturbation
 
     def display_comparison(self, perturbation_data: Dict[str, Any]) -> None:
         """
-        Display baseline vs. perturbed trajectory side-by-side.
+        Interactive step-by-step trajectory display with perturbation comparison.
 
         Args:
             perturbation_data: Perturbation document from MongoDB
         """
-        perturbed = PerturbedTrajectory.from_dict(perturbation_data)
+        # Extract perturbation_id before passing to from_dict
+        pert_id = perturbation_data.get('_perturbation_id', 'unknown')
 
+        # Remove _perturbation_id before deserializing (it's not in schema)
+        data_for_schema = {
+            k: v for k, v in perturbation_data.items()
+            if k != '_perturbation_id'
+        }
+
+        perturbed = PerturbedTrajectory.from_dict(data_for_schema)
+
+        # Header
         print("\n" + "=" * 80)
-        print("TRAJECTORY COMPARISON")
+        print("TRAJECTORY REVIEW")
         print("=" * 80)
-        print(f"Perturbation ID: {perturbation_data['perturbation_id']}")
-        print(f"Type: {perturbed.perturbation_type}")
-        print(f"Position: {perturbed.perturbation_position}")
-        print(f"Perturbed Step: {perturbed.perturbed_step_number}")
+        print(f"Perturbation ID: {pert_id}")
+        print(f"Perturbation Type: {perturbed.perturbation_type.upper()}")
+        print(f"Position: {perturbed.perturbation_position.upper()}")
+        print(f"Perturbed Step: #{perturbed.perturbed_step_number}")
         print("=" * 80)
 
-        # Task description
-        print(f"\n📋 TASK: {perturbed.original_trajectory.ground_truth.task_description}")
+        # Task
+        print("\n" + "─" * 80)
+        print("📋 TASK")
+        print("─" * 80)
+        task = perturbed.original_trajectory.ground_truth.task_description
+        print(f"\n{task}\n")
 
-        # Display steps up to and including perturbation
-        print(f"\n🔍 STEPS (showing up to perturbed step {perturbed.perturbed_step_number}):\n")
+        # Show planning if available (look for planning/reasoning steps before tools)
+        planning_steps = [
+            s for s in perturbed.original_trajectory.steps[:perturbed.perturbed_step_number]
+            if s.step_type.value in ['planning', 'reasoning'] and not s.tool_name
+        ]
+        if planning_steps:
+            print("─" * 80)
+            print("🧠 INITIAL PLANNING")
+            print("─" * 80)
+            for step in planning_steps:
+                print(f"\n{step.content}\n")
 
-        for step in perturbed.original_trajectory.steps[:perturbed.perturbed_step_number]:
+        # Walk through steps automatically (no pausing)
+        print("─" * 80)
+        print("👣 TRAJECTORY STEPS")
+        print("─" * 80)
+        print()
+
+        for i, step in enumerate(perturbed.original_trajectory.steps, 1):
             is_perturbed = (step.step_number == perturbed.perturbed_step_number)
-            marker = "🔴 PERTURBED" if is_perturbed else "  "
 
-            print(f"{marker} Step {step.step_number} [{step.step_type.value}]:")
+            if i <= perturbed.perturbed_step_number:
+                if is_perturbed:
+                    # SIDE-BY-SIDE COMPARISON
+                    self._display_side_by_side_comparison(
+                        step.step_number,
+                        step.step_type.value,
+                        perturbed.original_step_content,
+                        perturbed.perturbed_step_content,
+                        step.tool_name
+                    )
+                    break  # Stop after showing the perturbation
+                else:
+                    # Normal step display (complete content)
+                    self._display_step(step)
 
-            if is_perturbed:
-                print(f"  ❌ ORIGINAL:  {perturbed.original_step_content[:200]}...")
-                print(f"  ⚠️  PERTURBED: {perturbed.perturbed_step_content[:200]}...")
-            else:
-                print(f"     {step.content[:200]}...")
-
-            if step.tool_name:
-                print(f"     Tool: {step.tool_name}")
+        # Show what happened after perturbation (complete content)
+        remaining_steps = perturbed.perturbed_trajectory.steps[
+            perturbed.perturbed_step_number:
+        ]
+        if remaining_steps:
+            print("\n" + "─" * 80)
+            print("📊 WHAT HAPPENED AFTER THE PERTURBATION")
+            print("─" * 80)
             print()
 
-        # Show remaining steps from perturbed trajectory
-        remaining_steps = perturbed.perturbed_trajectory.steps[perturbed.perturbed_step_number:]
-        if remaining_steps:
-            print(f"\n📊 SUBSEQUENT STEPS ({len(remaining_steps)} steps after perturbation):\n")
-            for step in remaining_steps[:3]:  # Show first 3
-                print(f"   Step {step.step_number}: {step.content[:100]}...")
-            if len(remaining_steps) > 3:
-                print(f"   ... ({len(remaining_steps) - 3} more steps)")
+            # Show all remaining steps with complete content
+            for step in remaining_steps:
+                self._display_step(step)
 
         print("\n" + "=" * 80)
+
+    def _display_step(self, step) -> None:
+        """Display a single trajectory step with complete content."""
+        print(f"  Step {step.step_number}: {step.step_type.value.upper()}")
+        print()
+
+        # Content (complete, no truncation)
+        content = step.content.strip()
+        # Indent each line
+        for line in content.split('\n'):
+            print(f"  {line}")
+
+        # Tool info
+        if step.tool_name:
+            print()
+            print(f"  🔧 Tool: {step.tool_name}")
+            if step.tool_input:
+                # Show complete input
+                input_str = str(step.tool_input)
+                if len(input_str) > 200:
+                    # Pretty print if it's long
+                    print(f"  📥 Input: {input_str[:200]}...")
+                else:
+                    print(f"  📥 Input: {input_str}")
+
+        print()  # Blank line between steps
+
+    def _display_side_by_side_comparison(
+        self,
+        step_num: int,
+        step_type: str,
+        original: str,
+        perturbed: str,
+        tool_name: Optional[str] = None
+    ) -> None:
+        """
+        Display side-by-side comparison of original vs perturbed step.
+
+        Table structure: 80 chars total
+        ║ (2) + content (36) + ║ (3) + content (36) + ║ (2) = 79
+        But borders add 1 extra, so 80 total
+        """
+        # Top border
+        print("\n╔" + "═" * 78 + "╗")
+
+        # Title
+        title = f"🔴 PERTURBATION AT STEP {step_num} ({step_type.upper()})"
+        print(f"║ {title:<77}║")
+
+        # Separator
+        print("╠" + "═" * 78 + "╣")
+        print("║" + " " * 78 + "║")
+
+        # Subtitle
+        subtitle = "Comparing ORIGINAL (left) vs PERTURBED (right):"
+        print(f"║  {subtitle:<76}║")
+        print("║" + " " * 78 + "║")
+
+        # Column headers - must match border widths (38 + 39)
+        print("╠" + "═" * 38 + "╦" + "═" * 39 + "╣")
+        print("║  ✅ ORIGINAL" + " " * 24 + "║  ⚠️  PERTURBED" + " " * 23 + "║")
+        print("╠" + "═" * 38 + "╬" + "═" * 39 + "╣")
+
+        # Split into lines for side-by-side display
+        # Left column: 38 total (2 spaces + 36 chars text)
+        # Right column: 39 total (2 spaces + 37 chars text)
+        orig_lines = self._wrap_text(original, 36)
+        pert_lines = self._wrap_text(perturbed, 37)
+
+        max_lines = max(len(orig_lines), len(pert_lines))
+        for i in range(max_lines):
+            orig_line = orig_lines[i] if i < len(orig_lines) else ""
+            pert_line = pert_lines[i] if i < len(pert_lines) else ""
+            # Format: ║ + 2 spaces + 36 chars + ║ + 2 spaces + 37 chars + ║
+            print(f"║  {orig_line:<36}║  {pert_line:<37}║")
+
+        # Bottom border
+        print("╚" + "═" * 38 + "╩" + "═" * 39 + "╝")
+
+        if tool_name:
+            print(f"\n🔧 Tool used: {tool_name}\n")
+
+    def _wrap_text(self, text: str, width: int) -> List[str]:
+        """
+        Wrap text to specified width, breaking long words if needed.
+
+        Args:
+            text: Text to wrap
+            width: Maximum width per line
+
+        Returns:
+            List of wrapped lines
+        """
+        words = text.split()
+        lines = []
+        current_line = []
+        current_length = 0
+
+        for word in words:
+            # If word itself is longer than width, split it
+            if len(word) > width:
+                # Add current line if any
+                if current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = []
+                    current_length = 0
+
+                # Split the long word into chunks
+                while len(word) > width:
+                    lines.append(word[:width])
+                    word = word[width:]
+
+                # Add remaining part
+                if word:
+                    current_line.append(word)
+                    current_length = len(word)
+
+            elif current_length + len(word) + 1 <= width:
+                current_line.append(word)
+                current_length += len(word) + (1 if current_line else 0)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+                current_length = len(word)
+
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        return lines if lines else [""]
 
     def prompt_annotation(self, perturbation_id: str, annotator_id: str = "default") -> Annotation:
         """
@@ -212,6 +410,23 @@ class AnnotationInterface:
 
         return annotation
 
+    def annotation_exists(self, perturbation_id: str, annotator_id: str) -> bool:
+        """
+        Check if annotation already exists in MongoDB.
+
+        Args:
+            perturbation_id: ID of perturbation
+            annotator_id: ID of annotator
+
+        Returns:
+            True if annotation exists, False otherwise
+        """
+        existing = self.storage.db['annotations'].find_one({
+            'perturbation_id': perturbation_id,
+            'annotator_id': annotator_id
+        })
+        return existing is not None
+
     def annotate(self, perturbation_id: str, annotator_id: str = "default") -> Optional[Annotation]:
         """
         Full annotation workflow: load, display, prompt, save.
@@ -229,10 +444,9 @@ class AnnotationInterface:
             print(f"❌ Perturbation not found: {perturbation_id}")
             return None
 
-        # Check if already annotated
-        existing_path = self.annotations_dir / f"{perturbation_id}.json"
-        if existing_path.exists():
-            print(f"\n⚠️  Annotation already exists: {existing_path}")
+        # Check if already annotated (in MongoDB)
+        if self.annotation_exists(perturbation_id, annotator_id):
+            print(f"\n⚠️  Annotation already exists in MongoDB")
             overwrite = input("Overwrite? (yes/no): ").strip().lower()
             if overwrite not in ['yes', 'y']:
                 print("Cancelled.")
@@ -244,11 +458,54 @@ class AnnotationInterface:
         # Prompt for annotation
         annotation = self.prompt_annotation(perturbation_id, annotator_id)
 
-        # Save annotation
+        # Save to MongoDB (primary storage)
+        self._save_to_mongodb(annotation)
+
+        # Also save to local file (backup/cache)
+        local_path = self.annotations_dir / f"{perturbation_id}.json"
         save_annotation(annotation, self.annotations_dir)
-        print(f"\n✅ Annotation saved: {existing_path}")
+
+        print(f"\n✅ Annotation saved to MongoDB")
+        print(f"   Local backup: {local_path}")
 
         return annotation
+
+    def _save_to_mongodb(self, annotation: Annotation) -> None:
+        """
+        Save annotation to MongoDB with proper schema.
+
+        Args:
+            annotation: Annotation to save
+        """
+        # Generate unique annotation_id: perturbation_id + annotator_id
+        annotation_id = f"{annotation.perturbation_id}_{annotation.annotator_id}"
+
+        # Get perturbation to extract experiment_id
+        pert_record = self.storage.db['perturbations'].find_one({
+            'perturbation_id': annotation.perturbation_id
+        })
+        experiment_id = pert_record['experiment_id'] if pert_record else None
+
+        # Prepare document for MongoDB (matching schema)
+        doc = {
+            'annotation_id': annotation_id,  # Unique ID
+            'perturbation_id': annotation.perturbation_id,
+            'experiment_id': experiment_id,
+            'annotator_id': annotation.annotator_id,
+            'task_success_degradation': annotation.task_success_degradation,
+            'subsequent_error_rate': annotation.subsequent_error_rate,
+            'tcs_score': annotation.compute_tcs(),
+            'notes': annotation.notes,
+            'annotated_at': annotation.timestamp,
+            'annotation_time_seconds': annotation.annotation_time_seconds
+        }
+
+        # Save to MongoDB (upsert to allow re-annotation)
+        self.storage.db['annotations'].replace_one(
+            {'annotation_id': annotation_id},
+            doc,
+            upsert=True
+        )
 
     def batch_annotate(self, perturbation_ids: List[str], annotator_id: str = "default") -> List[Annotation]:
         """
