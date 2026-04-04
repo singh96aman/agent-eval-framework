@@ -6,17 +6,6 @@ This folder contains utility scripts for one-time operations, ad-hoc analysis, a
 
 ## Scripts
 
-### One-time Bootstrap
-
-#### `sample_trajectories.py`
-Initial sampling of trajectories from raw datasets to create `data/sampled/*.json` files.
-
-```bash
-python ops/sample_trajectories.py  # Creates toolbench_400.json, gaia_100.json, etc.
-```
-
-**Note:** After JSON files exist, use `python main.py --config dataset_full_study --runner load` instead.
-
 ### Development Utilities
 
 #### `smoke_test_loaders.py`
