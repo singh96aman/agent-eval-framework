@@ -384,6 +384,7 @@ repo/
 │
 ├── data/                        # Datasets and artifacts
 ├── results/                     # Experiment outputs
+├── notebooks/                   # Jupyter notebooks for analysis
 └── paper/                       # Papers, notes, literature review
     ├── literature_review.md
     └── POC_REQUIREMENTS.MD
