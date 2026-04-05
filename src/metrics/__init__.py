@@ -11,8 +11,11 @@ from .ccg import (
     compute_ccg,
     CCGAnalysis,
     aggregate_by_condition,
-    statistical_analysis
+    statistical_analysis,
+    compute_ccg_analysis
 )
+from .criticality_scorer import CriticalityScorer
+from .ccg_calculator import CCGCalculator
 
 __all__ = [
     'compute_tcs',
@@ -20,5 +23,8 @@ __all__ = [
     'compute_ccg',
     'CCGAnalysis',
     'aggregate_by_condition',
-    'statistical_analysis'
+    'statistical_analysis',
+    'compute_ccg_analysis',
+    'CriticalityScorer',
+    'CCGCalculator'
 ]
