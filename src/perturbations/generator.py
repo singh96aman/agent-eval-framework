@@ -480,19 +480,23 @@ class PerturbationGenerator:
         self,
         trajectory_id: str,
         perturbation_type: str,
-        position: str
+        position: str,
+        experiment_id: str = ""
     ) -> str:
         """
         Generate standardized perturbation ID.
 
-        Format: {trajectory_id}_{type}_{position}
+        Format: {experiment_id}_{trajectory_id}_{type}_{position}
 
         Args:
             trajectory_id: Original trajectory ID
             perturbation_type: Type of perturbation
             position: Position label
+            experiment_id: Experiment identifier
 
         Returns:
             Perturbation ID
         """
+        if experiment_id:
+            return f"{experiment_id}_{trajectory_id}_{perturbation_type}_{position}"
         return f"{trajectory_id}_{perturbation_type}_{position}"
