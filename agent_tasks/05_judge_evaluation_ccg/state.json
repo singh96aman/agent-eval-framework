@@ -1,0 +1,144 @@
+{
+  "task_name": "05_judge_evaluation_ccg",
+  "status": "in_progress",
+  "created_at": "2026-04-04",
+  "last_updated": "2026-04-04",
+  "plan": [
+    {
+      "step": 1,
+      "description": "Verify existing judge prompt supports batch mode",
+      "status": "complete"
+    },
+    {
+      "step": 2,
+      "description": "Implement ParallelJudgeEvaluator module",
+      "status": "complete"
+    },
+    {
+      "step": 3,
+      "description": "Add judge_mode and judge_parallelization config parsing",
+      "status": "complete"
+    },
+    {
+      "step": 4,
+      "description": "Implement StratifiedAnnotationSampler for 100 samples",
+      "status": "complete"
+    },
+    {
+      "step": 5,
+      "description": "Run stratified sampling, export 100 perturbations for annotation",
+      "status": "pending",
+      "note": "Run: python main.py --config judge_evaluation_ccg --runner sample_annotation"
+    },
+    {
+      "step": 6,
+      "description": "HUMAN: Annotate 100 perturbations (~3.5 hours)",
+      "status": "pending",
+      "type": "human_task"
+    },
+    {
+      "step": 7,
+      "description": "Validate heuristic TCS vs human TCS (Pearson r > 0.4)",
+      "status": "pending",
+      "note": "Run: python main.py --config judge_evaluation_ccg --runner validate_tcs"
+    },
+    {
+      "step": 8,
+      "description": "Implement CriticalityScorer (hybrid: human + heuristic)",
+      "status": "complete"
+    },
+    {
+      "step": 9,
+      "description": "Implement CCGCalculator module",
+      "status": "complete"
+    },
+    {
+      "step": 10,
+      "description": "Run parallel judge evaluation (600 perturbations, parallelization=2)",
+      "status": "pending",
+      "note": "Run: python main.py --config judge_evaluation_ccg --runner judge_parallel"
+    },
+    {
+      "step": 11,
+      "description": "Compute TCS for all perturbations",
+      "status": "pending",
+      "note": "Integrated into ccg_v2 phase"
+    },
+    {
+      "step": 12,
+      "description": "Compute CCG metrics",
+      "status": "pending",
+      "note": "Run: python main.py --config judge_evaluation_ccg --runner ccg_v2"
+    },
+    {
+      "step": 13,
+      "description": "Run statistical analysis (ANOVA, Tukey HSD, effect sizes)",
+      "status": "pending",
+      "note": "Included in ccg_v2 phase"
+    },
+    {
+      "step": 14,
+      "description": "Generate visualizations (heatmap, scatter, violin)",
+      "status": "pending"
+    },
+    {
+      "step": 15,
+      "description": "Analyze results against hypothesis",
+      "status": "pending"
+    },
+    {
+      "step": 16,
+      "description": "Final review and mark complete",
+      "status": "pending"
+    }
+  ],
+  "artifacts_created": [
+    "agent_tasks/05_judge_evaluation_ccg/REQUIREMENTS.MD",
+    "agent_tasks/05_judge_evaluation_ccg/IMPLEMENTATION_PROMPT.md",
+    "agent_tasks/05_judge_evaluation_ccg/state.json",
+    "config/experiments/judge_evaluation_ccg.json",
+    "src/judges/parallel_evaluator.py",
+    "src/annotation/stratified_sampler.py",
+    "src/metrics/criticality_scorer.py",
+    "src/metrics/ccg_calculator.py",
+    "tests/test_parallel_evaluator.py",
+    "tests/test_stratified_sampler.py",
+    "tests/test_criticality_scorer.py",
+    "tests/test_ccg_calculator.py"
+  ],
+  "blockers": [],
+  "config": {
+    "judge_mode": "batch",
+    "judge_parallelization": 2,
+    "judge_model": "claude-sonnet-4-5",
+    "total_perturbations": 600,
+    "human_annotation_samples": 100
+  },
+  "human_annotation": {
+    "total_samples": 100,
+    "sampling_strategy": "stratified by condition > benchmark > quality_tier",
+    "estimated_time": "3.5 hours",
+    "output_path": "data/annotations/human_tcs.json"
+  },
+  "dependencies": {
+    "source_experiment": "final_exp_perturbation_quality",
+    "required_data": "600 primary samples with quality scores"
+  },
+  "test_results": {
+    "test_parallel_evaluator.py": "7/7 passed",
+    "test_stratified_sampler.py": "12/12 passed",
+    "test_criticality_scorer.py": "15/15 passed",
+    "test_ccg_calculator.py": "22/22 passed",
+    "total": "56/56 passed"
+  },
+  "notes": [
+    "Implementation complete - all 4 modules created with full test coverage",
+    "Parallelization changed from 5 to 2 per user request",
+    "100 samples stratified across 11 conditions × 3 benchmarks × 3 quality tiers",
+    "Will validate heuristic TCS against human TCS (need Pearson r > 0.4)",
+    "Hybrid TCS: human for 100, calibrated heuristic for remaining 500",
+    "Run order: sample_annotation -> annotate -> validate_tcs -> judge_parallel -> ccg_v2",
+    "Updated: sample_annotation now flags samples in MongoDB (selected_for_annotation=True)",
+    "Updated: annotate phase fetches flagged samples from MongoDB for interactive annotation"
+  ]
+}

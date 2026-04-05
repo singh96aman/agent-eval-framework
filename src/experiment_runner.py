@@ -124,6 +124,13 @@ class ExperimentRunner:
             'validate_perturbations': 'validate_perturbations',
             'evaluate_judges': 'evaluate_judges',
             'compute_ccg': 'compute_ccg',
+            # New phases for Task 05
+            'sample_annotation': 'sample_annotation',
+            'annotate': 'annotate',  # Interactive human annotation
+            'judge_parallel': 'judge_parallel',
+            'validate_tcs': 'validate_tcs',
+            'ccg_v2': 'compute_ccg_v2',
+            'compute_ccg_v2': 'compute_ccg_v2',
         }
 
         # 'all' means run everything in order
@@ -176,6 +183,11 @@ class ExperimentRunner:
             'compute_ccg': self._phase_compute_ccg,
             'analyze': self._phase_analyze,
             'visualize': self._phase_visualize,
+            # New phases for Task 05
+            'sample_annotation': self._phase_sample_annotation,
+            'judge_parallel': self._phase_judge_parallel,
+            'validate_tcs': self._phase_validate_tcs,
+            'compute_ccg_v2': self._phase_compute_ccg_v2,
         }
 
         # Run each phase in sequence
@@ -1141,11 +1153,26 @@ class ExperimentRunner:
 
         # Get annotation configuration
         annotation_config = self.config.get('annotation', {})
+        human_annotation_config = self.config.get('human_annotation', {})
         num_samples = annotation_config.get('num_samples', 25)
         annotator_id = annotation_config.get('annotator_id', 'default')
         sampling_strategy = annotation_config.get('sampling_strategy', 'random')
         skip_annotated = annotation_config.get('skip_annotated', True)
         random_seed = annotation_config.get('random_seed', 42)
+
+        # First check for pre-selected samples (from sample_annotation phase)
+        print("📥 Checking for pre-selected annotation samples...")
+        preselected = list(self.storage.db['perturbations'].find({
+            'selected_for_annotation': True
+        }))
+
+        if preselected:
+            print(f"   Found {len(preselected)} pre-selected samples")
+            return self._run_annotation_on_preselected(preselected, annotator_id, skip_annotated)
+
+        # Fall back to legacy sampling behavior
+        print("   No pre-selected samples found, using legacy sampling")
+        print()
 
         print(f"📊 Configuration:")
         print(f"   Samples to annotate: {num_samples}")
@@ -1309,6 +1336,109 @@ class ExperimentRunner:
             print(f"   Min: {min(tcs_scores):.2f}")
             print(f"   Max: {max(tcs_scores):.2f}")
 
+        print()
+
+    def _run_annotation_on_preselected(
+        self,
+        preselected: list,
+        annotator_id: str,
+        skip_annotated: bool
+    ):
+        """
+        Run annotation on pre-selected samples from MongoDB.
+
+        This method handles samples that were flagged by the sample_annotation phase
+        with `selected_for_annotation=True`.
+
+        Args:
+            preselected: List of perturbation documents from MongoDB
+            annotator_id: ID of the annotator
+            skip_annotated: Whether to skip already-annotated samples
+        """
+        from src.annotation.tools import AnnotationInterface
+        from collections import Counter
+
+        # Filter out already annotated if requested
+        if skip_annotated:
+            annotated_ids = set(
+                self.storage.db['annotations'].distinct(
+                    'perturbation_id',
+                    {'annotator_id': annotator_id}
+                )
+            )
+            unannotated = [
+                p for p in preselected
+                if p['perturbation_id'] not in annotated_ids
+            ]
+            print(f"   Already annotated: {len(preselected) - len(unannotated)}")
+            print(f"   Remaining to annotate: {len(unannotated)}")
+            samples_to_annotate = unannotated
+        else:
+            samples_to_annotate = preselected
+
+        if not samples_to_annotate:
+            print("\n✅ All pre-selected samples already annotated!")
+            return
+
+        # Show distribution
+        type_counts = Counter(p['perturbation_type'] for p in samples_to_annotate)
+        pos_counts = Counter(p['perturbation_position'] for p in samples_to_annotate)
+
+        print(f"\n📊 Sample distribution:")
+        print(f"   By type: {dict(type_counts)}")
+        print(f"   By position: {dict(pos_counts)}")
+        print()
+
+        # Dry run check
+        if self.dry_run:
+            print("🔍 DRY RUN: Would annotate the following perturbations:")
+            for i, pert in enumerate(samples_to_annotate[:10], 1):
+                pert_id = pert['perturbation_id']
+                ptype = pert['perturbation_type']
+                ppos = pert['perturbation_position']
+                print(f"   {i}. {pert_id} ({ptype}, {ppos})")
+            if len(samples_to_annotate) > 10:
+                print(f"   ... and {len(samples_to_annotate) - 10} more")
+            return
+
+        # Create annotation interface
+        interface = AnnotationInterface(storage=self.storage)
+
+        # Start annotation session
+        print("=" * 70)
+        print("🎯 STARTING ANNOTATION SESSION")
+        print("=" * 70)
+        print(f"You will annotate {len(samples_to_annotate)} perturbations")
+        print()
+        print("For each perturbation, you will see:")
+        print("  - The original trajectory steps")
+        print("  - Side-by-side comparison of original vs perturbed step")
+        print("  - Steps that occurred after the perturbation")
+        print()
+        print("Then answer:")
+        print("  1. Did the perturbation cause task failure? (yes/no)")
+        print("  2. How many errors occurred after the perturbation? (count)")
+        print()
+        input("Press Enter to begin...")
+        print()
+
+        # Run batch annotation
+        perturbation_ids = [p['perturbation_id'] for p in samples_to_annotate]
+        completed = interface.batch_annotate(perturbation_ids, annotator_id)
+
+        # Summary
+        print("\n" + "=" * 70)
+        print("✅ ANNOTATION SESSION COMPLETE")
+        print("=" * 70)
+        print(f"Completed: {len(completed)}/{len(samples_to_annotate)} annotations")
+        print()
+
+        if completed:
+            tcs_scores = [ann.compute_tcs() for ann in completed]
+            print(f"True Criticality Scores:")
+            print(f"   Mean: {sum(tcs_scores) / len(tcs_scores):.2f}")
+            print(f"   Min: {min(tcs_scores):.2f}")
+            print(f"   Max: {max(tcs_scores):.2f}")
         print()
 
     def _phase_evaluate_judges(self):
@@ -1560,3 +1690,425 @@ class ExperimentRunner:
         print("✅ VISUALIZATION COMPLETE")
         print("=" * 70)
         print()
+
+    # ======================================================================
+    # TASK 05: NEW PHASES FOR JUDGE EVALUATION & CCG ANALYSIS
+    # ======================================================================
+
+    def _phase_sample_annotation(self):
+        """Phase: Sample perturbations for human annotation."""
+        print("📋 PHASE: SAMPLE FOR ANNOTATION")
+        print("=" * 70)
+        print()
+
+        from src.annotation.stratified_sampler import StratifiedAnnotationSampler
+        from pathlib import Path
+
+        # Get config
+        annotation_config = self.config.get("human_annotation", {})
+        source_config = self.config.get("source_experiment", {})
+
+        total_samples = annotation_config.get("total_samples", 100)
+        output_dir = annotation_config.get("output_dir", "data/annotations")
+        random_seed = annotation_config.get("random_seed", 42)
+
+        # Determine source experiment
+        source_experiment_id = source_config.get("experiment_id", self.experiment_id)
+
+        print(f"Source experiment: {source_experiment_id}")
+        print(f"Target samples: {total_samples}")
+        print(f"Output directory: {output_dir}")
+        print()
+
+        # Load perturbations from source experiment
+        print("📥 Loading perturbations...")
+        perturbations = list(self.storage.get_perturbations_by_experiment(
+            source_experiment_id
+        ))
+
+        # Filter to primary only if configured
+        use_primary_only = source_config.get("use_primary_only", True)
+        if use_primary_only:
+            perturbations = [
+                p for p in perturbations
+                if p.get("is_primary_for_experiment", False)
+            ]
+            print(f"   Filtered to primary: {len(perturbations)} perturbations")
+        else:
+            print(f"   Total perturbations: {len(perturbations)}")
+
+        if not perturbations:
+            print("❌ No perturbations found for sampling")
+            return
+
+        # Run stratified sampling
+        sampler = StratifiedAnnotationSampler(perturbations, random_seed=random_seed)
+        selected = sampler.sample(total=total_samples)
+
+        # Print distribution report
+        sampler.print_distribution_report(selected)
+
+        # Flag in MongoDB and export backup to JSON
+        if not self.dry_run:
+            # Flag in MongoDB (primary storage)
+            sampler.flag_in_mongodb(selected, self.storage, self.experiment_id)
+
+            # Export to JSON (backup)
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            output_path = f"{output_dir}/annotation_samples.json"
+            sampler.export_for_annotation(selected, output_path)
+
+            print(f"\n📁 Local backup exported to: {output_path}")
+        else:
+            print("\n🔍 DRY RUN: Would flag samples in MongoDB and export backup")
+
+        print("\n" + "=" * 70)
+        print("✅ ANNOTATION SAMPLING COMPLETE")
+        print("=" * 70)
+        print("\nNext step: Run 'annotate' phase to begin human annotation")
+        print("  python main.py --config judge_evaluation_ccg --runner annotate")
+        print()
+
+    def _phase_judge_parallel(self):
+        """Phase: Run parallel judge evaluation."""
+        print("⚖️  PHASE: PARALLEL JUDGE EVALUATION")
+        print("=" * 70)
+        print()
+
+        from src.judges.parallel_evaluator import ParallelJudgeEvaluator
+        from src.judges.claude_judge import create_claude_judge
+
+        # Get configurations
+        judges_config = self.config.get("judges", {})
+        source_config = self.config.get("source_experiment", {})
+        models_config = judges_config.get("models", [])
+
+        if not models_config:
+            print("❌ No judges configured")
+            return
+
+        # Determine source experiment for perturbations
+        source_experiment_id = source_config.get("experiment_id", self.experiment_id)
+
+        # Load perturbations
+        print("📥 Loading perturbations...")
+
+        # Check if we should only evaluate annotated samples
+        use_annotated_only = source_config.get("use_annotated_only", True)
+
+        if use_annotated_only:
+            # Only evaluate samples that were selected for annotation (with ground truth TCS)
+            perturbations = list(self.storage.db['perturbations'].find({
+                'selected_for_annotation': True
+            }))
+            print(f"   Loaded {len(perturbations)} annotated perturbations (ground truth TCS)")
+        else:
+            # Load all from source experiment
+            perturbations = list(self.storage.get_perturbations_by_experiment(
+                source_experiment_id
+            ))
+
+            # Filter to primary only if configured
+            use_primary_only = source_config.get("use_primary_only", True)
+            if use_primary_only:
+                perturbations = [
+                    p for p in perturbations
+                    if p.get("is_primary_for_experiment", False)
+                ]
+            print(f"   Loaded {len(perturbations)} perturbations")
+
+        if not perturbations:
+            print("❌ No perturbations to evaluate")
+            return
+
+        # Evaluate with each judge
+        for model_config in models_config:
+            name = model_config.get("name", "unknown")
+            print(f"\n{'=' * 70}")
+            print(f"EVALUATING WITH: {name}")
+            print(f"{'=' * 70}")
+
+            try:
+                # Create judge
+                if 'claude' in name.lower():
+                    judge = create_claude_judge(model_config)
+                else:
+                    print(f"   ⚠️  Unsupported judge type: {name}")
+                    continue
+
+                # Create parallel evaluator
+                evaluator = ParallelJudgeEvaluator(
+                    judge=judge,
+                    storage=self.storage,
+                    config=judges_config
+                )
+
+                if self.dry_run:
+                    print("   🔍 DRY RUN: Would evaluate perturbations")
+                    continue
+
+                # Run evaluation
+                results = evaluator.evaluate_all(
+                    perturbations=perturbations,
+                    experiment_id=self.experiment_id,
+                    resume=True
+                )
+
+                # Print summary
+                summary = evaluator.get_evaluation_summary(self.experiment_id)
+                print(f"\nSummary for {name}:")
+                print(f"   Evaluated: {summary.get('count', 0)}")
+                print(f"   Average score: {summary.get('avg_score', 0):.1f}")
+                print(f"   Average JPS: {summary.get('avg_jps', 0):.1f}")
+
+            except Exception as e:
+                print(f"   ❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print("\n" + "=" * 70)
+        print("✅ PARALLEL JUDGE EVALUATION COMPLETE")
+        print("=" * 70)
+        print()
+
+    def _phase_validate_tcs(self):
+        """Phase: Validate heuristic TCS against human annotations."""
+        print("📊 PHASE: VALIDATE HEURISTIC TCS")
+        print("=" * 70)
+        print()
+
+        from src.metrics.criticality_scorer import CriticalityScorer
+        from pathlib import Path
+        import json
+
+        # Get config
+        crit_config = self.config.get("criticality_scoring", {})
+        annotation_path = crit_config.get("human_annotation_path", "data/annotations/human_tcs.json")
+
+        # First, try to export annotations from MongoDB to the expected file
+        # Only fetch annotations for perturbations selected for this experiment
+        print("📥 Fetching annotations from MongoDB...")
+
+        # Get perturbation IDs that were selected for annotation
+        selected_pert_ids = self.storage.db['perturbations'].distinct(
+            'perturbation_id',
+            {'selected_for_annotation': True}
+        )
+
+        # Fetch only those annotations
+        annotations_from_db = list(self.storage.db['annotations'].find({
+            'perturbation_id': {'$in': selected_pert_ids}
+        }))
+
+        if annotations_from_db:
+            print(f"   Found {len(annotations_from_db)} annotations in MongoDB")
+
+            # Get perturbation metadata for each annotation
+            export_data = []
+            for ann in annotations_from_db:
+                pert_id = ann.get('perturbation_id')
+                pert_record = self.storage.db['perturbations'].find_one(
+                    {'perturbation_id': pert_id}
+                )
+
+                if pert_record:
+                    export_data.append({
+                        "perturbation_id": pert_id,
+                        "perturbation_type": pert_record.get('perturbation_type'),
+                        "perturbation_position": pert_record.get('perturbation_position'),
+                        "annotation": {
+                            "task_success_degradation": ann.get('task_success_degradation'),
+                            "subsequent_error_rate": ann.get('subsequent_error_rate'),
+                            "tcs_score": ann.get('tcs_score'),  # Pre-computed TCS from MongoDB
+                            "notes": ann.get('notes', '')
+                        }
+                    })
+
+            # Export to JSON file
+            Path(annotation_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(annotation_path, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            print(f"   Exported to: {annotation_path}")
+
+        elif not Path(annotation_path).exists():
+            print("❌ No annotations found in MongoDB or local file")
+            print(f"   Expected file: {annotation_path}")
+            print("   Run 'annotate' phase first to complete annotations")
+            return
+
+        print(f"\nLoading annotations from: {annotation_path}")
+
+        # Create scorer in hybrid mode
+        scorer = CriticalityScorer({
+            "mode": "hybrid",
+            "human_annotation_path": annotation_path,
+            "heuristic_tcs": crit_config.get("heuristic_tcs", {})
+        })
+
+        # Print validation report
+        scorer.print_validation_report()
+
+        print("\n" + "=" * 70)
+        print("✅ TCS VALIDATION COMPLETE")
+        print("=" * 70)
+        print()
+
+    def _phase_compute_ccg_v2(self):
+        """Phase: Compute CCG using new calculator with statistical analysis."""
+        print("📊 PHASE: COMPUTE CCG (V2)")
+        print("=" * 70)
+        print()
+
+        from src.metrics.criticality_scorer import CriticalityScorer
+        from src.metrics.ccg_calculator import CCGCalculator
+        from pathlib import Path
+        import json
+
+        # Get configurations
+        source_config = self.config.get("source_experiment", {})
+        crit_config = self.config.get("criticality_scoring", {})
+        ccg_config = self.config.get("ccg_analysis", {})
+        judges_config = self.config.get("judges", {})
+
+        # Determine source experiment
+        source_experiment_id = source_config.get("experiment_id", self.experiment_id)
+
+        # Get judge names
+        models_config = judges_config.get("models", [])
+        judge_names = [m.get("name") for m in models_config]
+
+        if not judge_names:
+            print("❌ No judges configured")
+            return
+
+        print(f"Source experiment: {source_experiment_id}")
+        print(f"Judges to analyze: {judge_names}")
+        print()
+
+        # Load perturbations
+        print("📥 Loading perturbations...")
+
+        # Check if we should only use annotated samples (with ground truth TCS)
+        use_annotated_only = source_config.get("use_annotated_only", True)
+
+        if use_annotated_only:
+            perturbations = list(self.storage.db['perturbations'].find({
+                'selected_for_annotation': True
+            }))
+            print(f"   Loaded {len(perturbations)} annotated perturbations")
+        else:
+            perturbations = list(self.storage.get_perturbations_by_experiment(
+                source_experiment_id
+            ))
+            use_primary_only = source_config.get("use_primary_only", True)
+            if use_primary_only:
+                perturbations = [
+                    p for p in perturbations
+                    if p.get("is_primary_for_experiment", False)
+                ]
+            print(f"   Loaded {len(perturbations)} perturbations")
+
+        if not perturbations:
+            print("❌ No perturbations found")
+            return
+
+        # Initialize criticality scorer
+        print("\n📊 Computing TCS values...")
+        scorer = CriticalityScorer(crit_config)
+        tcs_values = scorer.compute_batch_with_ids(perturbations)
+        print(f"   Computed TCS for {len(tcs_values)} perturbations")
+
+        # If human annotations exist, validate heuristic
+        if scorer.human_annotations:
+            print(f"   Human annotations loaded: {len(scorer.human_annotations)}")
+            validation = scorer.validate_heuristic()
+            print(f"   Heuristic correlation: {validation.get('pearson_r', 'N/A'):.3f}")
+
+        # Initialize CCG calculator
+        calculator = CCGCalculator(ccg_config)
+
+        # Compute CCG for each judge
+        output_dir = Path(ccg_config.get("output_dir", f"results/{self.experiment_id}/ccg_analysis"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        for judge_name in judge_names:
+            print(f"\n{'=' * 70}")
+            print(f"ANALYZING: {judge_name}")
+            print(f"{'=' * 70}")
+
+            # Load judge evaluations
+            evaluations = self.storage.get_judge_outputs(
+                experiment_id=self.experiment_id,
+                judge_name=judge_name
+            )
+
+            if not evaluations:
+                print(f"   ⚠️  No evaluations found for {judge_name}")
+                continue
+
+            print(f"   Loaded {len(evaluations)} evaluations")
+
+            # Map evaluations to perturbations
+            eval_lookup = {}
+            for e in evaluations:
+                traj_id = e.get("trajectory_id")
+                if traj_id not in eval_lookup:
+                    eval_lookup[traj_id] = e
+
+            # Build evaluation list with perturbation metadata
+            eval_data = []
+            for p in perturbations:
+                perturbed_traj_id = p.get("perturbed_trajectory_id")
+                if perturbed_traj_id in eval_lookup:
+                    e = eval_lookup[perturbed_traj_id]
+                    eval_data.append({
+                        "perturbation_id": p.get("perturbation_id"),
+                        "overall_score": e.get("overall_score", 50),
+                        "perturbation_type": p.get("perturbation_type"),
+                        "perturbation_position": p.get("perturbation_position"),
+                        "benchmark": self._get_benchmark_from_trajectory_id(
+                            p.get("original_trajectory_id", "")
+                        )
+                    })
+
+            print(f"   Matched {len(eval_data)} perturbations with evaluations")
+
+            if not eval_data:
+                continue
+
+            # Compute CCG (returns tuple with DataFrame and exclusion stats)
+            df, exclusion_stats = calculator.compute_all(eval_data, tcs_values)
+
+            # Generate report (include exclusion stats for data quality section)
+            report = calculator.generate_report(df, exclusion_stats)
+
+            # Print summary
+            calculator.print_summary(report)
+
+            # Save results
+            if not self.dry_run:
+                # Save raw results
+                df.to_csv(output_dir / f"ccg_raw_{judge_name}.csv", index=False)
+
+                # Save report
+                report_serializable = self._convert_for_json(report)
+                with open(output_dir / f"ccg_report_{judge_name}.json", 'w') as f:
+                    json.dump(report_serializable, f, indent=2)
+
+                print(f"\n   Saved results to {output_dir}")
+
+        print("\n" + "=" * 70)
+        print("✅ CCG COMPUTATION (V2) COMPLETE")
+        print("=" * 70)
+        print()
+
+    def _get_benchmark_from_trajectory_id(self, traj_id: str) -> str:
+        """Extract benchmark name from trajectory ID."""
+        traj_id = traj_id.lower()
+        if "toolbench" in traj_id:
+            return "toolbench"
+        elif "gaia" in traj_id:
+            return "gaia"
+        elif "swe" in traj_id:
+            return "swebench"
+        return "unknown"

@@ -233,13 +233,9 @@ class AnnotationInterface:
             print()
             print(f"  🔧 Tool: {step.tool_name}")
             if step.tool_input:
-                # Show complete input
+                # Show complete input (no truncation)
                 input_str = str(step.tool_input)
-                if len(input_str) > 200:
-                    # Pretty print if it's long
-                    print(f"  📥 Input: {input_str[:200]}...")
-                else:
-                    print(f"  📥 Input: {input_str}")
+                print(f"  📥 Input: {input_str}")
 
         print()  # Blank line between steps
 
@@ -252,51 +248,35 @@ class AnnotationInterface:
         tool_name: Optional[str] = None
     ) -> None:
         """
-        Display side-by-side comparison of original vs perturbed step.
+        Display sequential comparison of original vs perturbed step.
 
-        Table structure: 80 chars total
-        ║ (2) + content (36) + ║ (3) + content (36) + ║ (2) = 79
-        But borders add 1 extra, so 80 total
+        Shows full content without truncation for accurate annotation.
         """
-        # Top border
-        print("\n╔" + "═" * 78 + "╗")
-
-        # Title
-        title = f"🔴 PERTURBATION AT STEP {step_num} ({step_type.upper()})"
-        print(f"║ {title:<77}║")
-
-        # Separator
-        print("╠" + "═" * 78 + "╣")
-        print("║" + " " * 78 + "║")
-
-        # Subtitle
-        subtitle = "Comparing ORIGINAL (left) vs PERTURBED (right):"
-        print(f"║  {subtitle:<76}║")
-        print("║" + " " * 78 + "║")
-
-        # Column headers - must match border widths (38 + 39)
-        print("╠" + "═" * 38 + "╦" + "═" * 39 + "╣")
-        print("║  ✅ ORIGINAL" + " " * 24 + "║  ⚠️  PERTURBED" + " " * 23 + "║")
-        print("╠" + "═" * 38 + "╬" + "═" * 39 + "╣")
-
-        # Split into lines for side-by-side display
-        # Left column: 38 total (2 spaces + 36 chars text)
-        # Right column: 39 total (2 spaces + 37 chars text)
-        orig_lines = self._wrap_text(original, 36)
-        pert_lines = self._wrap_text(perturbed, 37)
-
-        max_lines = max(len(orig_lines), len(pert_lines))
-        for i in range(max_lines):
-            orig_line = orig_lines[i] if i < len(orig_lines) else ""
-            pert_line = pert_lines[i] if i < len(pert_lines) else ""
-            # Format: ║ + 2 spaces + 36 chars + ║ + 2 spaces + 37 chars + ║
-            print(f"║  {orig_line:<36}║  {pert_line:<37}║")
-
-        # Bottom border
-        print("╚" + "═" * 38 + "╩" + "═" * 39 + "╝")
+        print("\n" + "=" * 80)
+        print(f"🔴 PERTURBATION AT STEP {step_num} ({step_type.upper()})")
+        print("=" * 80)
 
         if tool_name:
-            print(f"\n🔧 Tool used: {tool_name}\n")
+            print(f"🔧 Tool: {tool_name}")
+        print()
+
+        # Show ORIGINAL (full content)
+        print("─" * 80)
+        print("✅ ORIGINAL STEP CONTENT:")
+        print("─" * 80)
+        print()
+        print(original)
+        print()
+
+        # Show PERTURBED (full content)
+        print("─" * 80)
+        print("⚠️  PERTURBED STEP CONTENT:")
+        print("─" * 80)
+        print()
+        print(perturbed)
+        print()
+
+        print("=" * 80)
 
     def _wrap_text(self, text: str, width: int) -> List[str]:
         """
