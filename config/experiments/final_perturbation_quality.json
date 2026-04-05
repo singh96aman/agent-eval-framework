@@ -1,7 +1,7 @@
 {
   "experiment": {
     "name": "Perturbation Quality Scoring & Primary Selection",
-    "experiment_id": "exp_perturbation_quality_v1",
+    "experiment_id": "final_exp_perturbation_quality",
     "description": "Score perturbation validity and select primary sample for human annotation",
     "version": "1.0",
     "created_by": "researcher",
@@ -54,7 +54,6 @@
     "types": ["planning", "tool_selection", "parameter", "data_reference"],
     "positions": ["early", "middle", "late"],
     "mode": "static",
-    "batch_size": 50,
     "conditions": [
       {"type": "planning", "position": "early"},
       {"type": "planning", "position": "middle"},
@@ -73,6 +72,7 @@
 
     "quality_scoring": {
       "enabled": true,
+      "judge_mode": "batch",
       "judge_model": {
         "name": "claude-sonnet-4-5",
         "provider": "aws_bedrock",

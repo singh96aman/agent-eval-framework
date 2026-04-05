@@ -45,7 +45,7 @@
     "num_per_trajectory": 1,
 
     "quality_scoring": {
-      "enabled": false,
+      "enabled": true,
       "judge_model": {
         "name": "claude-sonnet-4-5",
         "provider": "aws_bedrock",
@@ -73,7 +73,7 @@
 
   "execution": {
     "runner": "load,perturb",
-    "dry_run": true,
+    "dry_run": false,
     "verbose": true
   }
 }

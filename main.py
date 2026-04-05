@@ -192,6 +192,11 @@ Examples:
         action="store_true",
         help="Enable verbose output"
     )
+    parser.add_argument(
+        "--log-bedrock",
+        action="store_true",
+        help="Log Bedrock API calls with latency"
+    )
 
     args = parser.parse_args()
 
@@ -238,6 +243,10 @@ Examples:
     if args.resume:
         config['execution']['resume'] = True
         print("⚙️  Resume mode enabled")
+
+    if args.log_bedrock:
+        config['execution']['log_bedrock'] = True
+        print("⚙️  Bedrock API logging enabled")
 
     print()
 

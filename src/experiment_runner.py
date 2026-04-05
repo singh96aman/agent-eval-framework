@@ -495,7 +495,6 @@ class ExperimentRunner:
         pert_config = self.config.get("perturbations", {})
         mode = pert_config.get("mode", "static")
         conditions = pert_config.get("conditions", [])
-        batch_size = pert_config.get("batch_size", 10)
 
         # Get quality scoring config (nested inside perturbations)
         quality_config = pert_config.get("quality_scoring", {})
@@ -503,19 +502,23 @@ class ExperimentRunner:
         scorer = None
 
         if quality_scoring_enabled:
-            from src.scoring.quality_scorer import PerturbationQualityScorer
-            scorer = PerturbationQualityScorer(
-                model_config=quality_config.get("judge_model", {}),
-                metrics=quality_config.get("metrics", {}),
-                tier_thresholds=quality_config.get("tier_thresholds", {})
-            )
-            print("Quality scoring: ENABLED")
+            from src.scoring.quality_scorer import create_quality_scorer
+            from src.llm import get_bedrock_client
+            # Initialize central Bedrock client with logging if enabled
+            log_bedrock = self.config.get("execution", {}).get("log_bedrock", False)
+            get_bedrock_client(log_calls=log_bedrock)
+            scorer = create_quality_scorer(quality_config)
+            judge_mode = quality_config.get("judge_mode", "batch")
+            print(f"Quality scoring: ENABLED (mode: {judge_mode})")
+            if judge_mode == "batch":
+                print("   → 1 LLM call per perturbation (all metrics)")
+            else:
+                print("   → 5 LLM calls per perturbation (1 per metric)")
         else:
             print("Quality scoring: disabled")
 
         print(f"Perturbation mode: {mode}")
         print(f"Conditions to generate: {len(conditions)}")
-        print(f"Batch size: {batch_size} (memory-efficient storage)")
         print()
 
         # Load original trajectories from MongoDB
@@ -609,21 +612,55 @@ class ExperimentRunner:
         # Store in batches instead of accumulating all in memory
         batch = []
         batch_scores = []  # Quality scores for batch
-        success_count = 0
+        generated_count = 0
         failed_count = 0
         stored_count = 0
-        cache_hits = 0
+        skipped_count = 0  # Already scored in DB
         scored_count = 0
+        needs_scoring_count = 0  # Exists but no score
 
         for i, traj in enumerate(trajectories):
-            # Extract system prompt from trajectory metadata (if available)
             system_prompt = traj.metadata.get("system_prompt", None)
 
-            # Generate perturbations for this trajectory
+            # Track what needs processing for this trajectory
+            to_generate = []  # (condition, perturbation_id) - need to generate & score
+            to_score = []     # (perturbation_id, existing_record) - exists, needs score
+            already_done = 0  # Already has score
+
             for condition in conditions:
                 ptype = condition["type"]
                 position = condition["position"]
 
+                # Build perturbation_id to check DB
+                pert_id = generator.get_perturbation_id(
+                    trajectory_id=traj.trajectory_id,
+                    perturbation_type=ptype,
+                    position=position,
+                    experiment_id=self.experiment_id
+                )
+
+                # Check if exists in DB for THIS experiment
+                existing = self.storage.get_perturbation_for_experiment(
+                    pert_id, self.experiment_id
+                )
+
+                if existing and existing.get("quality_score"):
+                    # Already scored - skip entirely
+                    already_done += 1
+                elif existing:
+                    # Exists but no score - need to score
+                    to_score.append((pert_id, existing))
+                else:
+                    # Doesn't exist - need to generate
+                    to_generate.append((condition, pert_id))
+
+            skipped_count += already_done
+
+            # Generate new perturbations
+            new_perturbations = []  # (perturbation_id, perturbed_obj)
+            for condition, pert_id in to_generate:
+                ptype = condition["type"]
+                position = condition["position"]
                 try:
                     perturbed = generator.generate_perturbation(
                         trajectory=traj,
@@ -632,68 +669,94 @@ class ExperimentRunner:
                         system_prompt=system_prompt,
                         mode=mode
                     )
-
                     if perturbed:
-                        # Score quality inline if enabled
-                        quality_score = None
-                        if scorer:
-                            try:
-                                score_input = {
-                                    "original_step_content": perturbed.original_step_content,
-                                    "perturbed_step_content": perturbed.perturbed_step_content,
-                                    "perturbation_type": perturbed.perturbation_type,
-                                    "perturbation_position": perturbed.perturbation_position,
-                                    "perturbation_metadata": perturbed.perturbation_metadata
-                                }
-                                quality_score = scorer.score_perturbation(score_input)
-                                scored_count += 1
-                            except Exception as e:
-                                print(f"   ⚠️  Quality scoring failed: {e}")
-
-                        batch.append(perturbed)
-                        batch_scores.append(quality_score)
-                        success_count += 1
-
-                        # Store batch when it reaches batch_size
-                        if len(batch) >= batch_size:
-                            new_stored, new_cached = self._store_perturbation_batch(
-                                batch, self.experiment_id, generator,
-                                quality_scores=batch_scores
-                            )
-                            stored_count += new_stored
-                            cache_hits += new_cached
-                            batch.clear()
-                            batch_scores.clear()
+                        new_perturbations.append((pert_id, perturbed))
+                        generated_count += 1
                     else:
                         failed_count += 1
-
-                except Exception as e:
-                    print(
-                        f"   ⚠️  Failed to generate {ptype}/{position} "
-                        f"for {traj.trajectory_id}: {e}"
-                    )
+                except Exception:
+                    print(f"   Warning: Perturbation failed for {ptype}/{position} in {traj.trajectory_id}")
                     failed_count += 1
 
-            if (i + 1) % 10 == 0:
-                total_stored = stored_count + cache_hits
-                msg = f"   ... processed {i + 1}/{len(trajectories)} trajectories (stored: {total_stored})"
-                if scorer:
-                    msg += f" (scored: {scored_count})"
-                print(msg)
+            # Build list of things to score (new + existing without score)
+            to_score_inputs = []
 
-        # Store remaining batch
-        if batch:
-            new_stored, new_cached = self._store_perturbation_batch(
-                batch, self.experiment_id, generator,
-                quality_scores=batch_scores
-            )
+            # Add new perturbations
+            for pert_id, perturbed in new_perturbations:
+                to_score_inputs.append({
+                    "perturbation_id": pert_id,
+                    "original_step_content": perturbed.original_step_content,
+                    "perturbed_step_content": perturbed.perturbed_step_content,
+                    "perturbation_type": perturbed.perturbation_type,
+                    "perturbation_position": perturbed.perturbation_position,
+                    "perturbation_metadata": perturbed.perturbation_metadata,
+                    "_is_new": True,
+                    "_perturbed_obj": perturbed
+                })
+
+            # Add existing without score
+            for pert_id, existing in to_score:
+                to_score_inputs.append({
+                    "perturbation_id": pert_id,
+                    "original_step_content": existing.get("original_step_content", ""),
+                    "perturbed_step_content": existing.get("perturbed_step_content", ""),
+                    "perturbation_type": existing.get("perturbation_type", ""),
+                    "perturbation_position": existing.get("perturbation_position", ""),
+                    "perturbation_metadata": existing.get("perturbation_metadata", {}),
+                    "_is_new": False,
+                    "_perturbed_obj": None
+                })
+                needs_scoring_count += 1
+
+            # Score all that need scoring
+            if to_score_inputs and scorer:
+                try:
+                    scores = scorer.score_batch(to_score_inputs, batch_size=len(to_score_inputs))
+                    scored_count += len(scores)
+                except Exception as e:
+                    print(f"   ⚠️  Scoring failed for {traj.trajectory_id}: {e}")
+                    scores = [None] * len(to_score_inputs)
+            else:
+                scores = [None] * len(to_score_inputs)
+
+            # Store/update results
+            new_stored = 0
+            for item, score in zip(to_score_inputs, scores):
+                pert_id = item["perturbation_id"]
+
+                if item["_is_new"]:
+                    # New perturbation - store it
+                    perturbed = item["_perturbed_obj"]
+                    self._store_single_perturbation(
+                        perturbed, self.experiment_id, generator, score
+                    )
+                    new_stored += 1
+                else:
+                    # Existing - update with score
+                    if score:
+                        self.storage.perturbations.update_one(
+                            {"perturbation_id": pert_id},
+                            {"$set": {
+                                "quality_score": score,
+                                "quality_tier": score.get("quality_tier")
+                            }}
+                        )
+
             stored_count += new_stored
-            cache_hits += new_cached
-            batch.clear()
-            batch_scores.clear()
+
+            # Log trajectory completion
+            total_for_traj = already_done + len(to_score_inputs)
+            if total_for_traj > 0:
+                print(f"   ✓ {traj.trajectory_id}: {new_stored} new, {len(to_score)} updated, {already_done} skipped")
+
+            if (i + 1) % 10 == 0:
+                print(f"   ... processed {i + 1}/{len(trajectories)} trajectories")
 
         print()
-        print(f"   ✓ Generated {success_count} perturbations")
+        print(f"   ✓ Generated {generated_count} new perturbations")
+        print(f"   ✓ Skipped {skipped_count} (already scored)")
+        if needs_scoring_count > 0:
+            print(f"   ✓ Updated {needs_scoring_count} existing (added scores)")
         if scorer:
             print(f"   ✓ Scored {scored_count} perturbations")
         if failed_count > 0:
@@ -746,12 +809,62 @@ class ExperimentRunner:
         print("✅ PERTURBATION GENERATION COMPLETE")
         print("=" * 70)
         print(f"Experiment ID: {self.experiment_id}")
-        print(f"Total perturbations: {success_count}")
-        print(f"New stored: {stored_count}")
-        print(f"Cache hits: {cache_hits}")
+        print(f"New perturbations: {generated_count}")
+        print(f"Stored: {stored_count}")
+        print(f"Skipped (already scored): {skipped_count}")
         if scorer:
             print(f"Quality scored: {scored_count}")
         print()
+
+    def _store_single_perturbation(
+        self,
+        perturbed,
+        experiment_id: str,
+        generator,
+        quality_score: Optional[dict] = None
+    ):
+        """Store a single perturbation to MongoDB."""
+        # Store perturbed trajectory
+        perturbed_traj_dict = perturbed.perturbed_trajectory.to_dict()
+        perturbed_traj_dict["experiment_id"] = experiment_id
+        perturbed_traj_dict["is_perturbed"] = True
+
+        existing = self.storage.get_trajectory_by_experiment(
+            perturbed_traj_dict["trajectory_id"], experiment_id
+        )
+        if not existing:
+            self.storage.save_trajectory(perturbed_traj_dict)
+
+        # Create perturbation record
+        orig_traj_id = perturbed.original_trajectory.trajectory_id
+        pert_traj_id = perturbed.perturbed_trajectory.trajectory_id
+        perturbation_id = generator.get_perturbation_id(
+            trajectory_id=orig_traj_id,
+            perturbation_type=perturbed.perturbation_type,
+            position=perturbed.perturbation_position,
+            experiment_id=experiment_id
+        )
+
+        perturbation_record = {
+            "perturbation_id": perturbation_id,
+            "experiment_id": experiment_id,
+            "original_trajectory_id": orig_traj_id,
+            "perturbed_trajectory_id": pert_traj_id,
+            "perturbation_type": perturbed.perturbation_type,
+            "perturbation_position": perturbed.perturbation_position,
+            "perturbed_step_number": perturbed.perturbed_step_number,
+            "perturbation_metadata": perturbed.perturbation_metadata,
+            "original_step_content": perturbed.original_step_content,
+            "perturbed_step_content": perturbed.perturbed_step_content,
+            "is_primary_for_experiment": False,
+            "primary_selection_reason": None,
+        }
+
+        if quality_score:
+            perturbation_record["quality_score"] = quality_score
+            perturbation_record["quality_tier"] = quality_score.get("quality_tier")
+
+        self.storage.save_perturbation(perturbation_record)
 
     def _store_perturbation_batch(
         self,
@@ -800,7 +913,8 @@ class ExperimentRunner:
             perturbation_id = generator.get_perturbation_id(
                 trajectory_id=orig_traj_id,
                 perturbation_type=perturbed.perturbation_type,
-                position=perturbed.perturbation_position
+                position=perturbed.perturbation_position,
+                experiment_id=experiment_id
             )
 
             perturbation_record = {
@@ -828,6 +942,15 @@ class ExperimentRunner:
             # Check if perturbation already exists
             existing_pert = self.storage.get_perturbation(perturbation_id)
             if existing_pert:
+                # Update with quality score if we have one and it doesn't
+                if quality_score and not existing_pert.get("quality_score"):
+                    self.storage.perturbations.update_one(
+                        {"perturbation_id": perturbation_id},
+                        {"$set": {
+                            "quality_score": quality_score,
+                            "quality_tier": quality_score.get("quality_tier")
+                        }}
+                    )
                 cached += 1
             else:
                 self.storage.save_perturbation(perturbation_record)

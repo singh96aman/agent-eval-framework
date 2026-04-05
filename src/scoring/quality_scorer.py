@@ -1,31 +1,27 @@
 """
 Perturbation Quality Scorer - scores perturbation validity using LLM.
 
-This module scores perturbations based on validity criteria (not difficulty),
-including whether the content changed, is syntactically valid, semantically
-meaningful, matches the intended type, and represents a realistic error.
+Modes:
+- single: N LLM calls per perturbation (1 per custom metric)
+- batch: 1 LLM call per perturbation (all metrics at once)
 """
 
 import json
 import re
-import time
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
-import boto3
-from botocore.exceptions import ClientError
-
-from .prompts import format_quality_scoring_prompt
+from src.llm import get_bedrock_client
+from .prompts import format_metric_prompt, format_batch_prompt, get_metric_names
 
 
 class PerturbationQualityScorer:
     """
     Scores perturbation validity using LLM-as-Judge.
 
-    Usage:
-        scorer = PerturbationQualityScorer(model_config={...})
-        score = scorer.score_perturbation(perturbation_doc)
-        # Returns: {"total_score": 6, "content_changed": 1, ...}
+    Modes:
+    - single: 1 LLM call per metric (N calls for N metrics)
+    - batch: 1 LLM call for all metrics
     """
 
     def __init__(
@@ -33,28 +29,28 @@ class PerturbationQualityScorer:
         model_config: Dict[str, Any],
         metrics: Optional[Dict[str, Any]] = None,
         tier_thresholds: Optional[Dict[str, int]] = None,
-        region_name: str = "us-east-1"
+        judge_mode: str = "batch"
     ):
         """
         Initialize quality scorer with LLM model config.
 
         Args:
-            model_config: LLM model configuration dict with keys:
-                - model_id: Bedrock model ID
-                - config: Dict with temperature, max_tokens
+            model_config: LLM model configuration dict
             metrics: Quality metric definitions (optional)
             tier_thresholds: Score thresholds for quality tiers
-            region_name: AWS region for Bedrock
+            judge_mode: "single" (1 call per metric) or "batch" (1 call for all metrics)
         """
         self.model_config = model_config
         self.model_id = model_config.get("model_id")
         self.model_name = model_config.get("name", "quality-scorer")
+        self.judge_mode = judge_mode
 
         config = model_config.get("config", {})
         self.temperature = config.get("temperature", 0.3)
         self.max_tokens = config.get("max_tokens", 500)
 
         self.metrics = metrics or {}
+        self.metric_names = get_metric_names()
         self.tier_thresholds = tier_thresholds or {
             "high": 6,
             "medium": 4,
@@ -62,85 +58,123 @@ class PerturbationQualityScorer:
             "invalid": 0
         }
 
-        self.bedrock = boto3.client(
-            service_name='bedrock-runtime',
-            region_name=region_name
-        )
+        # Use central Bedrock client (logging controlled globally via --log-bedrock)
+        self.bedrock = get_bedrock_client()
 
-        print(f"Initialized PerturbationQualityScorer: {self.model_name}")
+        print(f"Initialized PerturbationQualityScorer: {self.model_name} (mode: {judge_mode})")
 
-    def score_perturbation(
-        self,
-        perturbation: Dict[str, Any],
-        retry_count: int = 0,
-        max_retries: int = 2
-    ) -> Dict[str, Any]:
+    def score_perturbation(self, perturbation: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Score a single perturbation's validity.
+        Score a single perturbation.
 
         Args:
-            perturbation: Perturbation document with keys:
-                - original_step_content: Original step content
-                - perturbed_step_content: Perturbed step content
-                - perturbation_type: Type of perturbation
-                - perturbation_position: Position (early/middle/late)
-                - perturbation_metadata: Additional metadata
-            retry_count: Current retry attempt
-            max_retries: Maximum retry attempts
+            perturbation: Perturbation document
 
         Returns:
-            Quality score dict with keys:
-                - content_changed (0-1)
-                - syntactically_valid (0-1)
-                - semantically_meaningful (0-1)
-                - type_matches_intent (0-1)
-                - realistic_error (0-3)
-                - total_score (0-7)
-                - reasoning (str)
-                - quality_tier (high/medium/low/invalid)
-                - scored_by (str)
-                - scored_at (ISO timestamp)
+            Quality score dict with all metrics
         """
-        original_content = perturbation.get("original_step_content", "")
-        perturbed_content = perturbation.get("perturbed_step_content", "")
-        perturbation_type = perturbation.get("perturbation_type", "unknown")
-        perturbation_position = perturbation.get("perturbation_position", "unknown")
+        if self.judge_mode == "single":
+            return self._score_single_mode(perturbation)
+        else:
+            return self._score_batch_mode(perturbation)
+
+    def _score_single_mode(self, perturbation: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Score perturbation with 1 LLM call per metric (N calls total).
+        """
+        original = perturbation.get("original_step_content", "")
+        perturbed = perturbation.get("perturbed_step_content", "")
+        p_type = perturbation.get("perturbation_type", "unknown")
+        p_position = perturbation.get("perturbation_position", "unknown")
         metadata = perturbation.get("perturbation_metadata", {})
+        description = metadata.get("description", "")
 
-        description = metadata.get("description", None)
+        score = {}
+        total_tokens = 0
+        total_time_ms = 0
+        reasonings = []
 
-        prompt = format_quality_scoring_prompt(
-            original_step_content=original_content,
-            perturbed_step_content=perturbed_content,
-            perturbation_type=perturbation_type,
-            perturbation_position=perturbation_position,
+        # Make 1 LLM call per metric
+        for metric_name in self.metric_names:
+            prompt = format_metric_prompt(
+                metric_name=metric_name,
+                original_step_content=original,
+                perturbed_step_content=perturbed,
+                perturbation_type=p_type,
+                perturbation_position=p_position,
+                perturbation_description=description
+            )
+
+            try:
+                result = self._call_llm(prompt)
+                response_text = result.get("response", "")
+                total_tokens += result.get("tokens_used", 0)
+                total_time_ms += result.get("time_ms", 0)
+
+                metric_score = self._parse_single_metric_response(
+                    response_text, metric_name
+                )
+                score[metric_name] = metric_score["value"]
+                if metric_score.get("reasoning"):
+                    reasonings.append(f"{metric_name}: {metric_score['reasoning']}")
+
+            except Exception as e:
+                score[metric_name] = 0
+                reasonings.append(f"{metric_name}: ERROR - {str(e)}")
+
+        # Calculate total and add metadata
+        score["total_score"] = (
+            score.get("content_changed", 0) +
+            score.get("syntactically_valid", 0) +
+            score.get("semantically_meaningful", 0) +
+            score.get("type_matches_intent", 0) +
+            score.get("realistic_error", 0)
+        )
+        score["reasoning"] = " | ".join(reasonings)
+        score["quality_tier"] = self._assign_tier(score["total_score"])
+        score["scored_by"] = self.model_name
+        score["scored_at"] = datetime.now(timezone.utc).isoformat()
+        score["tokens_used"] = total_tokens
+        score["time_ms"] = total_time_ms
+        score["llm_calls"] = len(self.metric_names)
+
+        return score
+
+    def _score_batch_mode(self, perturbation: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Score perturbation with 1 LLM call for all metrics.
+        """
+        original = perturbation.get("original_step_content", "")
+        perturbed = perturbation.get("perturbed_step_content", "")
+        p_type = perturbation.get("perturbation_type", "unknown")
+        p_position = perturbation.get("perturbation_position", "unknown")
+        metadata = perturbation.get("perturbation_metadata", {})
+        description = metadata.get("description", "")
+
+        prompt = format_batch_prompt(
+            original_step_content=original,
+            perturbed_step_content=perturbed,
+            perturbation_type=p_type,
+            perturbation_position=p_position,
             perturbation_description=description
         )
 
         try:
-            llm_result = self._call_llm(prompt)
-            response_text = llm_result.get("response", "")
+            result = self._call_llm(prompt)
+            response_text = result.get("response", "")
 
-            score = self._parse_score_response(response_text)
-
+            score = self._parse_batch_response(response_text)
             score["quality_tier"] = self._assign_tier(score["total_score"])
             score["scored_by"] = self.model_name
             score["scored_at"] = datetime.now(timezone.utc).isoformat()
-            score["tokens_used"] = llm_result.get("tokens_used", 0)
-            score["time_ms"] = llm_result.get("time_ms", 0)
+            score["tokens_used"] = result.get("tokens_used", 0)
+            score["time_ms"] = result.get("time_ms", 0)
+            score["llm_calls"] = 1
 
             return score
 
         except Exception as e:
-            if retry_count < max_retries:
-                time.sleep(1)
-                return self.score_perturbation(
-                    perturbation,
-                    retry_count=retry_count + 1,
-                    max_retries=max_retries
-                )
-            else:
-                return self._default_error_score(str(e))
+            return self._default_error_score(str(e))
 
     def score_batch(
         self,
@@ -149,125 +183,64 @@ class PerturbationQualityScorer:
         progress_callback: Optional[callable] = None
     ) -> List[Dict[str, Any]]:
         """
-        Score multiple perturbations with progress tracking.
+        Score multiple perturbations.
 
         Args:
             perturbations: List of perturbation documents
-            batch_size: Batch size for progress reporting
-            progress_callback: Optional callback(scored, total) for progress
+            batch_size: Not used (kept for API compatibility)
+            progress_callback: Optional progress callback
 
         Returns:
-            List of quality scores in same order as input
+            List of quality scores
         """
         scores = []
-        total = len(perturbations)
-
-        for i, perturbation in enumerate(perturbations):
+        for perturbation in perturbations:
             score = self.score_perturbation(perturbation)
             scores.append(score)
-
-            if progress_callback and (i + 1) % batch_size == 0:
-                progress_callback(i + 1, total)
-
         return scores
 
-    def _call_llm(self, prompt: str) -> Dict[str, Any]:
-        """
-        Call the LLM via AWS Bedrock.
-
-        Args:
-            prompt: The formatted prompt
-
-        Returns:
-            Dict with response, tokens_used, time_ms
-        """
-        start_time = time.time()
-
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        }
-
-        try:
-            response = self.bedrock.invoke_model(
-                modelId=self.model_id,
-                body=json.dumps(request_body),
-                contentType="application/json",
-                accept="application/json"
-            )
-
-            response_body = json.loads(response['body'].read())
-
-            content = response_body.get('content', [])
-            if not content:
-                raise ValueError("Empty response from LLM")
-
-            response_text = content[0].get('text', '')
-
-            usage = response_body.get('usage', {})
-            tokens_used = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
-
-            elapsed_ms = int((time.time() - start_time) * 1000)
-
-            return {
-                "response": response_text,
-                "tokens_used": tokens_used,
-                "time_ms": elapsed_ms
-            }
-
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            error_message = e.response.get('Error', {}).get('Message', str(e))
-            raise Exception(f"Bedrock API error ({error_code}): {error_message}")
-
-    def _parse_score_response(self, response_text: str) -> Dict[str, Any]:
-        """
-        Parse LLM response into score dict.
-
-        Args:
-            response_text: Raw LLM response
-
-        Returns:
-            Parsed score dict
-
-        Raises:
-            ValueError: If response cannot be parsed
-        """
+    def _parse_single_metric_response(
+        self, response_text: str, metric_name: str
+    ) -> Dict[str, Any]:
+        """Parse LLM response for a single metric."""
         json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
         if not json_match:
             raise ValueError(f"No JSON found in response: {response_text[:200]}")
 
         try:
-            score_data = json.loads(json_match.group())
+            data = json.loads(json_match.group())
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in response: {e}")
+            raise ValueError(f"Invalid JSON: {e}")
 
-        required_fields = [
-            "content_changed",
-            "syntactically_valid",
-            "semantically_meaningful",
-            "type_matches_intent",
-            "realistic_error"
-        ]
+        if metric_name not in data:
+            raise ValueError(f"Missing {metric_name} in response")
 
-        for field in required_fields:
-            if field not in score_data:
-                raise ValueError(f"Missing required field: {field}")
+        # Get max value for this metric
+        max_val = 3 if metric_name == "realistic_error" else 1
+
+        return {
+            "value": self._clamp(int(data[metric_name]), 0, max_val),
+            "reasoning": data.get("reasoning", "")
+        }
+
+    def _parse_batch_response(self, response_text: str) -> Dict[str, Any]:
+        """Parse LLM response with all metrics."""
+        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+        if not json_match:
+            raise ValueError(f"No JSON found in response: {response_text[:200]}")
+
+        try:
+            data = json.loads(json_match.group())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
 
         score = {
-            "content_changed": self._clamp(int(score_data["content_changed"]), 0, 1),
-            "syntactically_valid": self._clamp(int(score_data["syntactically_valid"]), 0, 1),
-            "semantically_meaningful": self._clamp(int(score_data["semantically_meaningful"]), 0, 1),
-            "type_matches_intent": self._clamp(int(score_data["type_matches_intent"]), 0, 1),
-            "realistic_error": self._clamp(int(score_data["realistic_error"]), 0, 3),
-            "reasoning": score_data.get("reasoning", "")
+            "content_changed": self._clamp(int(data.get("content_changed", 0)), 0, 1),
+            "syntactically_valid": self._clamp(int(data.get("syntactically_valid", 0)), 0, 1),
+            "semantically_meaningful": self._clamp(int(data.get("semantically_meaningful", 0)), 0, 1),
+            "type_matches_intent": self._clamp(int(data.get("type_matches_intent", 0)), 0, 1),
+            "realistic_error": self._clamp(int(data.get("realistic_error", 0)), 0, 3),
+            "reasoning": data.get("reasoning", "")
         }
 
         score["total_score"] = (
@@ -280,20 +253,21 @@ class PerturbationQualityScorer:
 
         return score
 
+    def _call_llm(self, prompt: str) -> Dict[str, Any]:
+        """Call the LLM via central Bedrock client."""
+        return self.bedrock.invoke(
+            model_id=self.model_id,
+            prompt=prompt,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature
+        )
+
     def _clamp(self, value: int, min_val: int, max_val: int) -> int:
-        """Clamp value to range [min_val, max_val]."""
+        """Clamp value to range."""
         return max(min_val, min(max_val, value))
 
     def _assign_tier(self, total_score: int) -> str:
-        """
-        Assign quality tier based on total score.
-
-        Args:
-            total_score: Total quality score (0-7)
-
-        Returns:
-            Quality tier: "high", "medium", "low", or "invalid"
-        """
+        """Assign quality tier based on total score."""
         if total_score >= self.tier_thresholds["high"]:
             return "high"
         elif total_score >= self.tier_thresholds["medium"]:
@@ -304,15 +278,7 @@ class PerturbationQualityScorer:
             return "invalid"
 
     def _default_error_score(self, error_message: str) -> Dict[str, Any]:
-        """
-        Return a default score when scoring fails.
-
-        Args:
-            error_message: Error description
-
-        Returns:
-            Error score dict
-        """
+        """Return default score when scoring fails."""
         return {
             "content_changed": 0,
             "syntactically_valid": 0,
@@ -324,26 +290,21 @@ class PerturbationQualityScorer:
             "quality_tier": "invalid",
             "scored_by": self.model_name,
             "scored_at": datetime.now(timezone.utc).isoformat(),
-            "error": error_message
+            "error": error_message,
+            "llm_calls": 0
         }
 
 
 def create_quality_scorer(config: Dict[str, Any]) -> PerturbationQualityScorer:
-    """
-    Factory function to create quality scorer from config.
-
-    Args:
-        config: Quality scoring configuration dict
-
-    Returns:
-        Configured PerturbationQualityScorer instance
-    """
+    """Factory function to create quality scorer from config."""
     model_config = config.get("judge_model", {})
     metrics = config.get("metrics", {})
     tier_thresholds = config.get("tier_thresholds", {})
+    judge_mode = config.get("judge_mode", "batch")
 
     return PerturbationQualityScorer(
         model_config=model_config,
         metrics=metrics,
-        tier_thresholds=tier_thresholds
+        tier_thresholds=tier_thresholds,
+        judge_mode=judge_mode
     )

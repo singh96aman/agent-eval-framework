@@ -222,7 +222,8 @@ class MongoDBStorage:
             result = self.trajectories.insert_one(doc)
             return str(result.inserted_id)
         except DuplicateKeyError:
-            # Update existing
+            # Update existing - remove _id to avoid immutable field error
+            doc.pop("_id", None)
             self.trajectories.replace_one(
                 {"trajectory_id": doc["trajectory_id"]},
                 doc
@@ -482,6 +483,15 @@ class MongoDBStorage:
     def get_perturbation(self, perturbation_id: str) -> Optional[Dict[str, Any]]:
         """Get perturbation by ID."""
         return self.perturbations.find_one({"perturbation_id": perturbation_id})
+
+    def get_perturbation_for_experiment(
+        self, perturbation_id: str, experiment_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get perturbation by ID and experiment."""
+        return self.perturbations.find_one({
+            "perturbation_id": perturbation_id,
+            "experiment_id": experiment_id
+        })
 
     def get_perturbations_by_experiment(
         self,

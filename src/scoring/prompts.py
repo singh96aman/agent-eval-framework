@@ -3,9 +3,105 @@ Prompts for perturbation quality scoring.
 
 These prompts assess the VALIDITY of perturbations (not difficulty/detectability),
 focusing on whether the perturbation is well-formed and realistic.
+
+Modes:
+- single: 1 LLM call per metric (N calls for N metrics)
+- batch: 1 LLM call for all metrics
 """
 
-QUALITY_SCORING_PROMPT = """You are evaluating the VALIDITY of a perturbation applied to an agent trajectory.
+# Individual metric prompts (for single mode - 1 call per metric)
+METRIC_PROMPTS = {
+    "content_changed": """You are evaluating whether a perturbation actually changed the content.
+
+## Original Step
+{original_step_content}
+
+## Perturbed Step
+{perturbed_step_content}
+
+## Task
+Score whether the content actually changed:
+- 0 = Identical or trivially different (whitespace only)
+- 1 = Meaningful change occurred
+
+Return ONLY valid JSON:
+{{"content_changed": 0 or 1, "reasoning": "Brief explanation"}}""",
+
+    "syntactically_valid": """You are evaluating whether a perturbed step is syntactically valid.
+
+## Perturbed Step
+{perturbed_step_content}
+
+## Task
+Score whether the perturbed content is well-formed:
+- 0 = Broken syntax, corrupted text, invalid JSON
+- 1 = Valid syntax, coherent text
+
+Return ONLY valid JSON:
+{{"syntactically_valid": 0 or 1, "reasoning": "Brief explanation"}}""",
+
+    "semantically_meaningful": """You are evaluating whether a perturbation is semantically meaningful.
+
+## Original Step
+{original_step_content}
+
+## Perturbed Step
+{perturbed_step_content}
+
+## Task
+Score whether the change is semantically meaningful:
+- 0 = Change is trivial (punctuation, formatting only)
+- 1 = Change affects meaning or behavior
+
+Return ONLY valid JSON:
+{{"semantically_meaningful": 0 or 1, "reasoning": "Brief explanation"}}""",
+
+    "type_matches_intent": """You are evaluating whether a perturbation matches its intended type.
+
+## Original Step
+{original_step_content}
+
+## Perturbed Step
+{perturbed_step_content}
+
+## Perturbation Metadata
+- Intended type: {perturbation_type}
+- Position: {perturbation_position}
+- Description: {perturbation_description}
+
+## Task
+Score whether the error matches the intended perturbation type:
+- 0 = Error is different from intended type (e.g., labeled "parameter" but changed planning)
+- 1 = Error matches the intended perturbation type
+
+Return ONLY valid JSON:
+{{"type_matches_intent": 0 or 1, "reasoning": "Brief explanation"}}""",
+
+    "realistic_error": """You are evaluating whether a perturbation represents a realistic agent error.
+
+## Original Step
+{original_step_content}
+
+## Perturbed Step
+{perturbed_step_content}
+
+## Perturbation Metadata
+- Type: {perturbation_type}
+- Position: {perturbation_position}
+
+## Task
+Score whether this error could plausibly occur in a real agent:
+- 0 = Impossible/nonsensical error
+- 1 = Unlikely but possible
+- 2 = Plausible error
+- 3 = Very realistic, common agent failure mode
+
+Return ONLY valid JSON:
+{{"realistic_error": 0-3, "reasoning": "Brief explanation"}}"""
+}
+
+# Batch mode prompt (all metrics in 1 call)
+QUALITY_SCORING_PROMPT_BATCH = """You are evaluating the VALIDITY of a perturbation applied to an agent trajectory.
 
 Your task is to score how well-formed and realistic this perturbation is, NOT how difficult it would be to detect.
 
@@ -56,7 +152,6 @@ Return ONLY valid JSON with no additional text:
   "semantically_meaningful": 0 or 1,
   "type_matches_intent": 0 or 1,
   "realistic_error": 0-3,
-  "total_score": sum of above (0-7),
   "reasoning": "Brief explanation of scores"
 }}"""
 
@@ -69,7 +164,53 @@ PERTURBATION_TYPE_DESCRIPTIONS = {
 }
 
 
-def format_quality_scoring_prompt(
+def get_metric_names():
+    """Return list of metric names in order."""
+    return ["content_changed", "syntactically_valid", "semantically_meaningful",
+            "type_matches_intent", "realistic_error"]
+
+
+def format_metric_prompt(
+    metric_name: str,
+    original_step_content: str,
+    perturbed_step_content: str,
+    perturbation_type: str = "",
+    perturbation_position: str = "",
+    perturbation_description: str = ""
+) -> str:
+    """
+    Format a prompt for a single metric (single mode).
+
+    Args:
+        metric_name: Name of the metric to score
+        original_step_content: Original step content
+        perturbed_step_content: Perturbed step content
+        perturbation_type: Type of perturbation
+        perturbation_position: Position (early/middle/late)
+        perturbation_description: Description of intended error
+
+    Returns:
+        Formatted prompt string for this metric
+    """
+    if metric_name not in METRIC_PROMPTS:
+        raise ValueError(f"Unknown metric: {metric_name}")
+
+    if not perturbation_description:
+        perturbation_description = PERTURBATION_TYPE_DESCRIPTIONS.get(
+            perturbation_type,
+            f"A {perturbation_type} error"
+        )
+
+    return METRIC_PROMPTS[metric_name].format(
+        original_step_content=original_step_content,
+        perturbed_step_content=perturbed_step_content,
+        perturbation_type=perturbation_type,
+        perturbation_position=perturbation_position,
+        perturbation_description=perturbation_description
+    )
+
+
+def format_batch_prompt(
     original_step_content: str,
     perturbed_step_content: str,
     perturbation_type: str,
@@ -77,7 +218,7 @@ def format_quality_scoring_prompt(
     perturbation_description: str = None
 ) -> str:
     """
-    Format the quality scoring prompt with perturbation details.
+    Format the batch mode prompt (all metrics in 1 call).
 
     Args:
         original_step_content: Content of the original step
@@ -95,7 +236,7 @@ def format_quality_scoring_prompt(
             f"A {perturbation_type} error"
         )
 
-    return QUALITY_SCORING_PROMPT.format(
+    return QUALITY_SCORING_PROMPT_BATCH.format(
         original_step_content=original_step_content,
         perturbed_step_content=perturbed_step_content,
         perturbation_type=perturbation_type,
