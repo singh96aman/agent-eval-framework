@@ -1,0 +1,143 @@
+{
+  "schema": "2.0.0",
+
+  "experiment": {
+    "id": "exp_template_v1",
+    "name": "Schema 2.0 Template",
+    "description": "Template config for schema 2.0.0",
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    }
+  },
+
+  "phases": {
+    "load": {
+      "datasets": {
+        "toolbench": {
+          "enabled": true,
+          "source": "json",
+          "path": "data/sampled/toolbench_400.json",
+          "limit": 400
+        },
+        "gaia": {
+          "enabled": true,
+          "source": "huggingface",
+          "limit": 100
+        },
+        "swebench": {
+          "enabled": true,
+          "source": "huggingface",
+          "limit": 100
+        }
+      }
+    },
+
+    "perturb": {
+      "types": ["planning", "tool_selection", "parameter", "data_reference"],
+      "positions": ["early", "middle", "late"],
+      "per_trajectory": 1,
+      "validate": {
+        "enabled": true,
+        "require_semantic_planning": true,
+        "min_type_coverage": 0.8,
+        "min_position_coverage": 0.8
+      }
+    },
+
+    "sample": {
+      "total": 100,
+      "strategy": "stratified",
+      "stratify_by": ["perturbation_type", "position", "benchmark"],
+      "seed": 42,
+      "filter": {
+        "primary_only": true,
+        "min_quality_tier": "low"
+      }
+    },
+
+    "annotate": {
+      "annotator_id": "researcher",
+      "skip_completed": true,
+      "metrics": {
+        "task_success_degradation": { "range": [0, 1], "weight": 50 },
+        "subsequent_error_rate": { "range": [0, 3], "weight": 10 },
+        "criticality_rating": { "range": [1, 5], "weight": 8 }
+      }
+    },
+
+    "judge": {
+      "models": [
+        {
+          "name": "claude-sonnet-4.5",
+          "provider": "aws_bedrock",
+          "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "temperature": 0.3
+        }
+      ],
+      "parallelism": 2,
+      "metrics": {
+        "overall_score": { "range": [0, 100] },
+        "task_success": { "range": [0, 1] },
+        "completeness": { "range": [0, 100] },
+        "hallucination": { "range": [0, 1] },
+        "efficiency_errors": { "range": [0, null] }
+      },
+      "filter": {
+        "annotated_only": true
+      }
+    }
+  },
+
+  "compute": {
+    "targets": ["jps", "tcs", "od", "ccg", "calibration"],
+
+    "jps": {
+      "formula": "100 - overall_score"
+    },
+
+    "tcs": {
+      "formula": "(task_success_degradation * 50) + (subsequent_error_rate * 10) + (criticality_rating * 8)",
+      "range": [8, 100],
+      "validate": {
+        "enabled": true,
+        "min_correlation_with_human": 0.4
+      }
+    },
+
+    "od": {
+      "grader_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "temperature": 0.1,
+      "batch_size": 20,
+      "validate": {
+        "enabled": true,
+        "min_coverage": 0.7,
+        "min_variance": 0.01
+      }
+    },
+
+    "ccg": {
+      "formula": "(JPS - TCS) / TCS",
+      "aggregations": ["overall", "by_type", "by_position", "by_benchmark"],
+      "statistical_tests": ["anova", "tukey_hsd", "cohens_d"]
+    },
+
+    "calibration": {
+      "x": "od",
+      "y": "jps",
+      "metrics": ["spearman_r", "pearson_r", "ece", "mce"],
+      "stratify_by": ["benchmark", "perturbation_type", "position"],
+      "bootstrap_iterations": 1000
+    },
+
+    "output": {
+      "dir": "results",
+      "checkpoints": true,
+      "visualizations": {
+        "enabled": true,
+        "format": "png",
+        "plots": ["ccg_heatmap", "jps_vs_tcs_scatter", "calibration_curve"]
+      }
+    }
+  }
+}

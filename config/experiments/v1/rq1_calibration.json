@@ -1,0 +1,57 @@
+{
+  "experiment": {
+    "name": "RQ1: Consequentiality Calibration",
+    "experiment_id": "rq1_calibration_v1",
+    "description": "Do judge penalty scores correlate with actual outcome damage?",
+    "version": "1.0",
+    "created_by": "researcher",
+    "created_date": "2026-04-05"
+  },
+
+  "source_experiment": {
+    "experiment_id": "final_exp_perturbation_quality",
+    "use_primary_only": true,
+    "use_annotated_only": true,
+    "min_quality_tier": "low"
+  },
+
+  "storage": {
+    "backend": "mongodb",
+    "database": "agent_judge_experiment"
+  },
+
+  "od": {
+    "enabled": true,
+    "tier": 3,
+    "grader_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "temperature": 0.1,
+    "max_tokens": 1000,
+    "batch_size": 20,
+    "log_calls": false
+  },
+
+  "od_validation": {
+    "min_coverage": 0.7,
+    "min_variance": 0.01,
+    "spot_check_count": 20
+  },
+
+  "calibration": {
+    "metrics": ["spearman_r", "pearson_r", "ece", "mce"],
+    "n_bins": 10,
+    "bootstrap_iterations": 1000,
+    "stratify_by": ["benchmark", "perturbation_type", "position"],
+    "output_dir": "results/rq1"
+  },
+
+  "judge_source": {
+    "experiment_id": "exp_judge_ccg_v1",
+    "judge_name": "claude-sonnet-4.5"
+  },
+
+  "execution": {
+    "runner": "od,od_validate,calibration",
+    "dry_run": false,
+    "verbose": true
+  }
+}

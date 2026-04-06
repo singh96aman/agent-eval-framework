@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-Main entry point for the POC experiment.
+Main entry point for the experiment runner.
 
-This is the single driver script that runs all phases of the experiment
-based on configuration files.
+6 phases: load, perturb, sample, annotate, judge, compute
 
 Usage:
-    python main.py --config poc_phase2_load
-    python main.py --config poc_phase2_load --dry-run
-    python main.py --config poc_phase2_load --phase load_trajectories
+    python main.py --config schema_2_template --runner load,perturb
+    python main.py --config schema_2_template --runner judge,compute
     python main.py --list-configs
 """
 
@@ -35,7 +33,7 @@ class TeeOutput:
     def write(self, message):
         self.stdout.write(message)
         self.file.write(message)
-        self.file.flush()  # Ensure immediate write
+        self.file.flush()
 
     def flush(self):
         self.stdout.flush()
@@ -52,29 +50,29 @@ class TeeOutput:
 
 
 def load_config(config_name: str) -> Dict[str, Any]:
-    """
-    Load experiment configuration from JSON file.
-
-    Args:
-        config_name: Name of config file (without .json extension)
-
-    Returns:
-        Configuration dictionary
-
-    Raises:
-        FileNotFoundError: If config file doesn't exist
-    """
+    """Load experiment configuration from JSON file."""
     config_dir = Path(__file__).parent / "config" / "experiments"
 
-    # Try with and without .json extension
-    config_path = config_dir / f"{config_name}.json"
-    if not config_path.exists():
-        config_path = config_dir / config_name
+    # Search order: v2/, v1/, root
+    search_paths = [
+        config_dir / "v2" / f"{config_name}.json",
+        config_dir / "v1" / f"{config_name}.json",
+        config_dir / f"{config_name}.json",
+        config_dir / "v2" / config_name,
+        config_dir / "v1" / config_name,
+        config_dir / config_name,
+    ]
 
-    if not config_path.exists():
+    config_path = None
+    for path in search_paths:
+        if path.exists():
+            config_path = path
+            break
+
+    if not config_path:
         raise FileNotFoundError(
             f"Config file not found: {config_name}\n"
-            f"Looked in: {config_dir}\n"
+            f"Looked in: {config_dir}/v2, {config_dir}/v1\n"
             f"Use --list-configs to see available configurations."
         )
 
@@ -92,64 +90,64 @@ def list_available_configs():
         print("No config directory found.")
         return
 
-    config_files = sorted(config_dir.glob("*.json"))
-
-    if not config_files:
-        print("No configuration files found.")
-        return
-
     print("=" * 70)
     print("AVAILABLE CONFIGURATIONS")
     print("=" * 70)
+
+    # List v2 configs first (recommended)
+    v2_dir = config_dir / "v2"
+    if v2_dir.exists():
+        v2_files = sorted(v2_dir.glob("*.json"))
+        if v2_files:
+            print("\n[v2] Schema 2.0 (recommended)")
+            print("-" * 40)
+            for config_file in v2_files:
+                _print_config_info(config_file)
+
+    # List v1 configs (legacy)
+    v1_dir = config_dir / "v1"
+    if v1_dir.exists():
+        v1_files = sorted(v1_dir.glob("*.json"))
+        if v1_files:
+            print("\n[v1] Legacy configs")
+            print("-" * 40)
+            for config_file in v1_files:
+                _print_config_info(config_file)
+
     print()
-
-    for config_file in config_files:
-        config_name = config_file.stem
-        try:
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-                exp_info = config.get('experiment', {})
-                name = exp_info.get('name', 'N/A')
-                phase = config.get('execution', {}).get('phase', 'N/A')
-                desc = exp_info.get('description', 'N/A')
-        except Exception:
-            name = 'Error loading'
-            phase = 'N/A'
-            desc = 'Could not parse config'
-
-        print(f"📄 {config_name}")
-        print(f"   Name: {name}")
-        print(f"   Phase: {phase}")
-        print(f"   Description: {desc}")
-        print()
-
     print("=" * 70)
-    print(f"Usage: python main.py --config <config_name>")
+    print("Usage: python main.py --config <config_name> --runner <phases>")
+    print("Phases: load, perturb, sample, annotate, judge, compute")
     print("=" * 70)
+
+
+def _print_config_info(config_file: Path):
+    """Print info about a config file."""
+    config_name = config_file.stem
+    try:
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+            exp_info = config.get('experiment', {})
+            name = exp_info.get('name', 'N/A')
+    except Exception:
+        name = 'Error loading'
+
+    print(f"  {config_name}: {name}")
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Run POC experiment phases",
+        description="Run experiment phases",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run entire experiment
-  python main.py --config poc_experiment --runner all
-
-  # Run specific phases
-  python main.py --config poc_experiment --runner load,perturb
-  python main.py --config poc_experiment --runner judge,ccg,analyze
-
-  # Run single phase
-  python main.py --config poc_experiment --runner load
-
-  # Dry run (test without saving)
-  python main.py --config poc_experiment --runner load --dry-run
-
-  # List all available configs
+  python main.py --config schema_2_template --runner load,perturb
+  python main.py --config schema_2_template --runner judge,compute
+  python main.py --config schema_2_template --runner load --dry-run
   python main.py --list-configs
+
+Phases: load, perturb, sample, annotate, judge, compute
         """
     )
 
@@ -159,28 +157,14 @@ Examples:
         help="Name of configuration file (in config/experiments/)"
     )
     parser.add_argument(
-        "--phase",
-        type=str,
-        help="(Deprecated: use --runner instead) Override phase specified in config"
-    )
-    parser.add_argument(
         "--runner",
         type=str,
-        help=(
-            "Which phases to run (comma-separated or 'all'). "
-            "Options: load, perturb, annotate, judge, ccg, analyze, all. "
-            "Example: --runner load,perturb or --runner all"
-        )
+        help="Phases to run (comma-separated): load,perturb,sample,annotate,judge,compute"
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Run without saving to database"
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last checkpoint"
     )
     parser.add_argument(
         "--list-configs",
@@ -191,11 +175,6 @@ Examples:
         "--verbose",
         action="store_true",
         help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--log-bedrock",
-        action="store_true",
-        help="Log Bedrock API calls with latency"
     )
 
     args = parser.parse_args()
@@ -211,64 +190,40 @@ Examples:
 
     # Load configuration
     try:
-        print(f"📋 Loading configuration: {args.config}")
+        print(f"Loading configuration: {args.config}")
         config = load_config(args.config)
-        print(f"✓ Loaded config: {config['experiment']['name']}")
+        print(f"Loaded: {config['experiment']['name']}")
         print()
     except FileNotFoundError as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Error loading config: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error loading config: {e}")
         sys.exit(1)
 
-    # Override config with command-line args
-    if args.phase:
-        print("⚠️  Warning: --phase is deprecated, use --runner instead")
-        config['execution']['runner'] = args.phase
-
+    # Print CLI options
     if args.runner:
-        config['execution']['runner'] = args.runner
-        print("⚙️  Runner: {}".format(args.runner))
-
+        print(f"Runner: {args.runner}")
     if args.dry_run:
-        config['execution']['dry_run'] = True
-        print("⚙️  Dry run mode enabled")
-
-    if args.verbose:
-        config['execution']['verbose'] = True
-
-    if args.resume:
-        config['execution']['resume'] = True
-        print("⚙️  Resume mode enabled")
-
-    if args.log_bedrock:
-        config['execution']['log_bedrock'] = True
-        print("⚙️  Bedrock API logging enabled")
+        print("Dry run mode enabled")
 
     print()
 
-    # Set up logging to file
+    # Set up logging
     experiment_info = config.get('experiment', {})
     experiment_name = experiment_info.get('name', 'experiment')
-    experiment_id = experiment_info.get('experiment_id', args.config)
-    verbose = config.get('execution', {}).get('verbose', args.verbose)
+    experiment_id = experiment_info.get('id', args.config)
 
-    # Create logs directory
     logs_dir = Path(__file__).parent / "logs"
     logs_dir.mkdir(exist_ok=True)
 
-    # Use experiment_id as log filename (append to same log for same experiment)
-    safe_experiment_id = experiment_id.replace("/", "_").replace(":", "_")
-    log_filename = f"{safe_experiment_id}.log"
-    log_path = logs_dir / log_filename
+    safe_id = experiment_id.replace("/", "_").replace(":", "_")
+    log_path = logs_dir / f"{safe_id}.log"
 
-    print(f"📝 Logging to: {log_path}")
+    print(f"Logging to: {log_path}")
     print()
 
-    # Redirect stdout to both console and file
+    # Run experiment
     with TeeOutput(log_path, mode='a') as tee:
         original_stdout = sys.stdout
         sys.stdout = tee
@@ -278,40 +233,39 @@ Examples:
             print(f"NEW RUN - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print("=" * 70)
             print(f"Experiment: {experiment_name}")
-            print(f"Experiment ID: {experiment_id}")
             print(f"Config: {args.config}")
-            print(f"Runner: {config.get('execution', {}).get('runner', 'N/A')}")
-            print(f"Log file: {log_path}")
+            print(f"Runner: {args.runner or 'none'}")
             print("=" * 70)
             print()
 
-            # Create and run experiment
-            runner = ExperimentRunner(config)
+            runner = ExperimentRunner(
+                config,
+                runner_str=args.runner,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+            )
             runner.run()
 
             print()
             print("=" * 70)
-            print("✅ EXPERIMENT PHASE COMPLETE")
+            print("EXPERIMENT PHASE COMPLETE")
             print("=" * 70)
 
         except KeyboardInterrupt:
-            print()
-            print("⚠️  Interrupted by user")
+            print("\nInterrupted by user")
             sys.stdout = original_stdout
             sys.exit(130)
         except Exception as e:
             print()
             print("=" * 70)
-            print("❌ EXPERIMENT FAILED")
+            print("EXPERIMENT FAILED")
             print("=" * 70)
             print(f"Error: {e}")
-            print()
             import traceback
             traceback.print_exc()
             sys.stdout = original_stdout
             sys.exit(1)
         finally:
-            # Restore stdout
             sys.stdout = original_stdout
 
 
