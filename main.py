@@ -7,14 +7,12 @@ Supports two schema versions:
 - Schema 2.x: Simplified format (RunnerV2)
 
 Usage:
-    # Schema 2.x (recommended)
+    # Schema 2.x (6 phases: load, perturb, sample, annotate, judge, compute)
     python main.py --config schema_2_template --runner load,perturb
-    python main.py --config schema_2_template --runner compute:od,ccg
     python main.py --config schema_2_template --runner judge,compute
 
     # Schema 1.x (legacy)
     python main.py --config poc_experiment --runner all
-    python main.py --config poc_experiment --runner load,perturb,judge
 
     # List configs
     python main.py --list-configs
@@ -157,8 +155,8 @@ def main():
 Examples:
   # Schema 2.x (recommended)
   python main.py --config schema_2_template --runner load,perturb
-  python main.py --config schema_2_template --runner compute:od,ccg
   python main.py --config schema_2_template --runner judge,compute
+  python main.py --config schema_2_template --runner load,perturb,sample,annotate,judge,compute
 
   # Schema 1.x (legacy)
   python main.py --config poc_experiment --runner all
@@ -170,8 +168,8 @@ Examples:
   # List all available configs
   python main.py --list-configs
 
-Schema 2.x Phases: load, perturb, sample, annotate, judge
-Schema 2.x Compute: jps, tcs, od, ccg, calibration (use compute:<target>)
+Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
+(compute targets are defined in config.compute.targets)
         """
     )
 

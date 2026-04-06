@@ -11,18 +11,16 @@ import json
 import hashlib
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from dotenv import load_dotenv
 
 from src.storage.mongodb import MongoDBStorage
-from src.data.schema import Trajectory
 
 
 SCHEMA_VERSION = "2.0.0"
 
-# Valid phases and compute targets
-PHASES = ["load", "perturb", "sample", "annotate", "judge"]
-COMPUTE_TARGETS = ["jps", "tcs", "od", "ccg", "calibration"]
+# Valid phases (compute is a phase, targets come from config)
+PHASES = ["load", "perturb", "sample", "annotate", "judge", "compute"]
 
 
 def generate_experiment_id(config: Dict[str, Any]) -> str:
@@ -64,7 +62,7 @@ class RunnerV2:
         )
 
         # Parse runner string
-        self.phases_to_run, self.compute_targets = self._parse_runner(runner_str)
+        self.phases_to_run = self._parse_runner(runner_str)
 
         # Output directory
         compute_config = config.get("compute", {})
@@ -72,56 +70,30 @@ class RunnerV2:
         self.output_dir = Path(output_config.get("dir", "results")) / self.experiment_id
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _parse_runner(self, runner_str: str) -> Tuple[List[str], List[str]]:
+    def _parse_runner(self, runner_str: str) -> List[str]:
         """
-        Parse runner string into phases and compute targets.
+        Parse runner string into list of phases.
 
         Examples:
-            "load,perturb" -> (["load", "perturb"], [])
-            "compute:od,ccg" -> ([], ["od", "ccg"])
-            "judge,compute:ccg" -> (["judge"], ["ccg"])
-            "compute" -> ([], [all targets from config])
+            "load,perturb" -> ["load", "perturb"]
+            "judge,compute" -> ["judge", "compute"]
         """
         phases = []
-        compute_targets = []
-        in_compute_mode = False
 
         if not runner_str:
-            return phases, compute_targets
+            return phases
 
         for part in runner_str.split(","):
             part = part.strip().lower()
 
-            if part.startswith("compute:"):
-                # Start compute mode with specific target
-                in_compute_mode = True
-                target = part.split(":", 1)[1]
-                if target in COMPUTE_TARGETS:
-                    compute_targets.append(target)
-                else:
-                    raise ValueError(
-                        f"Unknown compute target: {target}. "
-                        f"Valid: {COMPUTE_TARGETS}"
-                    )
-            elif part == "compute":
-                # All compute targets from config
-                in_compute_mode = True
-                config_targets = self.config.get("compute", {}).get("targets", [])
-                compute_targets.extend(config_targets)
-            elif in_compute_mode and part in COMPUTE_TARGETS:
-                # Continue adding compute targets
-                compute_targets.append(part)
-            elif part in PHASES:
-                in_compute_mode = False
+            if part in PHASES:
                 phases.append(part)
             else:
                 raise ValueError(
-                    f"Unknown: {part}. "
-                    f"Phases: {PHASES}, Compute: {COMPUTE_TARGETS}"
+                    f"Unknown phase: {part}. Valid phases: {PHASES}"
                 )
 
-        # Dedupe while preserving order
-        return phases, list(dict.fromkeys(compute_targets))
+        return phases
 
     def run(self):
         """Run the experiment."""
@@ -131,19 +103,19 @@ class RunnerV2:
         print("=" * 70)
         print(f"Experiment ID: {self.experiment_id}")
         print(f"Phases: {', '.join(self.phases_to_run) or 'none'}")
-        print(f"Compute: {', '.join(self.compute_targets) or 'none'}")
         print(f"Dry Run: {self.dry_run}")
         print(f"Output: {self.output_dir}")
         print("=" * 70)
         print()
 
-        # Run phases
+        # Phase handlers
         phase_handlers = {
             "load": self._phase_load,
             "perturb": self._phase_perturb,
             "sample": self._phase_sample,
             "annotate": self._phase_annotate,
             "judge": self._phase_judge,
+            "compute": self._phase_compute,
         }
 
         for idx, phase in enumerate(self.phases_to_run, 1):
@@ -154,25 +126,6 @@ class RunnerV2:
             print()
 
             handler = phase_handlers[phase]
-            handler()
-
-        # Run compute targets
-        compute_handlers = {
-            "jps": self._compute_jps,
-            "tcs": self._compute_tcs,
-            "od": self._compute_od,
-            "ccg": self._compute_ccg,
-            "calibration": self._compute_calibration,
-        }
-
-        for idx, target in enumerate(self.compute_targets, 1):
-            print()
-            print("=" * 70)
-            print(f"COMPUTE {idx}/{len(self.compute_targets)}: {target.upper()}")
-            print("=" * 70)
-            print()
-
-            handler = compute_handlers[target]
             handler()
 
         # Cleanup
@@ -464,6 +417,40 @@ class RunnerV2:
 
         results = evaluator.evaluate_batch(perturbations)
         print(f"Evaluated {len(results)} perturbations")
+
+    def _phase_compute(self):
+        """Run all compute targets from config."""
+        compute_config = self.config.get("compute", {})
+        targets = compute_config.get("targets", [])
+
+        if not targets:
+            print("No compute targets configured")
+            return
+
+        print(f"Compute targets: {', '.join(targets)}")
+        print()
+
+        # Compute target handlers
+        compute_handlers = {
+            "jps": self._compute_jps,
+            "tcs": self._compute_tcs,
+            "od": self._compute_od,
+            "ccg": self._compute_ccg,
+            "calibration": self._compute_calibration,
+        }
+
+        for idx, target in enumerate(targets, 1):
+            print("-" * 50)
+            print(f"COMPUTE [{idx}/{len(targets)}]: {target.upper()}")
+            print("-" * 50)
+
+            handler = compute_handlers.get(target)
+            if handler:
+                handler()
+            else:
+                print(f"Unknown compute target: {target}")
+
+            print()
 
     # =========================================================================
     # COMPUTE TARGETS
