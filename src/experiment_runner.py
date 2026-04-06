@@ -131,6 +131,13 @@ class ExperimentRunner:
             'validate_tcs': 'validate_tcs',
             'ccg_v2': 'compute_ccg_v2',
             'compute_ccg_v2': 'compute_ccg_v2',
+            # RQ1: Consequentiality Calibration phases
+            'od': 'compute_od',
+            'compute_od': 'compute_od',
+            'od_validate': 'validate_od',
+            'validate_od': 'validate_od',
+            'calibration': 'compute_calibration',
+            'compute_calibration': 'compute_calibration',
         }
 
         # 'all' means run everything in order
@@ -188,6 +195,10 @@ class ExperimentRunner:
             'judge_parallel': self._phase_judge_parallel,
             'validate_tcs': self._phase_validate_tcs,
             'compute_ccg_v2': self._phase_compute_ccg_v2,
+            # RQ1: Consequentiality Calibration phases
+            'compute_od': self._phase_compute_od,
+            'validate_od': self._phase_validate_od,
+            'compute_calibration': self._phase_compute_calibration,
         }
 
         # Run each phase in sequence
@@ -2112,3 +2123,321 @@ class ExperimentRunner:
         elif "swe" in traj_id:
             return "swebench"
         return "unknown"
+
+    # ======================================================================
+    # RQ1: CONSEQUENTIALITY CALIBRATION PHASES
+    # ======================================================================
+
+    def _phase_compute_od(self):
+        """Phase: Compute Outcome Degradation for perturbations."""
+        print("📊 PHASE: COMPUTE OUTCOME DEGRADATION (OD)")
+        print("=" * 70)
+        print()
+
+        from src.replay.od_scorer import ODScorer
+
+        # Get OD configuration
+        od_config = self.config.get("od", {})
+        source_config = self.config.get("source_experiment", {})
+
+        if not od_config.get("enabled", True):
+            print("OD computation disabled in config")
+            return
+
+        # Determine source experiment
+        source_experiment_id = source_config.get(
+            "experiment_id", self.experiment_id
+        )
+
+        print(f"Source experiment: {source_experiment_id}")
+        print(f"Grader model: {od_config.get('grader_model', 'default')}")
+        print()
+
+        # Load perturbations
+        print("📥 Loading perturbations...")
+        use_primary_only = source_config.get("use_primary_only", True)
+        use_annotated_only = source_config.get("use_annotated_only", False)
+
+        if use_annotated_only:
+            perturbations = list(self.storage.db['perturbations'].find({
+                'selected_for_annotation': True
+            }))
+            print(f"   Loaded {len(perturbations)} annotated perturbations")
+        else:
+            perturbations = list(self.storage.get_perturbations_by_experiment(
+                source_experiment_id
+            ))
+            if use_primary_only:
+                perturbations = [
+                    p for p in perturbations
+                    if p.get("is_primary_for_experiment", False)
+                ]
+            print(f"   Loaded {len(perturbations)} perturbations")
+
+        if not perturbations:
+            print("❌ No perturbations found")
+            return
+
+        # Check how many already have OD
+        already_computed = sum(1 for p in perturbations if p.get("od"))
+        print(f"   Already computed: {already_computed}")
+        print(f"   Need to compute: {len(perturbations) - already_computed}")
+        print()
+
+        if self.dry_run:
+            print("🔍 DRY RUN: Would compute OD for perturbations")
+            return
+
+        # Initialize OD scorer
+        od_config["log_calls"] = self.verbose
+        scorer = ODScorer(od_config)
+
+        # Compute OD
+        print("🔢 Computing OD values...")
+        batch_size = od_config.get("batch_size", 20)
+        results = scorer.compute_batch(
+            perturbations,
+            self.storage,
+            batch_size=batch_size,
+            resume=True
+        )
+
+        # Print stats
+        stats = scorer.get_stats()
+        print(f"\n✓ Computed OD for {len(results)} perturbations")
+        print(f"   Graded: {stats['graded_count']}")
+        print(f"   Failed: {stats['failed_count']}")
+        print(f"   Success rate: {stats['success_rate']:.1%}")
+
+        # Show OD distribution
+        if results:
+            od_values = [r.od_value for r in results]
+            print(f"\nOD Distribution:")
+            print(f"   Mean: {np.mean(od_values):.3f}")
+            print(f"   Std:  {np.std(od_values):.3f}")
+            print(f"   Min:  {min(od_values):.3f}")
+            print(f"   Max:  {max(od_values):.3f}")
+
+        print("\n" + "=" * 70)
+        print("✅ OD COMPUTATION COMPLETE")
+        print("=" * 70)
+        print()
+
+    def _phase_validate_od(self):
+        """Phase: Validate OD distribution before calibration."""
+        print("✅ PHASE: VALIDATE OD")
+        print("=" * 70)
+        print()
+
+        # Get validation config
+        validation_config = self.config.get("od_validation", {})
+        source_config = self.config.get("source_experiment", {})
+        output_dir = Path(self.config.get("calibration", {}).get(
+            "output_dir", "results/rq1"
+        ))
+
+        min_coverage = validation_config.get("min_coverage", 0.7)
+        min_variance = validation_config.get("min_variance", 0.1)
+        spot_check_count = validation_config.get("spot_check_count", 20)
+
+        # Determine source experiment
+        source_experiment_id = source_config.get(
+            "experiment_id", self.experiment_id
+        )
+
+        # Load perturbations
+        print("📥 Loading perturbations...")
+        use_primary_only = source_config.get("use_primary_only", True)
+        use_annotated_only = source_config.get("use_annotated_only", False)
+
+        if use_annotated_only:
+            perturbations = list(self.storage.db['perturbations'].find({
+                'selected_for_annotation': True
+            }))
+        else:
+            perturbations = list(self.storage.get_perturbations_by_experiment(
+                source_experiment_id
+            ))
+            if use_primary_only:
+                perturbations = [
+                    p for p in perturbations
+                    if p.get("is_primary_for_experiment", False)
+                ]
+
+        print(f"   Total perturbations: {len(perturbations)}")
+
+        # Check coverage
+        with_od = [p for p in perturbations if p.get("od")]
+        coverage = len(with_od) / len(perturbations) if perturbations else 0
+
+        print(f"\n📊 OD Coverage:")
+        print(f"   Perturbations with OD: {len(with_od)}")
+        print(f"   Coverage: {coverage:.1%}")
+        print(f"   Required: >= {min_coverage:.1%}")
+
+        coverage_pass = coverage >= min_coverage
+        print(f"   Status: {'✅ PASS' if coverage_pass else '❌ FAIL'}")
+
+        # Check variance
+        if with_od:
+            od_values = [p["od"].get("value", 0) for p in with_od]
+            variance = np.var(od_values)
+
+            print(f"\n📊 OD Variance:")
+            print(f"   Variance: {variance:.4f}")
+            print(f"   Required: > {min_variance}")
+
+            variance_pass = variance > min_variance
+            print(f"   Status: {'✅ PASS' if variance_pass else '❌ FAIL'}")
+
+            # Distribution stats
+            print(f"\n📊 OD Distribution:")
+            print(f"   Mean: {np.mean(od_values):.3f}")
+            print(f"   Std:  {np.std(od_values):.3f}")
+            print(f"   Min:  {min(od_values):.3f}")
+            print(f"   Max:  {max(od_values):.3f}")
+
+            # Count OD=0 cases
+            zero_od = [p for p in with_od if abs(p["od"].get("value", 0)) < 0.01]
+            print(f"\n📊 OD=0 Cases:")
+            print(f"   Count: {len(zero_od)}")
+            print(f"   Percentage: {len(zero_od) / len(with_od) * 100:.1f}%")
+
+            # Spot check OD=0 cases
+            if zero_od and spot_check_count > 0:
+                print(f"\n🔍 Spot-checking {min(spot_check_count, len(zero_od))} OD=0 samples:")
+                import random
+                random.seed(42)
+                samples = random.sample(zero_od, min(spot_check_count, len(zero_od)))
+
+                for i, p in enumerate(samples[:5], 1):
+                    od_info = p.get("od", {})
+                    print(f"   {i}. {p.get('perturbation_id', 'unknown')[:50]}...")
+                    print(f"      Baseline: {od_info.get('baseline_outcome', 'N/A')}")
+                    print(f"      Perturbed: {od_info.get('perturbed_outcome', 'N/A')}")
+        else:
+            variance_pass = False
+
+        # Save validation results
+        output_dir.mkdir(parents=True, exist_ok=True)
+        validation_results = {
+            "total_perturbations": len(perturbations),
+            "with_od": len(with_od),
+            "coverage": float(coverage),
+            "coverage_pass": bool(coverage_pass),
+            "variance": float(variance) if with_od else 0,
+            "variance_pass": bool(variance_pass),
+            "od_zero_count": len(zero_od) if with_od else 0,
+            "checks_passed": bool(coverage_pass and variance_pass)
+        }
+
+        import json
+        validation_path = output_dir / "od_validation.json"
+        with open(validation_path, 'w') as f:
+            json.dump(validation_results, f, indent=2)
+        print(f"\n📁 Saved validation results to {validation_path}")
+
+        # Final verdict
+        all_pass = coverage_pass and variance_pass
+        print("\n" + "=" * 70)
+        if all_pass:
+            print("✅ OD VALIDATION PASSED - Ready for calibration")
+        else:
+            print("❌ OD VALIDATION FAILED - Review issues before proceeding")
+        print("=" * 70)
+        print()
+
+        return all_pass
+
+    def _phase_compute_calibration(self):
+        """Phase: Compute calibration metrics (JPS vs OD)."""
+        print("📊 PHASE: COMPUTE CALIBRATION")
+        print("=" * 70)
+        print()
+
+        from src.analysis.calibration import CalibrationAnalyzer
+
+        # Get configurations
+        calibration_config = self.config.get("calibration", {})
+        source_config = self.config.get("source_experiment", {})
+        judge_config = self.config.get("judge_source", {})
+
+        # Determine source experiment for perturbations
+        source_experiment_id = source_config.get(
+            "experiment_id", self.experiment_id
+        )
+
+        # Determine judge experiment
+        judge_experiment_id = judge_config.get(
+            "experiment_id", self.experiment_id
+        )
+        judge_name = judge_config.get("judge_name", "claude-sonnet-4.5")
+
+        print(f"Source experiment: {source_experiment_id}")
+        print(f"Judge experiment: {judge_experiment_id}")
+        print(f"Judge: {judge_name}")
+        print()
+
+        # Load perturbations with OD
+        print("📥 Loading perturbations with OD...")
+        use_primary_only = source_config.get("use_primary_only", True)
+        use_annotated_only = source_config.get("use_annotated_only", False)
+
+        if use_annotated_only:
+            perturbations = list(self.storage.db['perturbations'].find({
+                'selected_for_annotation': True
+            }))
+        else:
+            perturbations = list(self.storage.get_perturbations_by_experiment(
+                source_experiment_id
+            ))
+            if use_primary_only:
+                perturbations = [
+                    p for p in perturbations
+                    if p.get("is_primary_for_experiment", False)
+                ]
+
+        # Filter to those with OD
+        perturbations = [p for p in perturbations if p.get("od")]
+        print(f"   Perturbations with OD: {len(perturbations)}")
+
+        if not perturbations:
+            print("❌ No perturbations with OD found")
+            print("   Run 'od' phase first to compute OD values")
+            return
+
+        # Load judge evaluations
+        print("\n📥 Loading judge evaluations...")
+        evaluations = self.storage.get_judge_outputs(
+            experiment_id=judge_experiment_id,
+            judge_name=judge_name
+        )
+        print(f"   Evaluations: {len(evaluations)}")
+
+        if not evaluations:
+            print(f"❌ No evaluations found for {judge_name}")
+            return
+
+        # Initialize analyzer
+        analyzer = CalibrationAnalyzer(calibration_config)
+
+        if self.dry_run:
+            print("\n🔍 DRY RUN: Would compute calibration metrics")
+            return
+
+        # Run analysis
+        print("\n🔢 Computing calibration metrics...")
+        report = analyzer.analyze(evaluations, perturbations)
+
+        # Print summary
+        analyzer.print_summary(report)
+
+        # Save results
+        print("\n💾 Saving results...")
+        analyzer.save_results(report, evaluations, perturbations)
+
+        print("\n" + "=" * 70)
+        print("✅ CALIBRATION ANALYSIS COMPLETE")
+        print("=" * 70)
+        print(f"\nResults saved to: {analyzer.output_dir}")
+        print()
