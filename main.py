@@ -53,14 +53,26 @@ def load_config(config_name: str) -> Dict[str, Any]:
     """Load experiment configuration from JSON file."""
     config_dir = Path(__file__).parent / "config" / "experiments"
 
-    config_path = config_dir / f"{config_name}.json"
-    if not config_path.exists():
-        config_path = config_dir / config_name
+    # Search order: v2/, v1/, root
+    search_paths = [
+        config_dir / "v2" / f"{config_name}.json",
+        config_dir / "v1" / f"{config_name}.json",
+        config_dir / f"{config_name}.json",
+        config_dir / "v2" / config_name,
+        config_dir / "v1" / config_name,
+        config_dir / config_name,
+    ]
 
-    if not config_path.exists():
+    config_path = None
+    for path in search_paths:
+        if path.exists():
+            config_path = path
+            break
+
+    if not config_path:
         raise FileNotFoundError(
             f"Config file not found: {config_name}\n"
-            f"Looked in: {config_dir}\n"
+            f"Looked in: {config_dir}/v2, {config_dir}/v1\n"
             f"Use --list-configs to see available configurations."
         )
 
@@ -78,38 +90,49 @@ def list_available_configs():
         print("No config directory found.")
         return
 
-    config_files = sorted(config_dir.glob("*.json"))
-
-    if not config_files:
-        print("No configuration files found.")
-        return
-
     print("=" * 70)
     print("AVAILABLE CONFIGURATIONS")
     print("=" * 70)
+
+    # List v2 configs first (recommended)
+    v2_dir = config_dir / "v2"
+    if v2_dir.exists():
+        v2_files = sorted(v2_dir.glob("*.json"))
+        if v2_files:
+            print("\n[v2] Schema 2.0 (recommended)")
+            print("-" * 40)
+            for config_file in v2_files:
+                _print_config_info(config_file)
+
+    # List v1 configs (legacy)
+    v1_dir = config_dir / "v1"
+    if v1_dir.exists():
+        v1_files = sorted(v1_dir.glob("*.json"))
+        if v1_files:
+            print("\n[v1] Legacy configs")
+            print("-" * 40)
+            for config_file in v1_files:
+                _print_config_info(config_file)
+
     print()
-
-    for config_file in config_files:
-        config_name = config_file.stem
-        try:
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-                exp_info = config.get('experiment', {})
-                name = exp_info.get('name', 'N/A')
-                desc = exp_info.get('description', 'N/A')
-        except Exception:
-            name = 'Error loading'
-            desc = 'Could not parse config'
-
-        print(f"  {config_name}")
-        print(f"   Name: {name}")
-        print(f"   Description: {desc}")
-        print()
-
     print("=" * 70)
     print("Usage: python main.py --config <config_name> --runner <phases>")
     print("Phases: load, perturb, sample, annotate, judge, compute")
     print("=" * 70)
+
+
+def _print_config_info(config_file: Path):
+    """Print info about a config file."""
+    config_name = config_file.stem
+    try:
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+            exp_info = config.get('experiment', {})
+            name = exp_info.get('name', 'N/A')
+    except Exception:
+        name = 'Error loading'
+
+    print(f"  {config_name}: {name}")
 
 
 def main():
