@@ -2,19 +2,11 @@
 """
 Main entry point for the experiment runner.
 
-Supports two schema versions:
-- Schema 1.x: Legacy format (ExperimentRunner)
-- Schema 2.x: Simplified format (RunnerV2)
+6 phases: load, perturb, sample, annotate, judge, compute
 
 Usage:
-    # Schema 2.x (6 phases: load, perturb, sample, annotate, judge, compute)
     python main.py --config schema_2_template --runner load,perturb
     python main.py --config schema_2_template --runner judge,compute
-
-    # Schema 1.x (legacy)
-    python main.py --config poc_experiment --runner all
-
-    # List configs
     python main.py --list-configs
 """
 
@@ -29,7 +21,6 @@ from typing import Dict, Any
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from src.experiment_runner import ExperimentRunner
-from src.runner_v2 import RunnerV2
 
 
 class TeeOutput:
@@ -42,7 +33,7 @@ class TeeOutput:
     def write(self, message):
         self.stdout.write(message)
         self.file.write(message)
-        self.file.flush()  # Ensure immediate write
+        self.file.flush()
 
     def flush(self):
         self.stdout.flush()
@@ -59,21 +50,9 @@ class TeeOutput:
 
 
 def load_config(config_name: str) -> Dict[str, Any]:
-    """
-    Load experiment configuration from JSON file.
-
-    Args:
-        config_name: Name of config file (without .json extension)
-
-    Returns:
-        Configuration dictionary
-
-    Raises:
-        FileNotFoundError: If config file doesn't exist
-    """
+    """Load experiment configuration from JSON file."""
     config_dir = Path(__file__).parent / "config" / "experiments"
 
-    # Try with and without .json extension
     config_path = config_dir / f"{config_name}.json"
     if not config_path.exists():
         config_path = config_dir / config_name
@@ -117,33 +96,20 @@ def list_available_configs():
                 config = json.load(f)
                 exp_info = config.get('experiment', {})
                 name = exp_info.get('name', 'N/A')
-                schema = config.get('schema', '1.x')
                 desc = exp_info.get('description', 'N/A')
         except Exception:
             name = 'Error loading'
-            schema = '?'
             desc = 'Could not parse config'
 
-        print(f"📄 {config_name}")
+        print(f"  {config_name}")
         print(f"   Name: {name}")
-        print(f"   Schema: {schema}")
         print(f"   Description: {desc}")
         print()
 
     print("=" * 70)
-    print(f"Usage: python main.py --config <config_name>")
+    print("Usage: python main.py --config <config_name> --runner <phases>")
+    print("Phases: load, perturb, sample, annotate, judge, compute")
     print("=" * 70)
-
-
-def get_schema_version(config: Dict[str, Any]) -> str:
-    """Extract schema version from config, default to 1.0.0."""
-    return config.get("schema", "1.0.0")
-
-
-def is_schema_v2(config: Dict[str, Any]) -> bool:
-    """Check if config uses schema 2.x."""
-    version = get_schema_version(config)
-    return version.startswith("2.")
 
 
 def main():
@@ -153,23 +119,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Schema 2.x (recommended)
   python main.py --config schema_2_template --runner load,perturb
   python main.py --config schema_2_template --runner judge,compute
-  python main.py --config schema_2_template --runner load,perturb,sample,annotate,judge,compute
-
-  # Schema 1.x (legacy)
-  python main.py --config poc_experiment --runner all
-  python main.py --config poc_experiment --runner load,perturb,judge
-
-  # Dry run (test without saving)
-  python main.py --config poc_experiment --runner load --dry-run
-
-  # List all available configs
+  python main.py --config schema_2_template --runner load --dry-run
   python main.py --list-configs
 
-Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
-(compute targets are defined in config.compute.targets)
+Phases: load, perturb, sample, annotate, judge, compute
         """
     )
 
@@ -179,28 +134,14 @@ Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
         help="Name of configuration file (in config/experiments/)"
     )
     parser.add_argument(
-        "--phase",
-        type=str,
-        help="(Deprecated: use --runner instead) Override phase specified in config"
-    )
-    parser.add_argument(
         "--runner",
         type=str,
-        help=(
-            "Which phases to run (comma-separated or 'all'). "
-            "Options: load, perturb, annotate, judge, ccg, analyze, all. "
-            "Example: --runner load,perturb or --runner all"
-        )
+        help="Phases to run (comma-separated): load,perturb,sample,annotate,judge,compute"
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Run without saving to database"
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last checkpoint"
     )
     parser.add_argument(
         "--list-configs",
@@ -211,11 +152,6 @@ Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
         "--verbose",
         action="store_true",
         help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--log-bedrock",
-        action="store_true",
-        help="Log Bedrock API calls with latency"
     )
 
     args = parser.parse_args()
@@ -231,81 +167,40 @@ Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
 
     # Load configuration
     try:
-        print(f"📋 Loading configuration: {args.config}")
+        print(f"Loading configuration: {args.config}")
         config = load_config(args.config)
-        print(f"✓ Loaded config: {config['experiment']['name']}")
+        print(f"Loaded: {config['experiment']['name']}")
         print()
     except FileNotFoundError as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Error loading config: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error loading config: {e}")
         sys.exit(1)
-
-    # Detect schema version early
-    schema_v2 = is_schema_v2(config)
-    schema_version = get_schema_version(config)
-
-    # Override config with command-line args (schema 1.x only)
-    # Schema 2.x passes args directly to RunnerV2
-    if not schema_v2:
-        if 'execution' not in config:
-            config['execution'] = {}
-
-        if args.phase:
-            print("⚠️  Warning: --phase is deprecated, use --runner instead")
-            config['execution']['runner'] = args.phase
-
-        if args.runner:
-            config['execution']['runner'] = args.runner
-
-        if args.dry_run:
-            config['execution']['dry_run'] = True
-
-        if args.verbose:
-            config['execution']['verbose'] = True
-
-        if args.resume:
-            config['execution']['resume'] = True
-
-        if args.log_bedrock:
-            config['execution']['log_bedrock'] = True
 
     # Print CLI options
     if args.runner:
-        print("⚙️  Runner: {}".format(args.runner))
+        print(f"Runner: {args.runner}")
     if args.dry_run:
-        print("⚙️  Dry run mode enabled")
-    if args.verbose:
-        print("⚙️  Verbose mode enabled")
-    if args.resume:
-        print("⚙️  Resume mode enabled")
+        print("Dry run mode enabled")
 
     print()
-    print(f"📋 Schema version: {schema_version}")
 
-    # Set up logging to file
+    # Set up logging
     experiment_info = config.get('experiment', {})
     experiment_name = experiment_info.get('name', 'experiment')
-    # Schema 2.x uses 'id', Schema 1.x uses 'experiment_id'
-    experiment_id = experiment_info.get('id') or experiment_info.get('experiment_id', args.config)
-    verbose = config.get('execution', {}).get('verbose', args.verbose)
+    experiment_id = experiment_info.get('id', args.config)
 
-    # Create logs directory
     logs_dir = Path(__file__).parent / "logs"
     logs_dir.mkdir(exist_ok=True)
 
-    # Use experiment_id as log filename (append to same log for same experiment)
-    safe_experiment_id = experiment_id.replace("/", "_").replace(":", "_")
-    log_filename = f"{safe_experiment_id}.log"
-    log_path = logs_dir / log_filename
+    safe_id = experiment_id.replace("/", "_").replace(":", "_")
+    log_path = logs_dir / f"{safe_id}.log"
 
-    print(f"📝 Logging to: {log_path}")
+    print(f"Logging to: {log_path}")
     print()
 
-    # Redirect stdout to both console and file
+    # Run experiment
     with TeeOutput(log_path, mode='a') as tee:
         original_stdout = sys.stdout
         sys.stdout = tee
@@ -315,53 +210,39 @@ Schema 2.x Phases: load, perturb, sample, annotate, judge, compute
             print(f"NEW RUN - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print("=" * 70)
             print(f"Experiment: {experiment_name}")
-            print(f"Experiment ID: {experiment_id}")
             print(f"Config: {args.config}")
-            print(f"Runner: {config.get('execution', {}).get('runner', 'N/A')}")
-            print(f"Log file: {log_path}")
+            print(f"Runner: {args.runner or 'none'}")
             print("=" * 70)
             print()
 
-            # Create and run experiment based on schema version
-            if schema_v2:
-                print(f"Using RunnerV2 (schema {schema_version})")
-                print()
-                runner = RunnerV2(
-                    config,
-                    runner_str=args.runner,
-                    dry_run=args.dry_run,
-                    verbose=args.verbose or verbose,
-                )
-            else:
-                print(f"Using ExperimentRunner (schema {schema_version})")
-                print()
-                runner = ExperimentRunner(config)
-
+            runner = ExperimentRunner(
+                config,
+                runner_str=args.runner,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+            )
             runner.run()
 
             print()
             print("=" * 70)
-            print("✅ EXPERIMENT PHASE COMPLETE")
+            print("EXPERIMENT PHASE COMPLETE")
             print("=" * 70)
 
         except KeyboardInterrupt:
-            print()
-            print("⚠️  Interrupted by user")
+            print("\nInterrupted by user")
             sys.stdout = original_stdout
             sys.exit(130)
         except Exception as e:
             print()
             print("=" * 70)
-            print("❌ EXPERIMENT FAILED")
+            print("EXPERIMENT FAILED")
             print("=" * 70)
             print(f"Error: {e}")
-            print()
             import traceback
             traceback.print_exc()
             sys.stdout = original_stdout
             sys.exit(1)
         finally:
-            # Restore stdout
             sys.stdout = original_stdout
 
 
