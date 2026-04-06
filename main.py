@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-Main entry point for the POC experiment.
+Main entry point for the experiment runner.
 
-This is the single driver script that runs all phases of the experiment
-based on configuration files.
+Supports two schema versions:
+- Schema 1.x: Legacy format (ExperimentRunner)
+- Schema 2.x: Simplified format (RunnerV2)
 
 Usage:
-    python main.py --config poc_phase2_load
-    python main.py --config poc_phase2_load --dry-run
-    python main.py --config poc_phase2_load --phase load_trajectories
+    # Schema 2.x (recommended)
+    python main.py --config schema_2_template --runner load,perturb
+    python main.py --config schema_2_template --runner compute:od,ccg
+    python main.py --config schema_2_template --runner judge,compute
+
+    # Schema 1.x (legacy)
+    python main.py --config poc_experiment --runner all
+    python main.py --config poc_experiment --runner load,perturb,judge
+
+    # List configs
     python main.py --list-configs
 """
 
@@ -23,6 +31,7 @@ from typing import Dict, Any
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from src.experiment_runner import ExperimentRunner
+from src.runner_v2 import RunnerV2
 
 
 class TeeOutput:
@@ -110,16 +119,16 @@ def list_available_configs():
                 config = json.load(f)
                 exp_info = config.get('experiment', {})
                 name = exp_info.get('name', 'N/A')
-                phase = config.get('execution', {}).get('phase', 'N/A')
+                schema = config.get('schema', '1.x')
                 desc = exp_info.get('description', 'N/A')
         except Exception:
             name = 'Error loading'
-            phase = 'N/A'
+            schema = '?'
             desc = 'Could not parse config'
 
         print(f"📄 {config_name}")
         print(f"   Name: {name}")
-        print(f"   Phase: {phase}")
+        print(f"   Schema: {schema}")
         print(f"   Description: {desc}")
         print()
 
@@ -128,28 +137,41 @@ def list_available_configs():
     print("=" * 70)
 
 
+def get_schema_version(config: Dict[str, Any]) -> str:
+    """Extract schema version from config, default to 1.0.0."""
+    return config.get("schema", "1.0.0")
+
+
+def is_schema_v2(config: Dict[str, Any]) -> bool:
+    """Check if config uses schema 2.x."""
+    version = get_schema_version(config)
+    return version.startswith("2.")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Run POC experiment phases",
+        description="Run experiment phases",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run entire experiment
+  # Schema 2.x (recommended)
+  python main.py --config schema_2_template --runner load,perturb
+  python main.py --config schema_2_template --runner compute:od,ccg
+  python main.py --config schema_2_template --runner judge,compute
+
+  # Schema 1.x (legacy)
   python main.py --config poc_experiment --runner all
-
-  # Run specific phases
-  python main.py --config poc_experiment --runner load,perturb
-  python main.py --config poc_experiment --runner judge,ccg,analyze
-
-  # Run single phase
-  python main.py --config poc_experiment --runner load
+  python main.py --config poc_experiment --runner load,perturb,judge
 
   # Dry run (test without saving)
   python main.py --config poc_experiment --runner load --dry-run
 
   # List all available configs
   python main.py --list-configs
+
+Schema 2.x Phases: load, perturb, sample, annotate, judge
+Schema 2.x Compute: jps, tcs, od, ccg, calibration (use compute:<target>)
         """
     )
 
@@ -224,36 +246,53 @@ Examples:
         traceback.print_exc()
         sys.exit(1)
 
-    # Override config with command-line args
-    if args.phase:
-        print("⚠️  Warning: --phase is deprecated, use --runner instead")
-        config['execution']['runner'] = args.phase
+    # Detect schema version early
+    schema_v2 = is_schema_v2(config)
+    schema_version = get_schema_version(config)
 
+    # Override config with command-line args (schema 1.x only)
+    # Schema 2.x passes args directly to RunnerV2
+    if not schema_v2:
+        if 'execution' not in config:
+            config['execution'] = {}
+
+        if args.phase:
+            print("⚠️  Warning: --phase is deprecated, use --runner instead")
+            config['execution']['runner'] = args.phase
+
+        if args.runner:
+            config['execution']['runner'] = args.runner
+
+        if args.dry_run:
+            config['execution']['dry_run'] = True
+
+        if args.verbose:
+            config['execution']['verbose'] = True
+
+        if args.resume:
+            config['execution']['resume'] = True
+
+        if args.log_bedrock:
+            config['execution']['log_bedrock'] = True
+
+    # Print CLI options
     if args.runner:
-        config['execution']['runner'] = args.runner
         print("⚙️  Runner: {}".format(args.runner))
-
     if args.dry_run:
-        config['execution']['dry_run'] = True
         print("⚙️  Dry run mode enabled")
-
     if args.verbose:
-        config['execution']['verbose'] = True
-
+        print("⚙️  Verbose mode enabled")
     if args.resume:
-        config['execution']['resume'] = True
         print("⚙️  Resume mode enabled")
 
-    if args.log_bedrock:
-        config['execution']['log_bedrock'] = True
-        print("⚙️  Bedrock API logging enabled")
-
     print()
+    print(f"📋 Schema version: {schema_version}")
 
     # Set up logging to file
     experiment_info = config.get('experiment', {})
     experiment_name = experiment_info.get('name', 'experiment')
-    experiment_id = experiment_info.get('experiment_id', args.config)
+    # Schema 2.x uses 'id', Schema 1.x uses 'experiment_id'
+    experiment_id = experiment_info.get('id') or experiment_info.get('experiment_id', args.config)
     verbose = config.get('execution', {}).get('verbose', args.verbose)
 
     # Create logs directory
@@ -285,8 +324,21 @@ Examples:
             print("=" * 70)
             print()
 
-            # Create and run experiment
-            runner = ExperimentRunner(config)
+            # Create and run experiment based on schema version
+            if schema_v2:
+                print(f"Using RunnerV2 (schema {schema_version})")
+                print()
+                runner = RunnerV2(
+                    config,
+                    runner_str=args.runner,
+                    dry_run=args.dry_run,
+                    verbose=args.verbose or verbose,
+                )
+            else:
+                print(f"Using ExperimentRunner (schema {schema_version})")
+                print()
+                runner = ExperimentRunner(config)
+
             runner.run()
 
             print()
