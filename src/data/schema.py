@@ -8,11 +8,11 @@ different benchmarks (ToolBench, GAIA) to enable unified processing.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 
 
 class StepType(Enum):
     """Type of step in a trajectory."""
+
     PLANNING = "planning"
     TOOL_SELECTION = "tool_selection"
     TOOL_EXECUTION = "tool_execution"
@@ -37,6 +37,7 @@ class Step:
         tool_output: Tool execution result (if applicable)
         metadata: Additional benchmark-specific metadata
     """
+
     step_id: str
     step_number: int
     step_type: StepType
@@ -80,6 +81,7 @@ class GroundTruth:
         difficulty: Task difficulty level (if available)
         domain: Task domain/category
     """
+
     task_description: str
     expected_answer: Optional[str] = None
     task_success: Optional[bool] = None
@@ -118,6 +120,7 @@ class Trajectory:
         domain: Classified domain category for stratified sampling
         complexity: Classified complexity level (simple/medium/complex)
     """
+
     trajectory_id: str
     benchmark: str
     steps: List[Step]
@@ -125,6 +128,7 @@ class Trajectory:
     metadata: Dict[str, Any] = field(default_factory=dict)
     domain: Optional[str] = None
     complexity: Optional[str] = None
+    provenance: Optional["SamplingProvenance"] = None
 
     def __len__(self) -> int:
         """Return number of steps in trajectory."""
@@ -160,7 +164,7 @@ class Trajectory:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "trajectory_id": self.trajectory_id,
             "benchmark": self.benchmark,
             "steps": [step.to_dict() for step in self.steps],
@@ -169,6 +173,9 @@ class Trajectory:
             "domain": self.domain,
             "complexity": self.complexity,
         }
+        if self.provenance:
+            result["provenance"] = self.provenance.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Trajectory":
@@ -176,9 +183,13 @@ class Trajectory:
         data = data.copy()
         data["steps"] = [Step.from_dict(s) for s in data["steps"]]
         data["ground_truth"] = GroundTruth.from_dict(data["ground_truth"])
-        # Handle backward compatibility for old files without domain/complexity
+        # Handle backward compatibility for old files without domain/complexity/provenance
         data.setdefault("domain", None)
         data.setdefault("complexity", None)
+        if "provenance" in data and data["provenance"]:
+            data["provenance"] = SamplingProvenance.from_dict(data["provenance"])
+        else:
+            data.setdefault("provenance", None)
         return cls(**data)
 
     def get_text_representation(self) -> str:
@@ -205,13 +216,114 @@ class Trajectory:
             if step.tool_input:
                 lines.append(f"  Input: {step.tool_input}")
             if step.tool_output:
-                lines.append(f"  Output: {step.tool_output[:200]}..." if len(step.tool_output) > 200 else f"  Output: {step.tool_output}")
+                lines.append(
+                    f"  Output: {step.tool_output[:200]}..."
+                    if len(step.tool_output) > 200
+                    else f"  Output: {step.tool_output}"
+                )
             lines.append("")
 
         if self.ground_truth.expected_answer:
             lines.append(f"Expected Answer: {self.ground_truth.expected_answer}")
 
         return "\n".join(lines)
+
+
+@dataclass
+class SamplingProvenance:
+    """
+    Provenance metadata for a sampled trajectory.
+
+    Tracks how and when a trajectory was sampled for reproducibility.
+
+    Attributes:
+        sampled_at: ISO timestamp when sampling occurred
+        sampling_seed: Random seed used for sampling
+        source_dataset: Source dataset identifier (e.g., "toolbench_v1")
+        source_index: Original index in source dataset
+        filter_criteria: Filters applied during sampling
+        loader_version: Version of the loader used
+    """
+
+    sampled_at: str  # ISO format timestamp
+    sampling_seed: int
+    source_dataset: str
+    source_index: int
+    filter_criteria: Dict[str, Any] = field(default_factory=dict)
+    loader_version: str = "1.0.0"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "sampled_at": self.sampled_at,
+            "sampling_seed": self.sampling_seed,
+            "source_dataset": self.source_dataset,
+            "source_index": self.source_index,
+            "filter_criteria": self.filter_criteria,
+            "loader_version": self.loader_version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SamplingProvenance":
+        """Create SamplingProvenance from dictionary."""
+        return cls(**data)
+
+
+@dataclass
+class SamplingManifest:
+    """
+    Complete manifest for a sampling run.
+
+    Provides full provenance for an entire sampling operation,
+    enabling exact reproduction of the dataset.
+
+    Attributes:
+        experiment_id: Associated experiment ID
+        created_at: When manifest was created
+        seed: Master random seed
+        config: Full sampling configuration used
+        trajectory_ids: List of sampled trajectory IDs
+        counts: Counts by benchmark, domain, complexity
+        rejection_log: Why trajectories were filtered out
+        checksums: Data integrity checksums
+    """
+
+    experiment_id: str
+    created_at: str
+    seed: int
+    config: Dict[str, Any]
+    trajectory_ids: List[str] = field(default_factory=list)
+    counts: Dict[str, Any] = field(default_factory=dict)
+    rejection_log: List[Dict[str, Any]] = field(default_factory=list)
+    checksums: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "experiment_id": self.experiment_id,
+            "created_at": self.created_at,
+            "seed": self.seed,
+            "config": self.config,
+            "trajectory_ids": self.trajectory_ids,
+            "counts": self.counts,
+            "rejection_log": self.rejection_log,
+            "checksums": self.checksums,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SamplingManifest":
+        """Create SamplingManifest from dictionary."""
+        return cls(**data)
+
+    def add_rejection(self, trajectory_id: str, reason: str, details: Dict = None):
+        """Record a rejected trajectory."""
+        self.rejection_log.append(
+            {
+                "trajectory_id": trajectory_id,
+                "reason": reason,
+                "details": details or {},
+            }
+        )
 
 
 @dataclass
@@ -229,6 +341,7 @@ class PerturbedTrajectory:
         perturbed_step_content: Modified step after perturbation
         perturbation_metadata: Additional information about the perturbation
     """
+
     original_trajectory: Trajectory
     perturbed_trajectory: Trajectory
     perturbation_type: str  # "planning", "tool_selection", "parameter"
@@ -256,5 +369,7 @@ class PerturbedTrajectory:
         """Create PerturbedTrajectory from dictionary."""
         data = data.copy()
         data["original_trajectory"] = Trajectory.from_dict(data["original_trajectory"])
-        data["perturbed_trajectory"] = Trajectory.from_dict(data["perturbed_trajectory"])
+        data["perturbed_trajectory"] = Trajectory.from_dict(
+            data["perturbed_trajectory"]
+        )
         return cls(**data)
