@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1220" viewBox="0 0 1800 1220">
+  <defs>
+    <style>
+      .title { font: bold 28px Arial, sans-serif; }
+      .subtitle { font: 18px Arial, sans-serif; }
+      .box { fill: #ffffff; stroke: #111111; stroke-width: 2; rx: 14; ry: 14; }
+      .soft { fill: #f7f7f7; }
+      .section { font: bold 20px Arial, sans-serif; }
+      .text { font: 15px Arial, sans-serif; }
+      .small { font: 13px Arial, sans-serif; }
+      .formula { font: italic 14px Arial, sans-serif; }
+      .arrow { stroke: #111111; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .thin { stroke-width: 1.4; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#111111"/>
+    </marker>
+  </defs>
+
+  <text x="40" y="40" class="title">LLM-as-Judge for Agent Trajectories — Revised Study Diagram</text>
+  <text x="40" y="70" class="subtitle">Main paper: Detectability vs Consequentiality, grounded in controlled perturbations and outcome evidence</text>
+
+  <!-- Row 1 -->
+  <rect x="40" y="110" width="260" height="150" class="box soft"/>
+  <text x="60" y="140" class="section">1. Trajectory Sources</text>
+  <text x="60" y="175" class="text">• ToolBench (400)</text>
+  <text x="60" y="200" class="text">• GAIA (100)</text>
+  <text x="60" y="225" class="text">• SWE-bench (100)</text>
+
+  <rect x="340" y="110" width="300" height="150" class="box soft"/>
+  <text x="360" y="140" class="section">2. Typed Representation</text>
+  <text x="360" y="175" class="text">• step role</text>
+  <text x="360" y="200" class="text">• tool + params</text>
+  <text x="360" y="225" class="text">• dependencies / critical path</text>
+
+  <rect x="690" y="90" width="420" height="190" class="box"/>
+  <text x="710" y="120" class="section">3. Controlled Perturbations</text>
+  <text x="710" y="155" class="text">Placebo: semantic-preserving rewrites</text>
+  <text x="710" y="180" class="text">Fine-grained: single local-slot mutation</text>
+  <text x="710" y="205" class="text">Coarse-grained: structural decision change</text>
+  <text x="710" y="235" class="small">Fine examples: wrong line / field / id / threshold / copied value</text>
+  <text x="710" y="260" class="small">Coarse examples: wrong plan / wrong tool family / skipped prerequisite</text>
+
+  <rect x="1160" y="110" width="280" height="150" class="box soft"/>
+  <text x="1180" y="140" class="section">4. Evaluation Unit</text>
+  <text x="1180" y="175" class="text">baseline trajectory</text>
+  <text x="1180" y="200" class="text">perturbed trajectory</text>
+  <text x="1180" y="225" class="text">step + type metadata</text>
+
+  <line x1="300" y1="185" x2="340" y2="185" class="arrow"/>
+  <line x1="640" y1="185" x2="690" y2="185" class="arrow"/>
+  <line x1="1110" y1="185" x2="1160" y2="185" class="arrow"/>
+
+  <!-- Row 2 -->
+  <rect x="40" y="350" width="520" height="250" class="box"/>
+  <text x="60" y="380" class="section">5A. Human Labels</text>
+  <text x="60" y="415" class="text">Detectability: 0 none / 1 subtle / 2 clear</text>
+  <text x="60" y="445" class="text">Localization: exact / near / wrong</text>
+  <text x="60" y="475" class="text">Type confirmation: planning / tool / parameter / data / unclear</text>
+  <text x="60" y="505" class="text">Impact tier: 0 none / 1 minor / 2 moderate / 3 major</text>
+  <text x="60" y="535" class="text">Propagation: 0–3</text>
+  <text x="60" y="565" class="text">Confidence: 1–5</text>
+
+  <rect x="620" y="350" width="520" height="250" class="box"/>
+  <text x="640" y="380" class="section">5B. LLM Judge Outputs</text>
+  <text x="640" y="415" class="text">overall score (0–100)</text>
+  <text x="640" y="445" class="text">error_detected</text>
+  <text x="640" y="475" class="text">predicted_error_step</text>
+  <text x="640" y="505" class="text">predicted_error_type</text>
+  <text x="640" y="535" class="text">predicted_failure_prob (0–1)</text>
+  <text x="640" y="565" class="text">predicted_impact_score (0–1)</text>
+
+  <rect x="1200" y="350" width="560" height="250" class="box"/>
+  <text x="1220" y="380" class="section">5C. Outcome Evidence</text>
+  <text x="1220" y="415" class="text">Tier 1: full replay</text>
+  <text x="1220" y="445" class="text">Tier 2: regenerate downstream from perturbed prefix</text>
+  <text x="1220" y="475" class="text">Tier 3: independent final-answer grading</text>
+  <text x="1220" y="520" class="text">Outcome Degradation (OD) = Score(base) − Score(pert)</text>
+  <text x="1220" y="550" class="text">Propagation Depth (PD) = downstream corrupted steps</text>
+  <text x="1220" y="580" class="text">Recovery Cost (RC) = Δsteps + Δtoolcalls + Δretries</text>
+
+  <line x1="1300" y1="260" x2="300" y2="350" class="arrow thin"/>
+  <line x1="1300" y1="260" x2="880" y2="350" class="arrow thin"/>
+  <line x1="1300" y1="260" x2="1480" y2="350" class="arrow thin"/>
+
+  <!-- Row 3 -->
+  <rect x="40" y="690" width="540" height="300" class="box"/>
+  <text x="60" y="720" class="section">6A. Detection Metrics</text>
+  <text x="60" y="760" class="text">PDR = (1/N) Σ 1[judge detects perturbation]</text>
+  <text x="60" y="795" class="text">SLA = (1/N) Σ 1[predicted step = injected step]</text>
+  <text x="60" y="830" class="text">SLA±1 = (1/N) Σ 1[|pred step − true step| ≤ 1]</text>
+  <text x="60" y="865" class="text">TIA = (1/N) Σ 1[predicted type = true type]</text>
+  <text x="60" y="900" class="text">Critical Error Recall = recall on high-impact subset</text>
+
+  <rect x="630" y="690" width="540" height="300" class="box"/>
+  <text x="650" y="720" class="section">6B. Consequentiality + Calibration</text>
+  <text x="650" y="760" class="text">CCorr = Spearman(predicted impact, OD)</text>
+  <text x="650" y="795" class="text">CCEᵢ = predicted impact − true impact</text>
+  <text x="650" y="830" class="text">|CCE| = (1/N) Σ |predicted impact − true impact|</text>
+  <text x="650" y="865" class="text">ORR = high penalty rate on placebo / low-impact set</text>
+  <text x="650" y="900" class="text">URR = low penalty rate on catastrophic set</text>
+  <text x="650" y="935" class="text">Failure-ECE = Σ |acc(bin) − conf(bin)| weighted by bin size</text>
+
+  <rect x="1220" y="690" width="540" height="300" class="box"/>
+  <text x="1240" y="720" class="section">6C. Agreement + Claim</text>
+  <text x="1240" y="760" class="text">Human agreement: κ / π / α / τ</text>
+  <text x="1240" y="795" class="text">Judge variance: multi-sample mean + variance</text>
+  <text x="1240" y="840" class="text">Main claim:</text>
+  <text x="1240" y="875" class="text">Judges detect errors better than they estimate</text>
+  <text x="1240" y="905" class="text">their downstream consequence.</text>
+  <text x="1240" y="950" class="text">Optional follow-on: validated judge → RLAIF pilot</text>
+
+  <line x1="300" y1="600" x2="300" y2="690" class="arrow"/>
+  <line x1="880" y1="600" x2="900" y2="690" class="arrow"/>
+  <line x1="1480" y1="600" x2="1480" y2="690" class="arrow"/>
+</svg>
