@@ -1,6 +1,17 @@
 # 1. Trajectory Sources
 
-**Status: COMPLETED**
+**Status: COMPLETED (2026-04-07)**
+
+## Implementation Notes
+
+- Added `SamplingProvenance` and `SamplingManifest` dataclasses to `src/data/schema.py`
+- Added `load_stratified_sample()` function to `src/data/loaders.py`
+- Updated `_phase_load()` in `src/experiment_runner.py` to use stratified sampling
+- Created config: `config/experiments/v2/trajectory_sampling.json`
+- Added 10 tests to `tests/test_loaders.py`
+- See `bugs_1_trajectory_sources.md` for full details
+
+---
 
 ## Dataset Summary
 

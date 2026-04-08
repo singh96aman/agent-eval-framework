@@ -1,0 +1,138 @@
+{
+  "schema": "2.0.0",
+
+  "experiment": {
+    "id": "exp_trajectory_sampling_v7",
+    "name": "Trajectory Sampling - 500 Trajectories with Quality Filters",
+    "description": "Load and sample 500 trajectories (400 ToolBench, 100 SWE-bench) with quality filters, domain diversity, and full provenance tracking",
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    }
+  },
+
+  "phases": {
+    "load": {
+      "datasets": {
+        "toolbench": {
+          "enabled": true,
+          "source": "huggingface",
+          "limit": 3000,
+          "filters": {
+            "min_steps": 3,
+            "max_steps": 15
+          },
+          "_note": "Increased limit to 3000 to compensate for expert strict filter"
+        },
+        "swebench": {
+          "enabled": true,
+          "source": "huggingface",
+          "limit": 300,
+          "filters": {
+            "min_steps": 4,
+            "max_steps": 30
+          },
+          "_note": "Increased limit to compensate for quality filtering (empty content)"
+        }
+      },
+
+      "quality_filters": {
+        "enabled": true,
+        "thresholds": {
+          "max_http_error_rate": 0.5,
+          "max_thought_none": 2,
+          "max_empty_content_rate": 0.2,
+          "max_missing_tool_input_rate": 0.5,
+          "reject_placeholder_answers": true,
+          "reject_null_outcomes": true,
+          "require_finish_step": true,
+          "reject_combined_errors": true,
+          "min_grounding_score": 0.3,
+          "reject_graceful_failures": true
+        },
+        "benchmark_overrides": {
+          "toolbench": {
+            "max_missing_tool_input_rate": 1.0,
+            "use_strict_filter": true,
+            "_note": "Expert strict filter: task_success=true, Finish with give_answer, real tool output, no bad patterns"
+          },
+          "swebench": {
+            "max_empty_content_rate": 0.3,
+            "reject_null_outcomes": false,
+            "_note": "Relaxed for SWE-bench - some reasoning steps are short, and task_success is often null (evaluated by test pass/fail)"
+          }
+        },
+        "_note": "Filters: HTTP errors, Thought:None, empty content, missing inputs, null outcomes, missing Finish, combined errors (toolbench_19354), low grounding (GAIA), graceful failures (toolbench_87039)"
+      },
+
+      "deduplication": {
+        "enabled": true,
+        "benchmarks": ["swebench"],
+        "_note": "Expert feedback: SWE-bench has duplicate task descriptions for some PRs"
+      },
+
+      "step_cleaning": {
+        "enabled": true,
+        "remove_empty_steps": true,
+        "remove_thought_none_steps": true,
+        "normalize_null_tool_steps": true,
+        "_note": "Expert feedback: 57 empty SWE-bench steps, 30 Thought:None ToolBench steps, 53 GAIA tool_execution with null tool_name"
+      },
+
+      "sampling": {
+        "enabled": true,
+        "seed": 42,
+        "targets": {
+          "toolbench": 400,
+          "swebench": 100
+        },
+        "stratify_by": {
+          "complexity": {
+            "enabled": true,
+            "distribution": {
+              "simple": 0.50,
+              "medium": 0.25,
+              "complex": 0.25
+            },
+            "_note": "Distribution constrained by source data: ToolBench is mostly simple (3-4 steps), SWE-bench is all complex (7+ steps)"
+          },
+          "domain": {
+            "enabled": true,
+            "caps": {
+              "toolbench": {
+                "other": 0.25,
+                "_note": "Cap 'other' domain at 25% (was 46%)"
+              }
+            }
+          }
+        }
+      },
+
+      "validation": {
+        "enabled": true,
+        "step_requirements": {
+          "min_steps": 2,
+          "max_steps": 100
+        },
+        "coverage_requirements": {
+          "min_per_benchmark": 50,
+          "min_per_complexity": 30,
+          "min_per_domain": 5
+        }
+      },
+
+      "provenance": {
+        "enabled": true,
+        "seed": 42
+      }
+    }
+  },
+
+  "compute": {
+    "targets": [],
+    "output": {
+      "dir": "results",
+      "checkpoints": true
+    }
+  }
+}

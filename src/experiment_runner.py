@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 
 from src.storage.mongodb import MongoDBStorage
 
-
 SCHEMA_VERSION = "2.0.0"
 
 # Valid phases
@@ -41,7 +40,7 @@ class ExperimentRunner:
         config: Dict[str, Any],
         runner_str: str = None,
         dry_run: bool = False,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         load_dotenv()
 
@@ -51,9 +50,7 @@ class ExperimentRunner:
 
         # Extract experiment info
         exp_config = config.get("experiment", {})
-        self.experiment_id = (
-            exp_config.get("id") or generate_experiment_id(config)
-        )
+        self.experiment_id = exp_config.get("id") or generate_experiment_id(config)
         self.experiment_name = exp_config.get("name", "Unnamed")
 
         # Initialize storage
@@ -68,9 +65,7 @@ class ExperimentRunner:
         # Output directory
         compute_config = config.get("compute", {})
         output_config = compute_config.get("output", {})
-        self.output_dir = (
-            Path(output_config.get("dir", "results")) / self.experiment_id
-        )
+        self.output_dir = Path(output_config.get("dir", "results")) / self.experiment_id
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _parse_runner(self, runner_str: str) -> List[str]:
@@ -92,9 +87,7 @@ class ExperimentRunner:
             if part in PHASES:
                 phases.append(part)
             else:
-                raise ValueError(
-                    f"Unknown phase: {part}. Valid phases: {PHASES}"
-                )
+                raise ValueError(f"Unknown phase: {part}. Valid phases: {PHASES}")
 
         return phases
 
@@ -144,66 +137,55 @@ class ExperimentRunner:
     # =========================================================================
 
     def _phase_load(self):
-        """Load trajectories from configured sources."""
+        """Load trajectories with stratified sampling and provenance tracking."""
         from src.data.loaders import (
-            load_toolbench_trajectories,
-            load_gaia_trajectories,
-            load_swebench_trajectories,
-            load_trajectories_from_json,
+            load_stratified_sample,
+            save_sampling_manifest,
         )
 
         phase_config = self.config.get("phases", {}).get("load", {})
-        datasets_config = phase_config.get("datasets", {})
 
-        all_trajectories = []
+        print("Loading trajectories with stratified sampling...")
+        print(
+            f"   Seed: {phase_config.get('provenance', {}).get('seed', phase_config.get('sampling', {}).get('seed', 42))}"
+        )
 
-        for dataset_name, ds_config in datasets_config.items():
-            if not ds_config.get("enabled", True):
-                print(f"   Skipping {dataset_name} (disabled)")
-                continue
+        # Use the new stratified sampling function
+        all_trajectories, manifest = load_stratified_sample(
+            config=phase_config,
+            experiment_id=self.experiment_id,
+        )
 
-            source = ds_config.get("source", "huggingface")
-            limit = ds_config.get("limit", 100)
-
-            print(f"Loading {dataset_name} ({source}, limit={limit})...")
-
-            if source == "json":
-                path = ds_config.get("path")
-                trajectories = load_trajectories_from_json(path)
-                if limit and len(trajectories) > limit:
-                    trajectories = trajectories[:limit]
-            elif dataset_name == "toolbench":
-                trajectories = load_toolbench_trajectories(
-                    max_trajectories=limit
-                )
-            elif dataset_name == "gaia":
-                trajectories = load_gaia_trajectories(max_trajectories=limit)
-            elif dataset_name == "swebench":
-                trajectories = load_swebench_trajectories(
-                    max_trajectories=limit
-                )
-            else:
-                print(f"   Unknown dataset: {dataset_name}")
-                continue
-
-            print(f"   Loaded {len(trajectories)} trajectories")
-            all_trajectories.extend(trajectories)
-
-        print(f"\nTotal: {len(all_trajectories)} trajectories")
+        # Print summary
+        print("\n   === SAMPLING SUMMARY ===")
+        print(f"   Total trajectories: {len(all_trajectories)}")
+        if manifest.counts.get("by_benchmark"):
+            print("   By benchmark:")
+            for bench, count in manifest.counts["by_benchmark"].items():
+                print(f"      {bench}: {count}")
+        if manifest.counts.get("by_complexity"):
+            print("   By complexity:")
+            for comp, count in manifest.counts["by_complexity"].items():
+                print(f"      {comp}: {count}")
 
         if self.dry_run:
-            print("DRY RUN: Skipping database save")
+            print("\nDRY RUN: Skipping database save")
             return
+
+        # Save manifest for provenance
+        manifest_path = self.output_dir / "sampling_manifest.json"
+        save_sampling_manifest(manifest, str(manifest_path))
 
         # Save to storage
         saved = 0
         for traj in all_trajectories:
-            traj_dict = traj if isinstance(traj, dict) else traj.__dict__
+            traj_dict = traj.to_dict() if hasattr(traj, "to_dict") else traj
             traj_dict["experiment_id"] = self.experiment_id
             self.storage.save_trajectory(traj_dict)
             saved += 1
 
-        print(f"Saved {saved} trajectories to database")
+        print(f"\nSaved {saved} trajectories to database")
+        print(f"Manifest saved to: {manifest_path}")
 
     def _phase_perturb(self):
         """Generate perturbations for loaded trajectories."""
@@ -225,8 +207,7 @@ class ExperimentRunner:
         # Configure generator
         generator = PerturbationGenerator(
             perturbation_types=phase_config.get(
-                "types",
-                ["planning", "tool_selection", "parameter", "data_reference"]
+                "types", ["planning", "tool_selection", "parameter", "data_reference"]
             ),
             positions=phase_config.get("positions", ["early", "middle", "late"]),
         )
@@ -264,9 +245,7 @@ class ExperimentRunner:
         min_type_cov = config.get("min_type_coverage", 0.8)
         min_pos_cov = config.get("min_position_coverage", 0.8)
 
-        expected_types = {
-            "planning", "tool_selection", "parameter", "data_reference"
-        }
+        expected_types = {"planning", "tool_selection", "parameter", "data_reference"}
         expected_positions = {"early", "middle", "late"}
 
         type_cov = len(types & expected_types) / len(expected_types)
@@ -295,8 +274,7 @@ class ExperimentRunner:
         # Apply filters
         if filter_config.get("primary_only", False):
             perturbations = [
-                p for p in perturbations
-                if p.get("is_primary_for_experiment", False)
+                p for p in perturbations if p.get("is_primary_for_experiment", False)
             ]
 
         print(f"Loaded {len(perturbations)} perturbations")
@@ -329,7 +307,7 @@ class ExperimentRunner:
         for sample in samples:
             self.storage.db["perturbations"].update_one(
                 {"perturbation_id": sample["perturbation_id"]},
-                {"$set": {"selected_for_annotation": True}}
+                {"$set": {"selected_for_annotation": True}},
             )
 
         print(f"Marked {len(samples)} samples for annotation")
@@ -341,9 +319,9 @@ class ExperimentRunner:
         phase_config = self.config.get("phases", {}).get("annotate", {})
 
         # Load samples marked for annotation
-        samples = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True
-        }))
+        samples = list(
+            self.storage.db["perturbations"].find({"selected_for_annotation": True})
+        )
 
         if phase_config.get("skip_completed", True):
             samples = [s for s in samples if not s.get("human_annotation")]
@@ -385,9 +363,9 @@ class ExperimentRunner:
 
         # Load perturbations
         if filter_config.get("annotated_only", False):
-            perturbations = list(self.storage.db["perturbations"].find({
-                "selected_for_annotation": True
-            }))
+            perturbations = list(
+                self.storage.db["perturbations"].find({"selected_for_annotation": True})
+            )
         else:
             perturbations = list(
                 self.storage.get_perturbations_by_experiment(self.experiment_id)
@@ -476,9 +454,9 @@ class ExperimentRunner:
         print(f"Formula: JPS = {formula}")
 
         # Load judge evaluations
-        evaluations = list(self.storage.db["judge_outputs"].find({
-            "experiment_id": self.experiment_id
-        }))
+        evaluations = list(
+            self.storage.db["judge_outputs"].find({"experiment_id": self.experiment_id})
+        )
         print(f"Loaded {len(evaluations)} judge evaluations")
 
         if not evaluations:
@@ -500,8 +478,7 @@ class ExperimentRunner:
 
             # Update document
             self.storage.db["judge_outputs"].update_one(
-                {"_id": eval_doc["_id"]},
-                {"$set": {"jps": jps}}
+                {"_id": eval_doc["_id"]}, {"$set": {"jps": jps}}
             )
             computed += 1
 
@@ -512,17 +489,18 @@ class ExperimentRunner:
         compute_config = self.config.get("compute", {}).get("tcs", {})
         formula = compute_config.get(
             "formula",
-            "(task_success_degradation * 50) + (subsequent_error_rate * 10) + (criticality_rating * 8)"
+            "(task_success_degradation * 50) + (subsequent_error_rate * 10) + (criticality_rating * 8)",
         )
         validate_config = compute_config.get("validate", {})
 
         print(f"Formula: TCS = {formula}")
 
         # Load annotated perturbations
-        perturbations = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True,
-            "human_annotation": {"$exists": True}
-        }))
+        perturbations = list(
+            self.storage.db["perturbations"].find(
+                {"selected_for_annotation": True, "human_annotation": {"$exists": True}}
+            )
+        )
 
         print(f"Loaded {len(perturbations)} annotated perturbations")
 
@@ -546,8 +524,7 @@ class ExperimentRunner:
             tcs = (tsd * 50) + (ser * 10) + (cr * 8)
 
             self.storage.db["perturbations"].update_one(
-                {"_id": p["_id"]},
-                {"$set": {"tcs": tcs}}
+                {"_id": p["_id"]}, {"$set": {"tcs": tcs}}
             )
             computed += 1
 
@@ -571,9 +548,9 @@ class ExperimentRunner:
         validate_config = compute_config.get("validate", {})
 
         # Load perturbations
-        perturbations = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True
-        }))
+        perturbations = list(
+            self.storage.db["perturbations"].find({"selected_for_annotation": True})
+        )
         print(f"Loaded {len(perturbations)} perturbations")
 
         # Check existing
@@ -593,7 +570,7 @@ class ExperimentRunner:
             perturbations,
             self.storage,
             batch_size=compute_config.get("batch_size", 20),
-            resume=True
+            resume=True,
         )
 
         print(f"Computed OD for {len(results)} perturbations")
@@ -605,9 +582,9 @@ class ExperimentRunner:
 
     def _validate_od(self, config: Dict):
         """Validate OD distribution."""
-        perturbations = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True
-        }))
+        perturbations = list(
+            self.storage.db["perturbations"].find({"selected_for_annotation": True})
+        )
         with_od = [p for p in perturbations if p.get("od")]
 
         coverage = len(with_od) / len(perturbations) if perturbations else 0
@@ -635,15 +612,17 @@ class ExperimentRunner:
         print(f"Aggregations: {aggregations}")
 
         # Load data with both JPS and TCS
-        perturbations = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True,
-            "tcs": {"$exists": True}
-        }))
+        perturbations = list(
+            self.storage.db["perturbations"].find(
+                {"selected_for_annotation": True, "tcs": {"$exists": True}}
+            )
+        )
 
-        evaluations = list(self.storage.db["judge_outputs"].find({
-            "experiment_id": self.experiment_id,
-            "jps": {"$exists": True}
-        }))
+        evaluations = list(
+            self.storage.db["judge_outputs"].find(
+                {"experiment_id": self.experiment_id, "jps": {"$exists": True}}
+            )
+        )
 
         print(f"Perturbations with TCS: {len(perturbations)}")
         print(f"Evaluations with JPS: {len(evaluations)}")
@@ -682,16 +661,18 @@ class ExperimentRunner:
         print(f"Metrics: {metrics}")
 
         # Load perturbations with OD
-        perturbations = list(self.storage.db["perturbations"].find({
-            "selected_for_annotation": True,
-            "od": {"$exists": True}
-        }))
+        perturbations = list(
+            self.storage.db["perturbations"].find(
+                {"selected_for_annotation": True, "od": {"$exists": True}}
+            )
+        )
 
         # Load evaluations with JPS
-        evaluations = list(self.storage.db["judge_outputs"].find({
-            "experiment_id": self.experiment_id,
-            "jps": {"$exists": True}
-        }))
+        evaluations = list(
+            self.storage.db["judge_outputs"].find(
+                {"experiment_id": self.experiment_id, "jps": {"$exists": True}}
+            )
+        )
 
         print(f"Perturbations with OD: {len(perturbations)}")
         print(f"Evaluations with JPS: {len(evaluations)}")
