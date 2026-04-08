@@ -1,6 +1,26 @@
 # 2. Typed Representation
 
-**Status: REQUIREMENTS DEFINED**
+**Status: COMPLETED (2026-04-07)**
+
+## Implementation Summary
+
+- Module: `src/typing/` (8 files)
+- Config: `config/experiments/v2/trajectory_typing.json`
+- Tests: `tests/test_typing.py` (30 tests passing)
+- Phase: `typing` added to ExperimentRunner
+
+### Results
+- 500 trajectories typed from exp_trajectory_sampling_v7
+- 3,499 steps with role, dependencies, artifacts, slots
+- 6,604 perturbable slots identified
+- Stored in MongoDB: `typed_trajectories` collection
+
+### Usage
+```bash
+python main.py --config trajectory_typing --runner typing
+```
+
+---
 
 The typed representation is the foundation for controlled perturbation. It structures each trajectory step so the system knows what kind of step it is, what objects it touches, and what later steps depend on it.
 
@@ -8,10 +28,10 @@ The typed representation is the foundation for controlled perturbation. It struc
 
 ## Storage Decision
 
-**Approach: Enrich existing trajectories** (not a separate collection)
+**Approach: Enrich existing trajectories** (stored in `typed_trajectories` MongoDB collection)
 
 - Typed fields are added directly to the trajectory JSON
-- Output location: `data/typed/{benchmark}_{count}_typed.json`
+- Source: exp_trajectory_sampling_v7 (500 trajectories)
 - Raw fields preserved, enrichment fields added alongside
 
 ```

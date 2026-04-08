@@ -37,12 +37,12 @@ python src/prereq_check.py
 ### 4. Run Experiment
 ```bash
 # Run entire experiment (all 6 phases)
-python main.py --config poc_experiment --runner all
+python main.py --config poc_experiment --runner load,perturb,sample,annotate,judge,compute
 
 # Or run specific phases
 python main.py --config poc_experiment --runner load
-python main.py --config poc_experiment --runner load,perturb
-python main.py --config poc_experiment --runner judge,ccg,analyze
+python main.py --config poc_experiment --runner load,perturb,sample
+python main.py --config poc_experiment --runner judge,compute
 ```
 
 ---
@@ -55,15 +55,15 @@ The study uses 600 trajectories (400 ToolBench + 100 GAIA + 100 SWE-bench) with 
 
 **Single command (recommended):**
 ```bash
-# Generate trajectories, perturbations, and validate
-python main.py --config dataset_full_study --runner load,perturb,validate
+# Generate trajectories, perturbations, and sample for annotation
+python main.py --config dataset_full_study --runner load,perturb,sample
 ```
 
 **Or run phases individually:**
 ```bash
 python main.py --config dataset_full_study --runner load      # Load trajectories
 python main.py --config dataset_full_study --runner perturb   # Generate perturbations
-python main.py --config dataset_full_study --runner validate  # Validate quality
+python main.py --config dataset_full_study --runner sample    # Sample for annotation
 ```
 
 ### Dataset Files
@@ -221,7 +221,7 @@ Each JSON config file in `config/experiments/` defines a complete experiment. Us
 - **`judges`**: Which judges to analyze (if omitted, uses all from judges config)
 
 #### `execution`
-- **`runner`**: Which phases to run (`"all"`, `"load"`, `"load,perturb"`, `"annotate"`, `"judge"`, `"ccg"`, etc.)
+- **`runner`**: Which phases to run (`"load"`, `"load,perturb,sample"`, `"judge,compute"`, etc.)
 - **`dry_run`**: If true, runs without saving to database
 - **`verbose`**: Enable detailed output
 
@@ -231,24 +231,24 @@ Each JSON config file in `config/experiments/` defines a complete experiment. Us
 
 ### The `--runner` Parameter
 
-Controls which phases execute:
+Controls which phases execute. Pass a comma-separated list of phase names:
 
-| Runner | Phases | Description |
-|--------|--------|-------------|
-| `all` | 1→2→3→4→5→6→7 | Full experiment pipeline |
-| `load` | 1 | Load trajectories from JSON or HuggingFace |
-| `perturb` | 2 | Generate perturbed versions |
-| `validate` | 3 | Validate perturbation quality |
-| `annotate` | 4 | Human annotation interface |
-| `judge` | 5 | Run LLM judge evaluations |
-| `ccg` | 6 | Compute CCG metrics |
-| `analyze` | 7 | Generate visualizations |
+| Phase | Description |
+|-------|-------------|
+| `load` | Load trajectories from configured sources |
+| `perturb` | Generate typed representations and perturbations |
+| `sample` | Stratified sampling for annotation |
+| `annotate` | Human annotation interface |
+| `judge` | Run LLM judge evaluations |
+| `compute` | Compute all metrics (jps, tcs, od, ccg, calibration) |
+
+**Valid phases:** `load`, `perturb`, `sample`, `annotate`, `judge`, `compute`
 
 ### Common Workflows
 
 **Full experiment (end-to-end):**
 ```bash
-python main.py --config poc_experiment --runner all
+python main.py --config poc_experiment --runner load,perturb,sample,annotate,judge,compute
 ```
 
 **Staged execution:**
@@ -259,11 +259,14 @@ python main.py --config poc_experiment --runner load
 # Stage 2: Generate perturbations
 python main.py --config poc_experiment --runner perturb
 
-# Stage 3: Annotate (human)
+# Stage 3: Sample for annotation
+python main.py --config poc_experiment --runner sample
+
+# Stage 4: Annotate (human)
 python main.py --config poc_experiment --runner annotate
 
-# Stage 4-6: Judge evaluation + analysis
-python main.py --config poc_experiment --runner judge,ccg,analyze
+# Stage 5-6: Judge evaluation + compute metrics
+python main.py --config poc_experiment --runner judge,compute
 ```
 
 **Test mode (no database writes):**
@@ -273,7 +276,55 @@ python main.py --config poc_experiment --runner load --dry-run
 
 ---
 
-## The 6 Experiment Phases
+## ExperimentRunner Phases (Schema 2.0)
+
+The experiment pipeline consists of **6 phases** defined in `src/experiment_runner.py`:
+
+| Phase | Name | Description | Requirements Section |
+|-------|------|-------------|---------------------|
+| `load` | Load Trajectories | Load trajectories from JSON or HuggingFace (ToolBench, GAIA, SWE-bench) | Section 1 |
+| `perturb` | Generate Perturbations | Create typed representations and inject controlled perturbations | Sections 2-3 |
+| `sample` | Sample for Annotation | Assemble evaluation units with stratified sampling and blinding | Section 4 |
+| `annotate` | Human Annotation | Collect human labels (detectability, consequence, preference) | Section 5A |
+| `judge` | LLM Judge Evaluation | Run multiple LLM judges on evaluation units | Section 5B |
+| `compute` | Compute Metrics | Compute outcome evidence and all analysis metrics | Sections 5C, 6A-6C |
+
+### Compute Targets
+
+The `compute` phase runs configurable targets defined in `config.compute.targets`:
+
+| Target | Description | Output Metrics |
+|--------|-------------|----------------|
+| `jps` | Judge Penalty Score | `100 - overall_score` from judge outputs |
+| `tcs` | True Criticality Score | Weighted sum of human annotation metrics |
+| `od` | Outcome Degradation | `Score(baseline) - Score(perturbed)` |
+| `ccg` | Criticality Calibration Gap | `(JPS - TCS) / TCS` |
+| `calibration` | Calibration Analysis | Spearman/Pearson correlation between JPS and OD |
+
+### Full Metrics (from Requirements)
+
+**Detection Metrics (6A):** PDR, PNDR, SLA, SLA±1, TIA, CER, Detection AUC
+
+**Consequentiality Metrics (6B):** CCorr, CCE, ORR, URR, Failure-ECE
+
+**Agreement & Claim (6C):** Inter-annotator agreement, main claim hypothesis tests (PDR > CCorr), synthesis
+
+### Running Phases
+
+```bash
+# Run specific phases
+python main.py --config <config> --runner load,perturb,sample
+
+# Run judge evaluation and compute metrics
+python main.py --config <config> --runner judge,compute
+
+# Run all phases
+python main.py --config <config> --runner load,perturb,sample,annotate,judge,compute
+```
+
+---
+
+## Legacy: The 7 Experiment Phases
 
 | Phase | Name | Input | Output | Time |
 |-------|------|-------|--------|------|
@@ -506,7 +557,7 @@ All data for an experiment is linked by `experiment_id` from the config. This en
 - ✅ Test suite (93 tests passing)
 - ✅ MongoDB Atlas storage (5 collections)
 - ✅ AWS Bedrock integration (Claude + GPT-OSS)
-- ✅ Experiment runner (load, perturb, annotate, judge, ccg)
+- ✅ Experiment runner (load, perturb, sample, annotate, judge, compute)
 - ✅ JSON-based dataset loading for reproducibility
 
 **Ready for:**
@@ -538,10 +589,10 @@ python main.py --config <config_name> --runner <phases>
 **Examples:**
 ```bash
 # Run all phases
-python main.py --config poc_experiment --runner all
+python main.py --config poc_experiment --runner load,perturb,sample,annotate,judge,compute
 
 # Run specific phases
-python main.py --config poc_experiment --runner load,perturb
+python main.py --config poc_experiment --runner load,perturb,sample
 
 # Test mode
 python main.py --config poc_experiment --runner load --dry-run

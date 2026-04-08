@@ -1,0 +1,89 @@
+{
+  "schema": "2.0.0",
+
+  "experiment": {
+    "id": "exp_trajectory_sampling_v7",
+    "name": "Trajectory Typing - Enrich 500 Trajectories with Typed Fields",
+    "description": "Add typed representation to sampled trajectories: step roles, dependencies, artifacts, perturbable slots, and critical path scores",
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    }
+  },
+
+  "phases": {
+    "typing": {
+      "enabled": true,
+
+      "pass1": {
+        "enabled": true,
+        "components": {
+          "step_typer": {
+            "enabled": true,
+            "_note": "Classify step_role, terminal flags, extraction fields"
+          },
+          "entity_extractor": {
+            "enabled": true,
+            "use_spacy": false,
+            "_note": "Extract entities using regex patterns (CPU-friendly)"
+          }
+        }
+      },
+
+      "pass2": {
+        "enabled": true,
+        "components": {
+          "artifact_tracker": {
+            "enabled": true,
+            "_note": "Track produced/consumed artifacts per step"
+          },
+          "dependency_analyzer": {
+            "enabled": true,
+            "compute_transitive": true,
+            "_note": "Build direct and transitive dependency graphs"
+          },
+          "slot_typer": {
+            "enabled": true,
+            "_note": "Identify perturbable slots with types"
+          }
+        }
+      },
+
+      "pass3": {
+        "enabled": true,
+        "components": {
+          "critical_path_scorer": {
+            "enabled": true,
+            "use_heuristics": true,
+            "use_llm": false,
+            "_note": "Heuristic-based critical path scoring (no LLM, instant)"
+          }
+        }
+      },
+
+      "output": {
+        "collection": "typed_trajectories",
+        "also_update_source": false,
+        "_note": "Store typed trajectories in separate collection"
+      }
+    }
+  },
+
+  "validation": {
+    "enabled": true,
+    "requirements": {
+      "all_steps_have_role": true,
+      "all_steps_have_entities": false,
+      "all_tool_calls_have_slots": true,
+      "critical_scores_in_range": true
+    }
+  },
+
+  "compute": {
+    "targets": ["typing_summary"],
+    "output": {
+      "dir": "results",
+      "checkpoints": true
+    }
+  }
+}

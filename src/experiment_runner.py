@@ -1,7 +1,7 @@
 """
 Experiment Runner - Schema 2.0.0
 
-6 phases: load, perturb, sample, annotate, judge, compute
+7 phases: load, typing, perturb, sample, annotate, judge, compute
 Compute targets defined in config.compute.targets
 """
 
@@ -17,7 +17,7 @@ from src.storage.mongodb import MongoDBStorage
 SCHEMA_VERSION = "2.0.0"
 
 # Valid phases
-PHASES = ["load", "perturb", "sample", "annotate", "judge", "compute"]
+PHASES = ["load", "typing", "perturb", "sample", "annotate", "judge", "compute"]
 
 
 def generate_experiment_id(config: Dict[str, Any]) -> str:
@@ -106,6 +106,7 @@ class ExperimentRunner:
         # Phase handlers
         phase_handlers = {
             "load": self._phase_load,
+            "typing": self._phase_typing,
             "perturb": self._phase_perturb,
             "sample": self._phase_sample,
             "annotate": self._phase_annotate,
@@ -186,6 +187,132 @@ class ExperimentRunner:
 
         print(f"\nSaved {saved} trajectories to database")
         print(f"Manifest saved to: {manifest_path}")
+
+    def _phase_typing(self):
+        """
+        Type trajectories with enriched fields.
+
+        Adds step roles, dependencies, artifacts, perturbable slots,
+        and critical path scores to each trajectory.
+        """
+        from src.typing.typer import TrajectoryTyper
+
+        phase_config = self.config.get("phases", {}).get("typing", {})
+
+        # Check if typing is enabled
+        if not phase_config.get("enabled", True):
+            print("Typing phase disabled in config")
+            return
+
+        # Get input source - either from config or current experiment
+        input_config = self.config.get("input", {})
+        source_experiment = input_config.get("source_experiment", self.experiment_id)
+
+        print(f"Loading trajectories from experiment: {source_experiment}")
+
+        # Load trajectories from source experiment
+        trajectories = list(
+            self.storage.trajectories.find({"experiment_id": source_experiment})
+        )
+
+        if not trajectories:
+            print(f"No trajectories found for experiment: {source_experiment}")
+            print("Run 'load' phase first or check source_experiment in config.")
+            return
+
+        print(f"Loaded {len(trajectories)} trajectories")
+
+        # Initialize typer
+        use_spacy = (
+            phase_config.get("pass1", {})
+            .get("components", {})
+            .get("entity_extractor", {})
+            .get("use_spacy", False)
+        )
+        typer = TrajectoryTyper(use_spacy=use_spacy)
+
+        if self.dry_run:
+            print("\nDRY RUN: Would type trajectories")
+            # Type one as sample
+            if trajectories:
+                sample = typer.type_trajectory(trajectories[0])
+                print(f"\nSample typed trajectory: {sample.trajectory_id}")
+                print(f"   Steps: {sample.num_steps}")
+                print(f"   Environment: {sample.environment_type}")
+                if sample.steps:
+                    print(f"   Step 1 role: {sample.steps[0].step_role}")
+                    print(f"   Step 1 slots: {len(sample.steps[0].perturbable_slots)}")
+            return
+
+        # Type all trajectories
+        print("\nTyping trajectories...")
+        typed_trajectories = []
+        errors = []
+
+        for i, traj in enumerate(trajectories):
+            try:
+                typed = typer.type_trajectory(traj)
+                typed_trajectories.append(typed)
+
+                if (i + 1) % 50 == 0:
+                    print(f"   Typed {i + 1}/{len(trajectories)} trajectories")
+            except Exception as e:
+                traj_id = traj.get("trajectory_id", f"index_{i}")
+                errors.append({"trajectory_id": traj_id, "error": str(e)})
+                print(f"   ERROR typing {traj_id}: {e}")
+
+        print(f"\nTyped {len(typed_trajectories)} trajectories")
+        if errors:
+            print(f"Errors: {len(errors)}")
+
+        # Get output collection name
+        output_config = phase_config.get("output", {})
+        collection_name = output_config.get("collection", "typed_trajectories")
+
+        # Create typed_trajectories collection if needed
+        typed_collection = self.storage.db[collection_name]
+
+        # Create indexes
+        typed_collection.create_index([("trajectory_id", 1)], unique=True)
+        typed_collection.create_index([("experiment_id", 1)])
+        typed_collection.create_index([("benchmark", 1)])
+
+        # Save typed trajectories
+        print(f"\nSaving to collection: {collection_name}")
+        saved = 0
+        for typed in typed_trajectories:
+            doc = typed.to_dict()
+            doc["experiment_id"] = self.experiment_id
+            doc["source_experiment"] = source_experiment
+
+            try:
+                typed_collection.replace_one(
+                    {"trajectory_id": doc["trajectory_id"]},
+                    doc,
+                    upsert=True,
+                )
+                saved += 1
+            except Exception as e:
+                print(f"   Error saving {doc['trajectory_id']}: {e}")
+
+        print(f"Saved {saved} typed trajectories")
+
+        # Print summary
+        print("\n   === TYPING SUMMARY ===")
+        if typed_trajectories:
+            roles = {}
+            total_slots = 0
+            for typed in typed_trajectories:
+                for step in typed.steps:
+                    roles[step.step_role] = roles.get(step.step_role, 0) + 1
+                    total_slots += len(step.perturbable_slots)
+
+            print(f"   Total steps typed: {sum(roles.values())}")
+            print("   Step roles:")
+            for role, count in sorted(roles.items()):
+                print(f"      {role}: {count}")
+            print(f"   Total perturbable slots: {total_slots}")
+            print(f"   Avg slots per trajectory: {total_slots / len(typed_trajectories):.1f}")
 
     def _phase_perturb(self):
         """Generate perturbations for loaded trajectories."""
