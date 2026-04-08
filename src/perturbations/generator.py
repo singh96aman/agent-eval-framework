@@ -6,7 +6,7 @@ across all perturbation types (planning, tool_selection, parameter) and
 positions (early, middle, late).
 """
 
-from typing import Dict, List, Optional, Any
+from typing import List, Optional
 from copy import deepcopy
 
 from src.data.schema import Trajectory, Step, PerturbedTrajectory, StepType
@@ -75,7 +75,7 @@ class PerturbationGenerator:
         perturbation_type: str,
         position: str,
         system_prompt: Optional[str] = None,
-        mode: str = "static"
+        mode: str = "static",
     ) -> Optional[PerturbedTrajectory]:
         """
         Generate a perturbed trajectory.
@@ -91,8 +91,7 @@ class PerturbationGenerator:
             PerturbedTrajectory object or None if perturbation not applicable
         """
         # Validate inputs
-        standard_types = ["planning", "tool_selection", "parameter",
-                         "data_reference"]
+        standard_types = ["planning", "tool_selection", "parameter", "data_reference"]
         if perturbation_type not in standard_types:
             raise ValueError(
                 f"Unknown perturbation type: {perturbation_type}. "
@@ -101,8 +100,7 @@ class PerturbationGenerator:
 
         if position not in ["early", "middle", "late"]:
             raise ValueError(
-                f"Unknown position: {position}. "
-                f"Must be one of: early, middle, late"
+                f"Unknown position: {position}. " f"Must be one of: early, middle, late"
             )
 
         # Detect benchmark and route to appropriate strategy
@@ -110,16 +108,17 @@ class PerturbationGenerator:
 
         # Find step to perturb based on position
         # Only ToolBench parameter perturbations need steps with params
-        require_params = (perturbation_type == "parameter"
-                         and benchmark == "toolbench")
+        require_params = perturbation_type == "parameter" and benchmark == "toolbench"
         step_to_perturb = self._find_step_for_position(
             trajectory, position, require_params=require_params
         )
 
         if not step_to_perturb:
             traj_id = trajectory.trajectory_id
-            print(f"   Warning: No step for position={position} "
-                  f"in trajectory {traj_id}")
+            print(
+                f"   Warning: No step for position={position} "
+                f"in trajectory {traj_id}"
+            )
             return None
 
         # Route to benchmark-native strategy
@@ -130,7 +129,7 @@ class PerturbationGenerator:
                 step=step_to_perturb,
                 trajectory=trajectory,
                 system_prompt=system_prompt,
-                subtype=subtype
+                subtype=subtype,
             )
         elif benchmark == "swebench":
             strategy = self.strategies["swebench"]
@@ -139,24 +138,24 @@ class PerturbationGenerator:
                 step=step_to_perturb,
                 trajectory=trajectory,
                 system_prompt=system_prompt,
-                subtype=subtype
+                subtype=subtype,
             )
         else:
             # ToolBench or unknown - use standard strategies
             strategy = self.strategies[perturbation_type]
             perturbed_step = strategy.perturb_step(
-                step=step_to_perturb,
-                trajectory=trajectory,
-                system_prompt=system_prompt
+                step=step_to_perturb, trajectory=trajectory, system_prompt=system_prompt
             )
 
         # Check if perturbation was actually applied
         # (content changed OR perturbation metadata exists)
-        content_changed = (perturbed_step.content != step_to_perturb.content)
+        content_changed = perturbed_step.content != step_to_perturb.content
         has_perturbation_metadata = "perturbation" in perturbed_step.metadata
 
         if not content_changed and not has_perturbation_metadata:
-            print(f"   Warning: Perturbation failed to apply for {perturbation_type}/{position} in trajectory {trajectory.trajectory_id}")
+            print(
+                f"   Warning: Perturbation failed to apply for {perturbation_type}/{position} in trajectory {trajectory.trajectory_id}"
+            )
             return None
 
         # Build perturbed trajectory
@@ -165,7 +164,7 @@ class PerturbationGenerator:
             perturbed_step=perturbed_step,
             perturbation_type=perturbation_type,
             perturbation_position=position,
-            mode=mode
+            mode=mode,
         )
 
         # Create PerturbedTrajectory object
@@ -182,14 +181,11 @@ class PerturbationGenerator:
                 "step_type": step_to_perturb.step_type.value,
                 "tool_name": step_to_perturb.tool_name,
                 "perturbation_details": perturbed_step.metadata.get("perturbation", {}),
-            }
+            },
         )
 
     def _find_step_for_position(
-        self,
-        trajectory: Trajectory,
-        position: str,
-        require_params: bool = False
+        self, trajectory: Trajectory, position: str, require_params: bool = False
     ) -> Optional[Step]:
         """
         Find a suitable step to perturb based on position.
@@ -236,8 +232,7 @@ class PerturbationGenerator:
 
         # Find steps in range
         candidates = [
-            step for step in trajectory.steps
-            if start <= step.step_number <= end
+            step for step in trajectory.steps if start <= step.step_number <= end
         ]
 
         if not candidates:
@@ -246,14 +241,16 @@ class PerturbationGenerator:
         # If require_params, filter to steps with non-empty parameters
         if require_params:
             param_steps = [
-                s for s in candidates
+                s
+                for s in candidates
                 if s.tool_input and s.tool_input != {} and s.tool_name != "Finish"
             ]
             if param_steps:
                 return param_steps[0]
             # If no steps with params in range, expand search to whole trajectory
             param_steps = [
-                s for s in trajectory.steps
+                s
+                for s in trajectory.steps
                 if s.tool_input and s.tool_input != {} and s.tool_name != "Finish"
             ]
             return param_steps[0] if param_steps else None
@@ -273,7 +270,7 @@ class PerturbationGenerator:
         perturbed_step: Step,
         perturbation_type: str,
         perturbation_position: str,
-        mode: str
+        mode: str,
     ) -> Trajectory:
         """
         Build perturbed trajectory by replacing one step.
@@ -292,7 +289,9 @@ class PerturbationGenerator:
             Perturbed trajectory
         """
         if mode != "static":
-            raise NotImplementedError(f"Mode '{mode}' not yet implemented. Use 'static'.")
+            raise NotImplementedError(
+                f"Mode '{mode}' not yet implemented. Use 'static'."
+            )
 
         # Deep copy original trajectory
         perturbed_traj = deepcopy(original_trajectory)
@@ -311,9 +310,7 @@ class PerturbationGenerator:
                 step.metadata["conditioned_on_error"] = True
 
         # Update trajectory ID to be unique for this specific perturbation
-        perturbed_traj.trajectory_id = (
-            f"{original_trajectory.trajectory_id}_{perturbation_type}_{perturbation_position}_perturbed"
-        )
+        perturbed_traj.trajectory_id = f"{original_trajectory.trajectory_id}_{perturbation_type}_{perturbation_position}_perturbed"
 
         perturbed_traj.metadata["is_perturbed"] = True
         perturbed_traj.metadata["perturbation_mode"] = mode
@@ -327,7 +324,7 @@ class PerturbationGenerator:
         trajectory: Trajectory,
         system_prompt: Optional[str] = None,
         mode: str = "static",
-        include_data_reference: bool = True
+        include_data_reference: bool = True,
     ) -> List[PerturbedTrajectory]:
         """
         Generate all perturbation conditions for a trajectory.
@@ -355,7 +352,7 @@ class PerturbationGenerator:
                     perturbation_type=ptype,
                     position=position,
                     system_prompt=system_prompt,
-                    mode=mode
+                    mode=mode,
                 )
                 if perturbed:
                     perturbations.append(perturbed)
@@ -368,7 +365,7 @@ class PerturbationGenerator:
                     perturbation_type="data_reference",
                     position=position,
                     system_prompt=system_prompt,
-                    mode=mode
+                    mode=mode,
                 )
                 if perturbed:
                     perturbations.append(perturbed)
@@ -376,9 +373,7 @@ class PerturbationGenerator:
         return perturbations
 
     def generate_swebench_perturbations(
-        self,
-        trajectory: Trajectory,
-        mode: str = "static"
+        self, trajectory: Trajectory, mode: str = "static"
     ) -> List[PerturbedTrajectory]:
         """
         Generate SWE-bench-specific perturbations.
@@ -399,7 +394,7 @@ class PerturbationGenerator:
             "wrong_location",
             "wrong_value",
             "wrong_diagnosis",
-            "wrong_reference"
+            "wrong_reference",
         ]
 
         for subtype in swebench_subtypes:
@@ -409,10 +404,7 @@ class PerturbationGenerator:
                     continue
 
                 perturbed = self._generate_swebench_perturbation(
-                    trajectory=trajectory,
-                    subtype=subtype,
-                    position=position,
-                    mode=mode
+                    trajectory=trajectory, subtype=subtype, position=position, mode=mode
                 )
                 if perturbed:
                     perturbations.append(perturbed)
@@ -420,11 +412,7 @@ class PerturbationGenerator:
         return perturbations
 
     def _generate_swebench_perturbation(
-        self,
-        trajectory: Trajectory,
-        subtype: str,
-        position: str,
-        mode: str
+        self, trajectory: Trajectory, subtype: str, position: str, mode: str
     ) -> Optional[PerturbedTrajectory]:
         """Generate a single SWE-bench perturbation."""
         # Find step for position
@@ -444,7 +432,7 @@ class PerturbationGenerator:
             step=step_to_perturb,
             trajectory=trajectory,
             system_prompt=None,
-            subtype=subtype
+            subtype=subtype,
         )
 
         # Check if perturbation applied
@@ -458,7 +446,7 @@ class PerturbationGenerator:
             perturbed_step=perturbed_step,
             perturbation_type=f"swebench_{subtype}",
             perturbation_position=position,
-            mode=mode
+            mode=mode,
         )
 
         return PerturbedTrajectory(
@@ -473,7 +461,7 @@ class PerturbationGenerator:
                 "mode": mode,
                 "swebench_subtype": subtype,
                 "details": perturbed_step.metadata.get("perturbation", {}),
-            }
+            },
         )
 
     def get_perturbation_id(
@@ -481,7 +469,7 @@ class PerturbationGenerator:
         trajectory_id: str,
         perturbation_type: str,
         position: str,
-        experiment_id: str = ""
+        experiment_id: str = "",
     ) -> str:
         """
         Generate standardized perturbation ID.

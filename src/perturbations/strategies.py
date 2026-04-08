@@ -25,19 +25,15 @@ def _reduce_scope(thought: str) -> Optional[str]:
     """
     # Pattern: "get/find/check X and Y" -> "get/find/check X"
     patterns = [
-        (r"(get|find|check|retrieve|look up)\s+(.+?)\s+and\s+(.+?)(?:\.|$)",
-         r"\1 \2."),
-        (r"(both|also)\s+(.+?)\s+and\s+(.+?)(?:\.|$)",
-         r"\2."),
-        (r"(.+?)\s+as well as\s+(.+?)(?:\.|$)",
-         r"\1."),
+        (r"(get|find|check|retrieve|look up)\s+(.+?)\s+and\s+(.+?)(?:\.|$)", r"\1 \2."),
+        (r"(both|also)\s+(.+?)\s+and\s+(.+?)(?:\.|$)", r"\2."),
+        (r"(.+?)\s+as well as\s+(.+?)(?:\.|$)", r"\1."),
     ]
 
     for pattern, replacement in patterns:
         match = re.search(pattern, thought, re.IGNORECASE)
         if match:
-            result = re.sub(pattern, replacement, thought, count=1,
-                            flags=re.IGNORECASE)
+            result = re.sub(pattern, replacement, thought, count=1, flags=re.IGNORECASE)
             if result != thought:
                 return result
 
@@ -52,10 +48,7 @@ class BasePerturbationStrategy:
         self.random = random.Random(random_seed)
 
     def perturb_step(
-        self,
-        step: Step,
-        trajectory: Trajectory,
-        system_prompt: Optional[str] = None
+        self, step: Step, trajectory: Trajectory, system_prompt: Optional[str] = None
     ) -> Step:
         """
         Apply perturbation to a step.
@@ -89,49 +82,60 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         {
             "name": "temporal_confusion",
             "trigger_words": ["schedule", "upcoming", "future", "next", "tomorrow"],
-            "transformation": lambda t: re.sub(
-                r"(get|find|check|look up)\s+(the\s+)?(upcoming|next|future|scheduled)",
-                r"\1 \2past",
-                t,
-                flags=re.IGNORECASE
-            ) if re.search(r"(upcoming|next|future|scheduled)", t, re.IGNORECASE) else None,
-            "reasoning": "Agent confuses future with past events"
+            "transformation": lambda t: (
+                re.sub(
+                    r"(get|find|check|look up)\s+(the\s+)?(upcoming|next|future|scheduled)",
+                    r"\1 \2past",
+                    t,
+                    flags=re.IGNORECASE,
+                )
+                if re.search(r"(upcoming|next|future|scheduled)", t, re.IGNORECASE)
+                else None
+            ),
+            "reasoning": "Agent confuses future with past events",
         },
         {
             "name": "recency_ignored",
             "trigger_words": ["latest", "recent", "current", "new", "today"],
-            "transformation": lambda t: re.sub(
-                r"(get|find|check|retrieve)\s+(the\s+)?(latest|recent|current|newest)",
-                r"\1 \2available",
-                t,
-                flags=re.IGNORECASE
-            ) if re.search(r"(latest|recent|current|newest)", t, re.IGNORECASE) else None,
-            "reasoning": "Agent ignores recency requirement"
+            "transformation": lambda t: (
+                re.sub(
+                    r"(get|find|check|retrieve)\s+(the\s+)?(latest|recent|current|newest)",
+                    r"\1 \2available",
+                    t,
+                    flags=re.IGNORECASE,
+                )
+                if re.search(r"(latest|recent|current|newest)", t, re.IGNORECASE)
+                else None
+            ),
+            "reasoning": "Agent ignores recency requirement",
         },
         {
             "name": "scope_reduction",
             "trigger_words": ["and", "both", "also", "as well", "plus"],
             "transformation": lambda t: _reduce_scope(t),
-            "reasoning": "Agent addresses only first part of multi-part task"
+            "reasoning": "Agent addresses only first part of multi-part task",
         },
         {
             "name": "comparison_missed",
             "trigger_words": ["compare", "difference", "versus", "vs", "between"],
-            "transformation": lambda t: re.sub(
-                r"(compare|find the difference between|contrast)\s+(.+?)\s+(and|with|versus|vs\.?)\s+(.+)",
-                r"analyze \2",
-                t,
-                flags=re.IGNORECASE
-            ) if re.search(r"(compare|difference|versus|vs|between)", t, re.IGNORECASE) else None,
-            "reasoning": "Agent misses comparison requirement, only analyzes one item"
+            "transformation": lambda t: (
+                re.sub(
+                    r"(compare|find the difference between|contrast)\s+(.+?)\s+(and|with|versus|vs\.?)\s+(.+)",
+                    r"analyze \2",
+                    t,
+                    flags=re.IGNORECASE,
+                )
+                if re.search(
+                    r"(compare|difference|versus|vs|between)", t, re.IGNORECASE
+                )
+                else None
+            ),
+            "reasoning": "Agent misses comparison requirement, only analyzes one item",
         },
     ]
 
     def perturb_step(
-        self,
-        step: Step,
-        trajectory: Trajectory,
-        system_prompt: Optional[str] = None
+        self, step: Step, trajectory: Trajectory, system_prompt: Optional[str] = None
     ) -> Step:
         """
         Inject planning error by modifying the Thought field SEMANTICALLY.
@@ -154,7 +158,9 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         task_desc = trajectory.ground_truth.task_description or ""
 
         # Extract Thought from content
-        thought_match = re.search(r"Thought:\s*(.+?)(?:\nAction:|$)", content, re.DOTALL)
+        thought_match = re.search(
+            r"Thought:\s*(.+?)(?:\nAction:|$)", content, re.DOTALL
+        )
 
         if thought_match:
             original_thought = thought_match.group(1).strip()
@@ -163,14 +169,13 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
             if perturbed_thought and perturbed_thought != original_thought:
                 # Successfully modified thought
                 new_content = content.replace(
-                    f"Thought: {original_thought}",
-                    f"Thought: {perturbed_thought}"
+                    f"Thought: {original_thought}", f"Thought: {perturbed_thought}"
                 )
                 perturbed.content = new_content
                 perturbed.metadata["perturbation"] = {
                     "type": "planning_error",
                     "original_thought": original_thought,
-                    "perturbed_thought": perturbed_thought
+                    "perturbed_thought": perturbed_thought,
                 }
                 return perturbed
 
@@ -181,7 +186,7 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         perturbed.metadata["perturbation"] = {
             "type": "planning_error",
             "template": "semantic_prefix",
-            "reasoning": reasoning
+            "reasoning": reasoning,
         }
         return perturbed
 
@@ -224,7 +229,9 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         elif "compare" in task_lower or "difference" in task_lower:
             prefix = "I'll look up information about the first item mentioned."
             reasoning = "Agent misses comparison, only researches one item"
-        elif "latest" in task_lower or "recent" in task_lower or "current" in task_lower:
+        elif (
+            "latest" in task_lower or "recent" in task_lower or "current" in task_lower
+        ):
             prefix = "I'll find some relevant information about this topic."
             reasoning = "Agent ignores recency constraint"
         else:
@@ -235,12 +242,7 @@ class PlanningErrorStrategy(BasePerturbationStrategy):
         # Construct the perturbed content
         if "Thought:" in content:
             # Insert after Thought:
-            perturbed = re.sub(
-                r"(Thought:\s*)",
-                f"\\1{prefix} ",
-                content,
-                count=1
-            )
+            perturbed = re.sub(r"(Thought:\s*)", f"\\1{prefix} ", content, count=1)
         else:
             # Prepend with Thought section
             perturbed = f"Thought: {prefix}\n{content}"
@@ -266,10 +268,7 @@ class ToolSelectionErrorStrategy(BasePerturbationStrategy):
         self.tool_matcher = ToolSimilarityMatcher()
 
     def perturb_step(
-        self,
-        step: Step,
-        trajectory: Trajectory,
-        system_prompt: Optional[str] = None
+        self, step: Step, trajectory: Trajectory, system_prompt: Optional[str] = None
     ) -> Step:
         """
         Replace tool call with similar but incorrect tool.
@@ -297,8 +296,7 @@ class ToolSelectionErrorStrategy(BasePerturbationStrategy):
 
         # Find plausible substitutes
         substitutes = self.tool_matcher.find_plausible_substitutes(
-            step.tool_name,
-            max_substitutes=3
+            step.tool_name, max_substitutes=3
         )
 
         if not substitutes:
@@ -315,9 +313,7 @@ class ToolSelectionErrorStrategy(BasePerturbationStrategy):
         # Replace tool name in content
         content = step.content
         content = re.sub(
-            rf"Action:\s*{re.escape(step.tool_name)}",
-            f"Action: {wrong_tool}",
-            content
+            rf"Action:\s*{re.escape(step.tool_name)}", f"Action: {wrong_tool}", content
         )
 
         perturbed.content = content
@@ -325,7 +321,7 @@ class ToolSelectionErrorStrategy(BasePerturbationStrategy):
             "type": "tool_selection_error",
             "original_tool": step.tool_name,
             "wrong_tool": wrong_tool,
-            "alternatives_considered": substitutes
+            "alternatives_considered": substitutes,
         }
 
         return perturbed
@@ -352,9 +348,9 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
 
     # Realism-constrained subtypes (execution continues with wrong data)
     ERROR_SUBTYPES = [
-        "wrong_value",      # C1: Wrong but plausible value
-        "format_error",     # C2: Correct value, wrong format
-        "off_by_one",       # C3: Subtle numeric error
+        "wrong_value",  # C1: Wrong but plausible value
+        "format_error",  # C2: Correct value, wrong format
+        "off_by_one",  # C3: Subtle numeric error
     ]
 
     # Legacy types for backward compatibility
@@ -362,7 +358,7 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
         "missing_required_param",
         "wrong_param_value",
         "wrong_param_name",
-        "wrong_param_type"
+        "wrong_param_type",
     ]
 
     def perturb_step(
@@ -370,7 +366,7 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
         step: Step,
         trajectory: Trajectory,
         system_prompt: Optional[str] = None,
-        subtype: Optional[str] = None
+        subtype: Optional[str] = None,
     ) -> Step:
         """
         Corrupt tool parameters.
@@ -438,9 +434,7 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
 
         # Find and replace the JSON in Action Input
         action_input_match = re.search(
-            r"Action Input:\s*(\{[^}]*\}|\{.*?\n\})",
-            content,
-            re.DOTALL
+            r"Action Input:\s*(\{[^}]*\}|\{.*?\n\})", content, re.DOTALL
         )
 
         if action_input_match:
@@ -453,7 +447,7 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
             "type": "parameter_error",
             "error_subtype": error_subtype,
             "original_input": original_input,
-            "perturbed_input": perturbed_input
+            "perturbed_input": perturbed_input,
         }
 
         return perturbed
@@ -517,7 +511,8 @@ class ParameterErrorStrategy(BasePerturbationStrategy):
 
         # Find numeric parameters
         numeric_keys = [
-            k for k, v in new_params.items()
+            k
+            for k, v in new_params.items()
             if isinstance(v, int) or (isinstance(v, str) and v.isdigit())
         ]
 
@@ -665,10 +660,7 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
     ]
 
     def perturb_step(
-        self,
-        step: Step,
-        trajectory: Trajectory,
-        system_prompt: Optional[str] = None
+        self, step: Step, trajectory: Trajectory, system_prompt: Optional[str] = None
     ) -> Step:
         """
         Replace a data reference with a hallucinated value.
@@ -687,10 +679,7 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
             Step with hallucinated data reference
         """
         # Find prior steps
-        prior_steps = [
-            s for s in trajectory.steps
-            if s.step_number < step.step_number
-        ]
+        prior_steps = [s for s in trajectory.steps if s.step_number < step.step_number]
 
         if not prior_steps:
             # No prior steps to reference - this perturbation type not applicable
@@ -759,11 +748,13 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
                         else:
                             val = match
                         if val and len(str(val)) > 1:
-                            values.append({
-                                "value": val,
-                                "value_type": value_type,
-                                "source_step": step.step_number,
-                            })
+                            values.append(
+                                {
+                                    "value": val,
+                                    "value_type": value_type,
+                                    "source_step": step.step_number,
+                                }
+                            )
 
             # Check tool input (parameters might be referenced later)
             if step.tool_input:
@@ -781,11 +772,13 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
                         else:
                             value_type = "string"
 
-                        values.append({
-                            "value": val,
-                            "value_type": value_type,
-                            "source_step": step.step_number,
-                        })
+                        values.append(
+                            {
+                                "value": val,
+                                "value_type": value_type,
+                                "source_step": step.step_number,
+                            }
+                        )
 
         return values
 
@@ -862,9 +855,7 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _generate_hallucinated_value(
-        self, original_value: Any, value_type: str
-    ) -> Any:
+    def _generate_hallucinated_value(self, original_value: Any, value_type: str) -> Any:
         """
         Generate a plausible but wrong value.
 
@@ -944,10 +935,7 @@ class DataReferenceErrorStrategy(BasePerturbationStrategy):
             elif isinstance(v, dict):
                 result[k] = self._replace_in_dict(v, old_val, new_val)
             elif isinstance(v, list):
-                result[k] = [
-                    new_val if item == old_val else item
-                    for item in v
-                ]
+                result[k] = [new_val if item == old_val else item for item in v]
             else:
                 result[k] = v
         return result
@@ -974,7 +962,11 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
         # "both X and Y" -> just X
         (r"both\s+(.+)\s+and\s+(.+)", r"\1", "Only addressing first item"),
         # "compare X with Y" -> just X
-        (r"compare\s+(.+)\s+(?:with|to|against)\s+(.+)", r"find \1", "Missing comparison"),
+        (
+            r"compare\s+(.+)\s+(?:with|to|against)\s+(.+)",
+            r"find \1",
+            "Missing comparison",
+        ),
         # "all X" -> "one X"
         (r"all\s+(?:the\s+)?(\w+)", r"one \1", "Limiting scope to one"),
         # "each X" -> "the first X"
@@ -993,7 +985,10 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
 
     # Query modification patterns
     QUERY_MODIFICATIONS = [
-        (r'"([^"]+)"', lambda m: f'"{m.group(1)[:len(m.group(1))//2]}"'),  # Truncate quoted query
+        (
+            r'"([^"]+)"',
+            lambda m: f'"{m.group(1)[:len(m.group(1))//2]}"',
+        ),  # Truncate quoted query
         (r"search for (.+)", r"search for part of \1"),
         (r"look up (.+)", r"briefly check \1"),
     ]
@@ -1008,7 +1003,7 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
         step: Step,
         trajectory: Trajectory,
         system_prompt: Optional[str] = None,
-        subtype: Optional[str] = None
+        subtype: Optional[str] = None,
     ) -> Step:
         """
         Apply GAIA-specific perturbation.
@@ -1035,16 +1030,16 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
             return self._wrong_extraction_perturbation(step, trajectory)
         else:
             # Random choice
-            perturbation_func = self.random.choice([
-                self._scope_reduction_perturbation,
-                self._wrong_source_perturbation,
-                self._wrong_query_perturbation,
-            ])
+            perturbation_func = self.random.choice(
+                [
+                    self._scope_reduction_perturbation,
+                    self._wrong_source_perturbation,
+                    self._wrong_query_perturbation,
+                ]
+            )
             return perturbation_func(step, trajectory)
 
-    def _scope_reduction_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _scope_reduction_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Planning analog: Reduce the scope of the task incorrectly.
 
@@ -1062,7 +1057,9 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
             # Try on step content first
             match = re.search(pattern, original_content, re.IGNORECASE)
             if match:
-                modified = re.sub(pattern, replacement, original_content, count=1, flags=re.IGNORECASE)
+                modified = re.sub(
+                    pattern, replacement, original_content, count=1, flags=re.IGNORECASE
+                )
                 reasoning = reason
                 break
 
@@ -1096,9 +1093,7 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_source_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_source_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Tool selection analog: Use wrong source/website for information.
         """
@@ -1137,9 +1132,7 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_query_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_query_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Parameter analog: Modify search query incorrectly.
         """
@@ -1155,17 +1148,27 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
                 if callable(replacement):
                     modified = re.sub(pattern, replacement, original_content, count=1)
                 else:
-                    modified = re.sub(pattern, replacement, original_content, count=1, flags=re.IGNORECASE)
+                    modified = re.sub(
+                        pattern,
+                        replacement,
+                        original_content,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
                 break
 
         if modified == original_content:
             # Fallback: Add query limitation
-            modified = original_content.replace("search", "briefly search", 1) if "search" in original_content.lower() else original_content
+            modified = (
+                original_content.replace("search", "briefly search", 1)
+                if "search" in original_content.lower()
+                else original_content
+            )
             if modified == original_content:
                 # Ultimate fallback: truncate content if it's a query-like step
                 words = original_content.split()
                 if len(words) > 5:
-                    modified = " ".join(words[:len(words)//2 + 1]) + "..."
+                    modified = " ".join(words[: len(words) // 2 + 1]) + "..."
 
         perturbed.content = modified
         perturbed.metadata["perturbation"] = {
@@ -1189,18 +1192,20 @@ class GAIAPerturbationStrategy(BasePerturbationStrategy):
         modified = original_content
 
         # Find numbers in parentheses (common in GAIA for expected values)
-        num_match = re.search(r'\((\d+)\)', original_content)
+        num_match = re.search(r"\((\d+)\)", original_content)
         if num_match:
             old_num = num_match.group(1)
             new_num = str(int(old_num) + self.random.randint(1, 10))
             modified = original_content.replace(f"({old_num})", f"({new_num})")
         else:
             # Find any numbers
-            num_match = re.search(r'\b(\d+)\b', original_content)
+            num_match = re.search(r"\b(\d+)\b", original_content)
             if num_match:
                 old_num = num_match.group(1)
                 new_num = str(int(old_num) + self.random.randint(1, 5))
-                modified = re.sub(r'\b' + old_num + r'\b', new_num, original_content, count=1)
+                modified = re.sub(
+                    r"\b" + old_num + r"\b", new_num, original_content, count=1
+                )
             else:
                 # Add wrong extraction note
                 modified = f"[Using approximate value] {original_content}"
@@ -1240,7 +1245,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         step: Step,
         trajectory: Trajectory,
         system_prompt: Optional[str] = None,
-        subtype: Optional[str] = None
+        subtype: Optional[str] = None,
     ) -> Step:
         """
         Apply SWE-bench-specific perturbation.
@@ -1269,16 +1274,16 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
             return self._wrong_reference_perturbation(step, trajectory)
         else:
             # Random choice
-            perturbation_func = self.random.choice([
-                self._wrong_file_perturbation,
-                self._wrong_location_perturbation,
-                self._wrong_value_perturbation,
-            ])
+            perturbation_func = self.random.choice(
+                [
+                    self._wrong_file_perturbation,
+                    self._wrong_location_perturbation,
+                    self._wrong_value_perturbation,
+                ]
+            )
             return perturbation_func(step, trajectory)
 
-    def _wrong_file_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_file_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Edit wrong file (analogous to wrong tool selection).
 
@@ -1290,7 +1295,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         # Find file paths in content (common patterns)
         path_patterns = [
-            r'<parameter=path>([^<]+)</parameter>',
+            r"<parameter=path>([^<]+)</parameter>",
             r'"path":\s*"([^"]+)"',
             r'/testbed/([^\s<>"]+\.py)',
         ]
@@ -1313,10 +1318,10 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         if not modified:
             # Fallback: modify any path-like string
-            path_match = re.search(r'(/\w+)+\.py', content)
+            path_match = re.search(r"(/\w+)+\.py", content)
             if path_match:
                 orig = path_match.group(0)
-                wrong = orig.replace('.py', '_utils.py')
+                wrong = orig.replace(".py", "_utils.py")
                 perturbed.content = content.replace(orig, wrong, 1)
                 perturbed.metadata["perturbation"] = {
                     "type": "swebench_error",
@@ -1327,9 +1332,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_location_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_location_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Edit wrong location in file (analogous to wrong parameter - spatial).
 
@@ -1339,15 +1342,13 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
         content = step.content
 
         # Try to find and modify line numbers in content
-        line_match = re.search(r'line[_\s]*(\d+)', content, re.IGNORECASE)
+        line_match = re.search(r"line[_\s]*(\d+)", content, re.IGNORECASE)
         if line_match:
             orig_line = line_match.group(1)
             offset = self.random.choice([-20, -10, 10, 20])
             new_line = str(max(1, int(orig_line) + offset))
             perturbed.content = content.replace(
-                line_match.group(0),
-                line_match.group(0).replace(orig_line, new_line),
-                1
+                line_match.group(0), line_match.group(0).replace(orig_line, new_line), 1
             )
             perturbed.metadata["perturbation"] = {
                 "type": "swebench_error",
@@ -1358,11 +1359,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
             return perturbed
 
         # Try to modify function/class names
-        func_match = re.search(
-            r'(def|class|function)\s+(\w+)',
-            content,
-            re.IGNORECASE
-        )
+        func_match = re.search(r"(def|class|function)\s+(\w+)", content, re.IGNORECASE)
         if func_match:
             orig_name = func_match.group(2)
             wrong_name = orig_name + "_helper"
@@ -1376,7 +1373,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
             return perturbed
 
         # Fallback: modify any identifier
-        id_match = re.search(r'`(\w{4,})`', content)
+        id_match = re.search(r"`(\w{4,})`", content)
         if id_match:
             orig = id_match.group(1)
             wrong = orig + "_v2"
@@ -1390,9 +1387,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_value_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_value_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Wrong code value (analogous to wrong parameter value).
 
@@ -1413,9 +1408,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_diagnosis_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_diagnosis_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Wrong bug diagnosis (analogous to planning error).
 
@@ -1437,7 +1430,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         # SWE-bench format: plain text with reasoning
         # Look for first sentence to inject after
-        first_sentence_match = re.search(r'^([^.!?]+[.!?])', content)
+        first_sentence_match = re.search(r"^([^.!?]+[.!?])", content)
 
         if first_sentence_match:
             first_sentence = first_sentence_match.group(1)
@@ -1445,9 +1438,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
             injection = f" However, {diagnosis}."
 
             perturbed.content = content.replace(
-                first_sentence,
-                first_sentence + injection,
-                1
+                first_sentence, first_sentence + injection, 1
             )
             perturbed.metadata["perturbation"] = {
                 "type": "swebench_error",
@@ -1466,9 +1457,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         return perturbed
 
-    def _wrong_reference_perturbation(
-        self, step: Step, trajectory: Trajectory
-    ) -> Step:
+    def _wrong_reference_perturbation(self, step: Step, trajectory: Trajectory) -> Step:
         """
         Use wrong variable/reference (analogous to data reference error).
 
@@ -1479,13 +1468,13 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
         # Find variable-like identifiers in content
         # Look for self.something or module.something patterns
-        var_match = re.search(r'(self\.(\w+)|(\w+)\.(\w+))', content)
+        var_match = re.search(r"(self\.(\w+)|(\w+)\.(\w+))", content)
         if var_match:
             orig = var_match.group(0)
             # Modify the last part
-            parts = orig.split('.')
+            parts = orig.split(".")
             parts[-1] = parts[-1] + "_old"
-            wrong = '.'.join(parts)
+            wrong = ".".join(parts)
             perturbed.content = content.replace(orig, wrong, 1)
             perturbed.metadata["perturbation"] = {
                 "type": "swebench_error",
@@ -1496,7 +1485,7 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
             return perturbed
 
         # Try to find any identifier (snake_case)
-        id_match = re.search(r'\b([a-z][a-z0-9_]{3,})\b', content)
+        id_match = re.search(r"\b([a-z][a-z0-9_]{3,})\b", content)
         if id_match:
             orig = id_match.group(1)
             wrong = orig + "_v1"
@@ -1537,12 +1526,13 @@ class SWEBenchPerturbationStrategy(BasePerturbationStrategy):
 
     def _modify_code_value(self, code: str) -> str:
         """Modify a value in code."""
+
         # Find numbers and change them
         def replace_number(match):
             num = int(match.group())
             return str(num + self.random.choice([-1, 1, 10, -10]))
 
-        modified = re.sub(r'\b\d+\b', replace_number, code, count=1)
+        modified = re.sub(r"\b\d+\b", replace_number, code, count=1)
 
         if modified != code:
             return modified

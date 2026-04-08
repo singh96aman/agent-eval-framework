@@ -315,76 +315,196 @@ class ExperimentRunner:
             print(f"   Avg slots per trajectory: {total_slots / len(typed_trajectories):.1f}")
 
     def _phase_perturb(self):
-        """Generate perturbations for loaded trajectories."""
-        from src.perturbations.generator import PerturbationGenerator
+        """
+        Generate controlled perturbations using Section 3 V2 generator.
+
+        Features:
+        - Three perturbation classes (placebo, fine-grained, coarse-grained)
+        - Five families (data_reference, parameter, tool_selection, structural, terminal_flag)
+        - Batch-level balancing for target distribution
+        - Heuristic-only QC (no LLM)
+        - Impact derivation from Section 2 heuristics
+        """
+        from src.perturbations.generator_v2 import (
+            PerturbationGeneratorV2,
+            generate_perturbations_for_batch,
+        )
+        from src.perturbations.balancer import PerturbationBalancer, balance_perturbation_batch
+        from src.perturbations.storage import (
+            PerturbationStorage,
+            PerturbationExporter,
+            build_index_from_perturbations,
+            group_by_benchmark,
+        )
+        from src.typing.schema import TypedTrajectory
 
         phase_config = self.config.get("phases", {}).get("perturb", {})
-        validate_config = phase_config.get("validate", {})
+        targets_config = self.config.get("targets", {})
+        output_config = self.config.get("output", {})
 
-        # Load trajectories
-        trajectories = list(
-            self.storage.get_trajectories_by_experiment(self.experiment_id)
-        )
-        print(f"Loaded {len(trajectories)} trajectories")
+        # Get source experiment
+        input_config = self.config.get("input", {})
+        source_experiment = input_config.get("experiment_id", self.experiment_id)
+        source_collection = input_config.get("collection", "typed_trajectories")
 
-        if not trajectories:
-            print("No trajectories found. Run 'load' phase first.")
+        print(f"Loading typed trajectories from: {source_experiment}")
+        print(f"Collection: {source_collection}")
+
+        # Load typed trajectories
+        typed_collection = self.storage.db[source_collection]
+        raw_docs = list(typed_collection.find({"experiment_id": source_experiment}))
+
+        if not raw_docs:
+            print(f"No typed trajectories found for experiment: {source_experiment}")
             return
 
-        # Configure generator
-        generator = PerturbationGenerator(
-            perturbation_types=phase_config.get(
-                "types", ["planning", "tool_selection", "parameter", "data_reference"]
-            ),
-            positions=phase_config.get("positions", ["early", "middle", "late"]),
-        )
+        # Convert to TypedTrajectory objects
+        trajectories = []
+        for doc in raw_docs:
+            doc.pop("_id", None)
+            try:
+                typed = TypedTrajectory.from_dict(doc)
+                trajectories.append(typed)
+            except Exception as e:
+                print(f"   Error loading trajectory {doc.get('trajectory_id')}: {e}")
+
+        print(f"Loaded {len(trajectories)} typed trajectories")
+
+        # Get target distribution
+        total_target = targets_config.get("total_perturbations", 1500)
+        per_trajectory = targets_config.get("per_trajectory", {}).get("target", 3)
+        class_weights = targets_config.get("by_class", {
+            "placebo": 0.20,
+            "fine_grained": 0.50,
+            "coarse_grained": 0.30,
+        })
+
+        print(f"\nTarget: {total_target} perturbations")
+        print(f"Distribution: {class_weights}")
+        print(f"Per trajectory: {per_trajectory}")
 
         if self.dry_run:
-            print("DRY RUN: Would generate perturbations")
+            print("\nDRY RUN: Would generate perturbations")
+            # Generate sample for one trajectory
+            if trajectories:
+                generator = PerturbationGeneratorV2(
+                    random_seed=phase_config.get("random_seed", 42),
+                    enable_qc=True,
+                )
+                sample_results = generator.generate_for_trajectory(
+                    trajectories[0],
+                    target_count=per_trajectory,
+                    class_weights=class_weights,
+                )
+                print(f"\nSample: Generated {len(sample_results)} for first trajectory")
+                for record, _ in sample_results:
+                    print(f"   - {record.perturbation_class}/{record.perturbation_type}")
             return
 
+        # Initialize generator
+        generation_config = self.config.get("generation", {})
+        llm_config = generation_config.get("llm", {})
+
+        # Get LLM client for Claude-based generators (paraphrase, wrong_plan)
+        llm_client = None
+        if llm_config.get("provider") == "bedrock":
+            try:
+                from src.llm.bedrock_client import get_bedrock_client
+                llm_client = get_bedrock_client(log_calls=self.verbose)
+                print(f"Initialized LLM client for: {llm_config.get('use_for', [])}")
+            except Exception as e:
+                print(f"Warning: Could not initialize LLM client: {e}")
+                print("Generators requiring LLM will be skipped")
+
         # Generate perturbations
-        perturbations = []
-        for traj in trajectories:
-            perturbs = generator.generate(
-                traj, count=phase_config.get("per_trajectory", 1)
+        print(f"\nGenerating perturbations...")
+
+        all_results, index = generate_perturbations_for_batch(
+            trajectories=trajectories,
+            target_per_trajectory=per_trajectory,
+            random_seed=generation_config.get("random_seed", 42),
+            llm_client=llm_client,
+            verbose=self.verbose,
+        )
+
+        print(f"\nGenerated {len(all_results)} perturbations")
+
+        # Extract records for balancing
+        records = [record for record, _ in all_results]
+
+        # Balance distribution
+        print("\nBalancing distribution...")
+        balanced_records, balance_report = balance_perturbation_batch(
+            records=records,
+            total_target=total_target,
+            class_weights=class_weights,
+            random_seed=generation_config.get("random_seed", 42),
+        )
+
+        print(f"After balancing: {len(balanced_records)} perturbations")
+        print(f"Removed: {balance_report['removed']}")
+        print(f"Is balanced: {balance_report['is_balanced']}")
+
+        # Filter all_results to balanced records
+        balanced_ids = {r.perturbation_id for r in balanced_records}
+        balanced_results = [
+            (record, traj) for record, traj in all_results
+            if record.perturbation_id in balanced_ids
+        ]
+
+        # Prepare for storage
+        perturbed_trajectories = []
+        for record, perturbed_traj in balanced_results:
+            pt_dict = {
+                "perturbation_id": record.perturbation_id,
+                "original_trajectory_id": record.original_trajectory_id,
+                "original_trajectory": {
+                    "trajectory_id": record.original_trajectory_id,
+                    "benchmark": perturbed_traj.benchmark,
+                },
+                "perturbation_record": record.to_dict(),
+                "perturbed_trajectory": perturbed_traj.to_dict(),
+                "experiment_id": self.experiment_id,
+            }
+            perturbed_trajectories.append(pt_dict)
+
+        # Build final index
+        final_index = build_index_from_perturbations(
+            perturbed_trajectories,
+            output_dir=output_config.get("json", {}).get("dir", "data/perturbed"),
+        )
+
+        # Save to MongoDB
+        mongodb_config = output_config.get("mongodb", {})
+        if mongodb_config:
+            storage = PerturbationStorage(
+                mongodb_client=self.storage.client,
+                collection_name=mongodb_config.get("collection", "perturbed_trajectories"),
+                index_collection_name=mongodb_config.get("index_collection", "perturbation_index"),
             )
-            for p in perturbs:
-                p["experiment_id"] = self.experiment_id
-                perturbations.append(p)
 
-        print(f"Generated {len(perturbations)} perturbations")
+            saved = storage.save_perturbations_batch(perturbed_trajectories, self.experiment_id)
+            print(f"\nSaved {saved} perturbations to MongoDB")
 
-        # Save perturbations
-        for p in perturbations:
-            self.storage.save_perturbation(p)
+            storage.save_index(final_index, self.experiment_id)
+            print("Saved perturbation index to MongoDB")
 
-        # Run validation if enabled
-        if validate_config.get("enabled", False):
-            print("\nRunning validation...")
-            self._validate_perturbations(perturbations, validate_config)
+        # Export to JSON
+        json_config = output_config.get("json", {})
+        if json_config:
+            exporter = PerturbationExporter(json_config.get("dir", "data/perturbed"))
+            grouped = group_by_benchmark(perturbed_trajectories)
+            paths = exporter.export_all(grouped, final_index)
 
-    def _validate_perturbations(self, perturbations: List[Dict], config: Dict):
-        """Validate perturbations against config criteria."""
-        types = set(p.get("perturbation_type") for p in perturbations)
-        positions = set(p.get("position") for p in perturbations)
+            print(f"\nExported to JSON:")
+            for key, path in paths.items():
+                print(f"   {key}: {path}")
 
-        min_type_cov = config.get("min_type_coverage", 0.8)
-        min_pos_cov = config.get("min_position_coverage", 0.8)
-
-        expected_types = {"planning", "tool_selection", "parameter", "data_reference"}
-        expected_positions = {"early", "middle", "late"}
-
-        type_cov = len(types & expected_types) / len(expected_types)
-        pos_cov = len(positions & expected_positions) / len(expected_positions)
-
-        print(f"   Type coverage: {type_cov:.1%} (min: {min_type_cov:.1%})")
-        print(f"   Position coverage: {pos_cov:.1%} (min: {min_pos_cov:.1%})")
-
-        if type_cov < min_type_cov:
-            print("   WARNING: Type coverage below threshold")
-        if pos_cov < min_pos_cov:
-            print("   WARNING: Position coverage below threshold")
+        # Print summary
+        print("\n" + "=" * 50)
+        print("PERTURBATION GENERATION SUMMARY")
+        print("=" * 50)
+        print(final_index.get_distribution_report())
 
     def _phase_sample(self):
         """Sample perturbations for annotation."""

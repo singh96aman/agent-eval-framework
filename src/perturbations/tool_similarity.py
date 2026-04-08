@@ -6,13 +6,14 @@ based on API family, name similarity, and functional purpose.
 """
 
 import re
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set
 from dataclasses import dataclass
 
 
 @dataclass
 class ToolInfo:
     """Information about a tool extracted from system prompt."""
+
     name: str
     api_family: str  # e.g., "greyhound_racing_uk"
     description: str
@@ -96,12 +97,14 @@ class ToolSimilarityMatcher:
             # Extract purpose keywords from base name
             purpose_keywords = self._extract_purpose_keywords(base_name)
 
-            tools.append(ToolInfo(
-                name=tool_name,
-                api_family=api_family,
-                description=description,
-                purpose_keywords=purpose_keywords
-            ))
+            tools.append(
+                ToolInfo(
+                    name=tool_name,
+                    api_family=api_family,
+                    description=description,
+                    purpose_keywords=purpose_keywords,
+                )
+            )
 
         return tools
 
@@ -114,7 +117,7 @@ class ToolSimilarityMatcher:
         - get_user_info → {"get", "user", "info"}
         """
         # Split on underscores and common separators
-        parts = re.split(r'[_\-]', tool_name.lower())
+        parts = re.split(r"[_\-]", tool_name.lower())
 
         # Filter out common noise words
         noise_words = {"for", "the", "a", "an", "by", "with", "from", "to"}
@@ -139,9 +142,7 @@ class ToolSimilarityMatcher:
             self.tools_by_family[tool.api_family].append(tool)
 
     def find_plausible_substitutes(
-        self,
-        tool_name: str,
-        max_substitutes: int = 3
+        self, tool_name: str, max_substitutes: int = 3
     ) -> List[str]:
         """
         Find plausible tool substitutes for perturbation.
