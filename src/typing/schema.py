@@ -351,6 +351,19 @@ class TypedStep:
         ]:
             if field_name in data and data[field_name]:
                 data[field_name] = ProvenanceField.from_dict(data[field_name])
+        # Filter to known fields only
+        known_fields = {
+            "step_index", "raw_text", "step_role", "is_terminal_step",
+            "produces_final_answer", "produces_patch", "tool_name", "tool_arguments",
+            "observation", "normalized_operation", "extracted_value", "value_type",
+            "source_step", "source_description", "extraction_provenance",
+            "depends_on_steps", "dependency_edges", "transitive_depends_on",
+            "entities", "produced_artifacts", "consumed_artifacts",
+            "perturbable_slots", "critical_path_score", "affects_final_answer",
+            "affects_patch", "affects_tool_execution", "recoverable_if_wrong",
+            "observable_if_wrong",
+        }
+        data = {k: v for k, v in data.items() if k in known_fields}
         return cls(**data)
 
 
@@ -415,6 +428,14 @@ class TypedTrajectory:
         """Create TypedTrajectory from dictionary."""
         data = data.copy()
         data["steps"] = [TypedStep.from_dict(s) for s in data.get("steps", [])]
+        # Filter out MongoDB-specific fields not in the schema
+        known_fields = {
+            "trajectory_id", "benchmark", "task_id", "task_text", "expected_answer",
+            "domain", "difficulty", "num_steps", "environment_type",
+            "ground_truth_available", "baseline_outcome", "has_objective_verifier",
+            "can_replay", "can_regenerate_downstream", "steps", "provenance",
+        }
+        data = {k: v for k, v in data.items() if k in known_fields}
         return cls(**data)
 
     def get_step(self, index: int) -> Optional[TypedStep]:

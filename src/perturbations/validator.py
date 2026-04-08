@@ -23,35 +23,34 @@ class PerturbationValidator:
 
     # Patterns that indicate text corruption (BUG2)
     CORRUPTION_PHRASES = [
-        'analyze the first one provide',
-        'analyze the first one and',
-        'historical data provide',
+        "analyze the first one provide",
+        "analyze the first one and",
+        "historical data provide",
     ]
 
     # Map native types to standard categories (BUG4)
     TYPE_MAPPING = {
-        'gaia_planning': 'planning',
-        'gaia_tool_selection': 'tool_selection',
-        'gaia_parameter': 'parameter',
-        'gaia_data_reference': 'data_reference',
-        'swebench_wrong_diagnosis': 'planning',
-        'swebench_wrong_file': 'tool_selection',
-        'swebench_wrong_location': 'parameter',
-        'swebench_wrong_reference': 'data_reference',
-        'planning': 'planning',
-        'tool_selection': 'tool_selection',
-        'parameter': 'parameter',
-        'data_reference': 'data_reference',
+        "gaia_planning": "planning",
+        "gaia_tool_selection": "tool_selection",
+        "gaia_parameter": "parameter",
+        "gaia_data_reference": "data_reference",
+        "swebench_wrong_diagnosis": "planning",
+        "swebench_wrong_file": "tool_selection",
+        "swebench_wrong_location": "parameter",
+        "swebench_wrong_reference": "data_reference",
+        "planning": "planning",
+        "tool_selection": "tool_selection",
+        "parameter": "parameter",
+        "data_reference": "data_reference",
     }
 
-    REQUIRED_TYPES = {'planning', 'tool_selection', 'parameter', 'data_reference'}
+    REQUIRED_TYPES = {"planning", "tool_selection", "parameter", "data_reference"}
 
     def __init__(self):
         self.results = {}
 
     def validate_all(
-        self,
-        perturbations: Dict[str, List[Dict[str, Any]]]
+        self, perturbations: Dict[str, List[Dict[str, Any]]]
     ) -> Dict[str, bool]:
         """
         Run all validation checks.
@@ -63,27 +62,26 @@ class PerturbationValidator:
             Dict mapping check name to pass/fail status
         """
         self.results = {
-            'BUG1_no_template': self._check_no_template_fallback(perturbations),
-            'BUG2_planning_quality': self._check_planning_quality(perturbations),
-            'BUG3_position_coverage': self._check_position_coverage(perturbations),
-            'BUG4_type_diversity': self._check_type_diversity(perturbations),
-            'uniqueness': self._check_uniqueness(perturbations),
+            "BUG1_no_template": self._check_no_template_fallback(perturbations),
+            "BUG2_planning_quality": self._check_planning_quality(perturbations),
+            "BUG3_position_coverage": self._check_position_coverage(perturbations),
+            "BUG4_type_diversity": self._check_type_diversity(perturbations),
+            "uniqueness": self._check_uniqueness(perturbations),
         }
         return self.results
 
     def _check_no_template_fallback(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Tuple[bool, List[str]]:
         """BUG1: No template fallback usage."""
         failures = []
 
         for benchmark, perturbs in perturbations.items():
             for p in perturbs:
-                content = p.get('perturbed_step_content', '')
+                content = p.get("perturbed_step_content", "")
                 if self.TEMPLATE_PHRASE in content:
-                    traj_id = p.get('original_trajectory', {}).get(
-                        'trajectory_id', 'unknown'
+                    traj_id = p.get("original_trajectory", {}).get(
+                        "trajectory_id", "unknown"
                     )
                     failures.append(f"{benchmark}/{traj_id}")
 
@@ -91,24 +89,23 @@ class PerturbationValidator:
         return passed, failures
 
     def _check_planning_quality(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Tuple[bool, List[str]]:
         """BUG2: Planning perturbations are semantic, not text corruption."""
         suspicious = []
 
         for benchmark, perturbs in perturbations.items():
             for p in perturbs:
-                ptype = p.get('perturbation_type', '')
-                if 'planning' not in ptype.lower():
+                ptype = p.get("perturbation_type", "")
+                if "planning" not in ptype.lower():
                     continue
 
-                pert = p.get('perturbed_step_content', '')
+                pert = p.get("perturbed_step_content", "")
 
                 for phrase in self.CORRUPTION_PHRASES:
                     if phrase in pert.lower():
-                        traj_id = p.get('original_trajectory', {}).get(
-                            'trajectory_id', 'unknown'
+                        traj_id = p.get("original_trajectory", {}).get(
+                            "trajectory_id", "unknown"
                         )
                         suspicious.append(f"{benchmark}/{traj_id}: '{phrase}'")
                         break
@@ -117,28 +114,26 @@ class PerturbationValidator:
         return passed, suspicious
 
     def _check_position_coverage(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Tuple[bool, str]:
         """BUG3: All (type, position) cells have coverage."""
         counts = defaultdict(lambda: defaultdict(int))
 
         for benchmark, perturbs in perturbations.items():
             for p in perturbs:
-                ptype = p.get('perturbation_type', 'unknown')
-                pos = p.get('perturbation_position', 'unknown')
+                ptype = p.get("perturbation_type", "unknown")
+                pos = p.get("perturbation_position", "unknown")
                 counts[ptype][pos] += 1
 
         # data_reference early=0 is by design (not a failure)
         note = ""
-        if counts.get('data_reference', {}).get('early', 0) == 0:
+        if counts.get("data_reference", {}).get("early", 0) == 0:
             note = "data_reference has no early position (valid constraint)"
 
         return True, note
 
     def _check_type_diversity(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Tuple[bool, List[str]]:
         """BUG4: Each benchmark has all perturbation types."""
         failures = []
@@ -147,7 +142,7 @@ class PerturbationValidator:
             if not perturbs:
                 continue
 
-            raw_types = set(p.get('perturbation_type', '') for p in perturbs)
+            raw_types = set(p.get("perturbation_type", "") for p in perturbs)
             types_present = set()
             for rt in raw_types:
                 normalized = self.TYPE_MAPPING.get(rt, rt)
@@ -161,8 +156,7 @@ class PerturbationValidator:
         return passed, failures
 
     def _check_uniqueness(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Tuple[bool, int]:
         """Check that perturbations are contextually unique."""
         total_dups = 0
@@ -170,8 +164,8 @@ class PerturbationValidator:
         for benchmark, perturbs in perturbations.items():
             seen = {}
             for p in perturbs:
-                content = p.get('perturbed_step_content', '')
-                key = content[:100] if content else ''
+                content = p.get("perturbed_step_content", "")
+                key = content[:100] if content else ""
                 if key in seen:
                     total_dups += 1
                 else:
@@ -182,8 +176,7 @@ class PerturbationValidator:
         return passed, total_dups
 
     def get_coverage_summary(
-        self,
-        perturbations: Dict[str, List[Dict]]
+        self, perturbations: Dict[str, List[Dict]]
     ) -> Dict[str, Dict[str, Any]]:
         """Get coverage summary by type and position."""
         summary = {}
@@ -196,23 +189,21 @@ class PerturbationValidator:
             pos_counts = defaultdict(int)
 
             for p in perturbs:
-                ptype = p.get('perturbation_type', 'unknown')
-                pos = p.get('perturbation_position', 'unknown')
+                ptype = p.get("perturbation_type", "unknown")
+                pos = p.get("perturbation_position", "unknown")
                 type_counts[ptype] += 1
                 pos_counts[pos] += 1
 
             summary[benchmark] = {
-                'total': len(perturbs),
-                'by_type': dict(type_counts),
-                'by_position': dict(pos_counts),
+                "total": len(perturbs),
+                "by_type": dict(type_counts),
+                "by_position": dict(pos_counts),
             }
 
         return summary
 
     def print_report(
-        self,
-        perturbations: Dict[str, List[Dict]],
-        verbose: bool = True
+        self, perturbations: Dict[str, List[Dict]], verbose: bool = True
     ) -> bool:
         """
         Print validation report and return overall pass/fail.
@@ -240,7 +231,7 @@ class PerturbationValidator:
         results = self.validate_all(perturbations)
 
         # BUG1
-        passed, failures = results['BUG1_no_template']
+        passed, failures = results["BUG1_no_template"]
         if passed:
             print("BUG1 PASS: No template fallback detected")
         else:
@@ -250,7 +241,7 @@ class PerturbationValidator:
                     print(f"  - {f}")
 
         # BUG2
-        passed, suspicious = results['BUG2_planning_quality']
+        passed, suspicious = results["BUG2_planning_quality"]
         if passed:
             print("BUG2 PASS: No text corruption in planning perturbations")
         else:
@@ -260,20 +251,20 @@ class PerturbationValidator:
                     print(f"  - {s}")
 
         # BUG3
-        passed, note = results['BUG3_position_coverage']
+        passed, note = results["BUG3_position_coverage"]
         if note:
             print(f"BUG3 WARNING: {note}")
         print("BUG3 PASS: Position coverage acceptable")
 
         # BUG4
-        passed, failures = results['BUG4_type_diversity']
+        passed, failures = results["BUG4_type_diversity"]
         if passed:
             print("BUG4 PASS: All benchmarks have all perturbation types")
         else:
             print(f"BUG4 FAIL: {failures}")
 
         # Uniqueness
-        passed, total_dups = results['uniqueness']
+        passed, total_dups = results["uniqueness"]
         if passed:
             print("UNIQUENESS PASS: Perturbations are sufficiently unique")
         else:
@@ -293,10 +284,7 @@ class PerturbationValidator:
                 print(f"  By position: {stats['by_position']}")
 
         # Overall result
-        all_pass = all(
-            r[0] if isinstance(r, tuple) else r
-            for r in results.values()
-        )
+        all_pass = all(r[0] if isinstance(r, tuple) else r for r in results.values())
 
         print("\n" + "=" * 60)
         print("SUMMARY")
@@ -311,14 +299,12 @@ class PerturbationValidator:
         return all_pass
 
 
-def load_perturbations_from_files(
-    perturbed_dir: Path
-) -> Dict[str, List[Dict]]:
+def load_perturbations_from_files(perturbed_dir: Path) -> Dict[str, List[Dict]]:
     """Load perturbations from JSON files in a directory."""
     perturbations = {}
 
-    for benchmark in ['toolbench', 'gaia', 'swebench']:
-        path = perturbed_dir / f'{benchmark}_perturbations.json'
+    for benchmark in ["toolbench", "gaia", "swebench"]:
+        path = perturbed_dir / f"{benchmark}_perturbations.json"
         if path.exists():
             with open(path) as f:
                 perturbations[benchmark] = json.load(f)
@@ -329,8 +315,7 @@ def load_perturbations_from_files(
 
 
 def validate_perturbations_from_files(
-    perturbed_dir: str = "data/perturbed",
-    verbose: bool = True
+    perturbed_dir: str = "data/perturbed", verbose: bool = True
 ) -> bool:
     """
     Validate perturbations from JSON files.

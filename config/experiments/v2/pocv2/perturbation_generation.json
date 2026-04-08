@@ -1,0 +1,95 @@
+{
+  "schema": "2.0.0",
+
+  "experiment": {
+    "id": "exp_trajectory_sampling_v7",
+    "name": "Controlled Perturbation Generation - Section 3",
+    "description": "Generate ~1500 controlled perturbations across 500 typed trajectories with 20% placebo, 50% fine-grained, 30% coarse-grained distribution",
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    }
+  },
+
+  "targets": {
+    "total_perturbations": 1500,
+    "per_trajectory": {
+      "target": 3
+    },
+    "by_class": {
+      "placebo": 0.20,
+      "fine_grained": 0.50,
+      "coarse_grained": 0.30
+    }
+  },
+
+  "generation": {
+    "random_seed": 42,
+    "llm": {
+      "provider": "bedrock",
+      "model": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "use_for": ["paraphrase", "wrong_plan"]
+    }
+  },
+
+  "output": {
+    "mongodb": {
+      "collection": "perturbed_trajectories",
+      "index_collection": "perturbation_index"
+    },
+    "json": {
+      "dir": "data/perturbed"
+    }
+  },
+
+  "phases": {
+    "perturb": {
+      "enabled": true,
+      "random_seed": 42,
+
+      "generators": {
+        "placebo": {
+          "types": ["paraphrase", "formatting", "synonym", "reorder_args"],
+          "llm_required": ["paraphrase"]
+        },
+        "fine_grained": {
+          "types": ["wrong_value", "off_by_one", "typo_in_id", "threshold_shift", "query_drift", "near_neighbor_tool"]
+        },
+        "coarse_grained": {
+          "types": ["skipped_prerequisite", "wrong_plan", "false_terminal", "premature_termination", "wrong_tool_family"],
+          "llm_required": ["wrong_plan"]
+        }
+      },
+
+      "qc": {
+        "enabled": true,
+        "validators": ["schema", "diff", "coherence", "class_family"],
+        "derive_impact_from": "section2_heuristics",
+        "fail_on": ["schema", "diff"],
+        "borderline_on": ["coherence", "class_family"]
+      }
+    }
+  },
+
+  "validation": {
+    "enabled": true,
+    "requirements": {
+      "min_total_perturbations": 1400,
+      "class_distribution_tolerance": 0.05,
+      "qc_valid_rate": 0.95
+    }
+  },
+
+  "compute": {
+    "targets": ["perturbation_summary"],
+    "output": {
+      "dir": "results",
+      "checkpoints": true
+    }
+  },
+
+  "execution": {
+    "batch_size": 50,
+    "verbose": true
+  }
+}

@@ -331,15 +331,18 @@ class PerturbedTrajectory:
     """
     A trajectory with an injected perturbation.
 
+    Refactored for Section 3 to use PerturbationRecord schema.
+
     Attributes:
         original_trajectory: The baseline trajectory
         perturbed_trajectory: Trajectory with injected error
-        perturbation_type: Type of error (planning, tool_selection, parameter)
+        perturbation_record: Full perturbation metadata (Section 3 schema)
+        perturbation_type: Type of error (legacy, derived from record)
         perturbation_position: Position label (early, middle, late)
         perturbed_step_number: Which step was perturbed (1-indexed)
         original_step_content: Original step before perturbation
         perturbed_step_content: Modified step after perturbation
-        perturbation_metadata: Additional information about the perturbation
+        perturbation_metadata: Additional perturbation info (legacy)
     """
 
     original_trajectory: Trajectory
@@ -350,10 +353,12 @@ class PerturbedTrajectory:
     original_step_content: str
     perturbed_step_content: str
     perturbation_metadata: Dict[str, Any] = field(default_factory=dict)
+    # Section 3: New perturbation record with class/family/type
+    perturbation_record: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "original_trajectory": self.original_trajectory.to_dict(),
             "perturbed_trajectory": self.perturbed_trajectory.to_dict(),
             "perturbation_type": self.perturbation_type,
@@ -363,13 +368,52 @@ class PerturbedTrajectory:
             "perturbed_step_content": self.perturbed_step_content,
             "perturbation_metadata": self.perturbation_metadata,
         }
+        if self.perturbation_record:
+            result["perturbation_record"] = self.perturbation_record
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PerturbedTrajectory":
         """Create PerturbedTrajectory from dictionary."""
         data = data.copy()
-        data["original_trajectory"] = Trajectory.from_dict(data["original_trajectory"])
+        data["original_trajectory"] = Trajectory.from_dict(
+            data["original_trajectory"]
+        )
         data["perturbed_trajectory"] = Trajectory.from_dict(
             data["perturbed_trajectory"]
         )
+        # Handle optional perturbation_record
+        data.setdefault("perturbation_record", None)
         return cls(**data)
+
+    @property
+    def perturbation_class(self) -> Optional[str]:
+        """Get perturbation class from record (Section 3)."""
+        if self.perturbation_record:
+            return self.perturbation_record.get("perturbation_class")
+        return None
+
+    @property
+    def perturbation_family(self) -> Optional[str]:
+        """Get perturbation family from record (Section 3)."""
+        if self.perturbation_record:
+            return self.perturbation_record.get("perturbation_family")
+        return None
+
+    @property
+    def expected_impact(self) -> int:
+        """Get expected impact from record (Section 3)."""
+        if self.perturbation_record:
+            return self.perturbation_record.get("expected_impact", 0)
+        return 0
+
+    @property
+    def generation_status(self) -> str:
+        """Get QC status from record (Section 3)."""
+        if self.perturbation_record:
+            return self.perturbation_record.get("generation_status", "valid")
+        return "valid"
+
+    def is_valid(self) -> bool:
+        """Check if perturbation passed QC."""
+        return self.generation_status == "valid"

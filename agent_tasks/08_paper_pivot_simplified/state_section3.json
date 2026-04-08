@@ -1,0 +1,127 @@
+{
+  "task": "3_Requirements_ControlledPerturbations",
+  "status": "completed",
+  "last_updated": "2026-04-08T12:00:00Z",
+
+  "plan": {
+    "phase_1_schema": "completed",
+    "phase_2a_placebo": "completed",
+    "phase_2b_fine_grained": "completed",
+    "phase_2c_coarse_grained": "completed",
+    "phase_3_orchestrator": "completed",
+    "phase_4_qc": "completed",
+    "phase_5_balancing": "completed",
+    "phase_6_storage": "completed",
+    "phase_7_integration": "completed",
+    "phase_8_tests": "completed",
+    "validation": "completed"
+  },
+
+  "completed_steps": [
+    {
+      "step": "Phase 1: Schema",
+      "artifacts": [
+        "src/perturbations/schema.py",
+        "src/data/schema.py (refactored PerturbedTrajectory)"
+      ],
+      "notes": "Created PerturbationRecord, enums for class/family/type, PerturbationIndex"
+    },
+    {
+      "step": "Phase 2A: Placebo generators",
+      "artifacts": ["src/perturbations/placebo.py"],
+      "notes": "PlaceboParaphraseGenerator (Claude), FormattingGenerator, SynonymGenerator, ReorderArgsGenerator"
+    },
+    {
+      "step": "Phase 2B: Fine-grained generators",
+      "artifacts": ["src/perturbations/fine_grained.py"],
+      "notes": "DataReferenceGenerator, ParameterGenerator, ToolSelectionNearNeighborGenerator"
+    },
+    {
+      "step": "Phase 2C: Coarse-grained generators",
+      "artifacts": ["src/perturbations/coarse_grained.py"],
+      "notes": "SkippedPrerequisite, WrongPlan (Claude), FalseTerminal, PrematureTermination, WrongToolFamily"
+    },
+    {
+      "step": "Phase 3: Orchestrator",
+      "artifacts": ["src/perturbations/generator_v2.py"],
+      "notes": "PerturbationGeneratorV2 with slot enumeration, scoring, selection, routing"
+    },
+    {
+      "step": "Phase 4: QC pipeline",
+      "artifacts": ["src/perturbations/qc.py"],
+      "notes": "SchemaValidator, DiffValidator, CoherenceValidator, ClassFamilyValidator, ImpactDeriver"
+    },
+    {
+      "step": "Phase 5: Balancing",
+      "artifacts": ["src/perturbations/balancer.py"],
+      "notes": "BatchDistribution, PerturbationBalancer for target distribution (20/50/30)"
+    },
+    {
+      "step": "Phase 6: Storage",
+      "artifacts": ["src/perturbations/storage.py"],
+      "notes": "PerturbationStorage (MongoDB), PerturbationExporter (JSON)"
+    },
+    {
+      "step": "Phase 7: Integration",
+      "artifacts": ["src/experiment_runner.py"],
+      "notes": "Added perturb_v2 phase using PerturbationGeneratorV2"
+    },
+    {
+      "step": "Phase 8: Tests",
+      "artifacts": ["tests/test_perturbations_section3.py"],
+      "notes": "41 tests covering schema, generators, QC, balancer, storage, integration"
+    }
+  ],
+
+  "pending_steps": [],
+
+  "artifacts": {
+    "schema": "src/perturbations/schema.py",
+    "placebo": "src/perturbations/placebo.py",
+    "fine_grained": "src/perturbations/fine_grained.py",
+    "coarse_grained": "src/perturbations/coarse_grained.py",
+    "orchestrator": "src/perturbations/generator_v2.py",
+    "qc": "src/perturbations/qc.py",
+    "balancer": "src/perturbations/balancer.py",
+    "storage": "src/perturbations/storage.py",
+    "tests": "tests/test_perturbations_section3.py",
+    "config": "config/experiments/v2/section3/perturbation_generation.json"
+  },
+
+  "blockers": [],
+
+  "decisions": [
+    {
+      "decision": "Remove GAIA from scope",
+      "reason": "0 GAIA trajectories typed in exp_trajectory_sampling_v7",
+      "impact": "500 trajectories (400 ToolBench + 100 SWE-bench) instead of 600"
+    },
+    {
+      "decision": "Use Claude for paraphrase and wrong_plan only",
+      "reason": "User approved LLM for generation but not for QC",
+      "impact": "2 generators use LLM, rest are heuristic"
+    },
+    {
+      "decision": "Heuristic-only QC",
+      "reason": "Avoid circular dependency of LLM annotating data that LLM judges evaluate",
+      "impact": "expected_impact derived from Section 2 heuristics, not LLM estimation"
+    }
+  ],
+
+  "target_metrics": {
+    "total_perturbations": 1500,
+    "distribution": {
+      "placebo": "20% (~300)",
+      "fine_grained": "50% (~750)",
+      "coarse_grained": "30% (~450)"
+    },
+    "qc_valid_rate": ">95%"
+  },
+
+  "test_results": {
+    "total": 41,
+    "passed": 41,
+    "failed": 0,
+    "command": "python -m pytest tests/test_perturbations_section3.py -v"
+  }
+}
