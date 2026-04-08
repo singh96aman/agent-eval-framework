@@ -42,6 +42,147 @@ def _parse_tool_input(action_input_str: str) -> Optional[Dict[str, Any]]:
         return {"raw_input": action_input_str}
 
 
+import re
+
+# Compiled patterns for SWE-bench tool parsing
+_SWEBENCH_FUNCTION_RE = re.compile(r'<function=(\w+)>')
+_SWEBENCH_PARAM_RE = re.compile(r'<parameter=(\w+)>(.*?)</parameter>', re.DOTALL)
+
+
+def _parse_swebench_tool_args(content: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Parse SWE-bench content to extract structured tool arguments.
+
+    SWE-bench uses XML-like syntax:
+    - <function=NAME> for the function/tool name
+    - <parameter=PARAM_NAME>VALUE</parameter> for parameters
+
+    Common tools:
+    - str_replace_editor: command, path, old_str, new_str, insert_line, view_range
+    - bash: command
+    - submit: (terminal action)
+
+    Args:
+        content: Raw assistant message content
+
+    Returns:
+        Tuple of (tool_name, structured_args)
+    """
+    if not content:
+        return None, None
+
+    # Extract function name
+    func_match = _SWEBENCH_FUNCTION_RE.search(content)
+    if not func_match:
+        return None, None
+
+    tool_name = func_match.group(1)
+
+    # Extract all parameters
+    params = {}
+    for param_match in _SWEBENCH_PARAM_RE.finditer(content):
+        param_name = param_match.group(1)
+        param_value = param_match.group(2).strip()
+        params[param_name] = param_value
+
+    # Build structured args based on tool type
+    structured_args = {}
+
+    if tool_name == "str_replace_editor":
+        # str_replace_editor has: command, path, old_str, new_str, insert_line, view_range
+        if "command" in params:
+            structured_args["command"] = params["command"]
+        if "path" in params:
+            structured_args["path"] = params["path"]
+        if "old_str" in params:
+            structured_args["old_str"] = params["old_str"]
+        if "new_str" in params:
+            structured_args["new_str"] = params["new_str"]
+        if "insert_line" in params:
+            try:
+                structured_args["insert_line"] = int(params["insert_line"])
+            except ValueError:
+                structured_args["insert_line"] = params["insert_line"]
+        if "view_range" in params:
+            structured_args["view_range"] = params["view_range"]
+
+    elif tool_name == "bash":
+        # bash has: command
+        if "command" in params:
+            structured_args["bash_command"] = params["command"]
+
+    elif tool_name == "submit":
+        # submit is a terminal action
+        structured_args["submit"] = True
+
+    else:
+        # For unknown tools, store all params
+        structured_args = params.copy() if params else {}
+
+    # Always preserve the raw content for reference (truncated)
+    if not structured_args:
+        structured_args["raw"] = content[:1000]
+
+    return tool_name, structured_args
+
+
+def _determine_swebench_tool_name(
+    content: str,
+    parsed_tool: Optional[str],
+    tool_input: Optional[Dict[str, Any]] = None,
+) -> Tuple[Optional[str], str]:
+    """
+    Determine the canonical tool name and step type for SWE-bench content.
+
+    Checks the command parameter to distinguish read vs write operations.
+    str_replace_editor with command=view is a read operation (view_file),
+    not an edit operation.
+
+    Args:
+        content: Raw content
+        parsed_tool: Tool name parsed from XML-like tags
+        tool_input: Parsed tool arguments (may contain 'command' field)
+
+    Returns:
+        Tuple of (tool_name, step_type)
+    """
+    # Check command parameter FIRST to distinguish read vs write
+    command = ""
+    if tool_input and isinstance(tool_input, dict):
+        command = tool_input.get("command", "")
+
+    # If we parsed a tool name, use that with command-based refinement
+    if parsed_tool:
+        if parsed_tool == "str_replace_editor":
+            # View command = read operation, not edit
+            if command == "view":
+                return "view_file", "TOOL_EXECUTION"
+            # str_replace/create/insert = write operations
+            elif command in ("str_replace", "create", "insert"):
+                return "str_replace_editor", "TOOL_EXECUTION"
+            # Default to str_replace_editor if command unclear
+            return "str_replace_editor", "TOOL_EXECUTION"
+        elif parsed_tool == "bash":
+            return "bash", "TOOL_EXECUTION"
+        elif parsed_tool == "submit":
+            return "submit", "TOOL_EXECUTION"
+        else:
+            return parsed_tool, "TOOL_EXECUTION"
+
+    # Fallback to keyword heuristics
+    content_lower = content.lower() if content else ""
+    if any(kw in content_lower for kw in ["edit", "write", "create file", "modify"]):
+        return "file_edit", "TOOL_EXECUTION"
+    elif any(kw in content_lower for kw in ["search", "find", "grep", "locate"]):
+        return "search_code", "TOOL_EXECUTION"
+    elif any(kw in content_lower for kw in ["test", "run test", "pytest"]):
+        return "run_tests", "TOOL_EXECUTION"
+    elif any(kw in content_lower for kw in ["view", "read", "cat ", "open file"]):
+        return "view_file", "TOOL_EXECUTION"
+
+    return None, "REASONING"
+
+
 def _has_tool_diversity(trajectory: Trajectory) -> bool:
     """
     Check if trajectory has tools with available substitutes in all positions.
@@ -969,29 +1110,17 @@ def _parse_swebench_item(
             step_num += 1
             content = msg.get("content", "")
 
-            # Determine tool name from content
-            tool_name = None
-            step_type = StepType.REASONING
+            # Parse structured tool arguments from XML-like tags
+            parsed_tool, tool_input = _parse_swebench_tool_args(content)
 
-            content_lower = content.lower() if content else ""
-            if any(
-                kw in content_lower for kw in ["edit", "write", "create file", "modify"]
-            ):
-                tool_name = "file_edit"
-                step_type = StepType.TOOL_EXECUTION
-            elif any(
-                kw in content_lower for kw in ["search", "find", "grep", "locate"]
-            ):
-                tool_name = "search_code"
-                step_type = StepType.TOOL_EXECUTION
-            elif any(kw in content_lower for kw in ["test", "run test", "pytest"]):
-                tool_name = "run_tests"
-                step_type = StepType.TOOL_EXECUTION
-            elif any(
-                kw in content_lower for kw in ["view", "read", "cat ", "open file"]
-            ):
-                tool_name = "view_file"
-                step_type = StepType.TOOL_EXECUTION
+            # Determine canonical tool name and step type
+            # Pass tool_input to check command (view vs str_replace)
+            tool_name, step_type_str = _determine_swebench_tool_name(content, parsed_tool, tool_input)
+            step_type = (
+                StepType.TOOL_EXECUTION
+                if step_type_str == "TOOL_EXECUTION"
+                else StepType.REASONING
+            )
 
             step = Step(
                 step_id=f"swebench_{idx}_step_{step_num}",
@@ -999,7 +1128,7 @@ def _parse_swebench_item(
                 step_type=step_type,
                 content=content[:5000] if content else "",
                 tool_name=tool_name,
-                tool_input={"raw": content[:1000]} if tool_name else None,
+                tool_input=tool_input if tool_name else None,
                 metadata={"role": "assistant"},
             )
             steps.append(step)
