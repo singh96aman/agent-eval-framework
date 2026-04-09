@@ -2,22 +2,25 @@
 """
 Delete experiment data from MongoDB.
 
-Supports deleting specific data types or all data for an experiment.
+Supports deleting specific data types, phases, or all data for an experiment.
 
 Usage:
+    # Delete by phase (recommended - deletes all related collections)
+    python ops/delete_experiment_data.py exp_id --phase perturb
+    python ops/delete_experiment_data.py exp_id --phase typing perturb
+
     # Delete specific data types
     python ops/delete_experiment_data.py exp_id --data perturbations
-    python ops/delete_experiment_data.py exp_id --data typed
-    python ops/delete_experiment_data.py exp_id --data trajectories
-
-    # Delete multiple data types
-    python ops/delete_experiment_data.py exp_id --data perturbations typed
+    python ops/delete_experiment_data.py exp_id --data evaluation_units
 
     # Delete all data for an experiment
     python ops/delete_experiment_data.py exp_id --all
 
     # Skip confirmation
-    python ops/delete_experiment_data.py exp_id --data perturbations --force
+    python ops/delete_experiment_data.py exp_id --phase perturb --force
+
+    # Check status
+    python ops/delete_experiment_data.py exp_id --status
 """
 
 import argparse
@@ -50,7 +53,11 @@ DATA_TYPES = {
     },
     "perturbation_index": {
         "collection": "perturbation_index",
-        "description": "Perturbation index/summary",
+        "description": "Perturbation index/summary (perturb phase)",
+    },
+    "evaluation_units": {
+        "collection": "evaluation_units",
+        "description": "Evaluation units (perturb phase)",
     },
     "judge_outputs": {
         "collection": "judge_outputs",
@@ -60,6 +67,15 @@ DATA_TYPES = {
         "collection": "annotations",
         "description": "Human annotations (annotate phase)",
     },
+}
+
+# Mapping of phases to data types (for --phase option)
+PHASE_DATA = {
+    "load": ["trajectories"],
+    "typing": ["typed"],
+    "perturb": ["perturbations", "perturbation_index", "evaluation_units"],
+    "judge": ["judge_outputs"],
+    "annotate": ["annotations"],
 }
 
 
@@ -189,16 +205,23 @@ Data types:
   trajectories       Raw trajectories (load phase)
   typed              Typed trajectories (typing phase)
   perturbations      Perturbed trajectories (perturb phase)
-  perturbation_index Perturbation index/summary
+  perturbation_index Perturbation index/summary (perturb phase)
+  evaluation_units   Evaluation units (perturb phase)
   judge_outputs      Judge evaluation outputs (judge phase)
   annotations        Human annotations (annotate phase)
 
+Phases (deletes all related data types):
+  load      -> trajectories
+  typing    -> typed
+  perturb   -> perturbations, perturbation_index, evaluation_units
+  judge     -> judge_outputs
+  annotate  -> annotations
+
 Examples:
-  %(prog)s exp_id --data perturbations
-  %(prog)s exp_id --data typed perturbations
+  %(prog)s exp_id --phase perturb          # Delete all perturb phase data
+  %(prog)s exp_id --data perturbations     # Delete only perturbations
   %(prog)s exp_id --all --force
   %(prog)s --status
-  %(prog)s exp_id --status
         """,
     )
 
@@ -213,6 +236,13 @@ Examples:
         nargs="+",
         choices=list(DATA_TYPES.keys()),
         help="Data types to delete",
+    )
+    parser.add_argument(
+        "--phase",
+        "-p",
+        nargs="+",
+        choices=list(PHASE_DATA.keys()),
+        help="Delete all data for specified phase(s)",
     )
     parser.add_argument(
         "--all",
@@ -244,13 +274,21 @@ Examples:
     if not args.experiment_id:
         parser.error("experiment_id is required (or use --status)")
 
-    # Need either --data or --all
-    if not args.data and not args.all:
-        parser.error("Specify --data or --all")
+    # Need either --data, --phase, or --all
+    if not args.data and not args.phase and not args.all:
+        parser.error("Specify --data, --phase, or --all")
+
+    # Expand phases to data types
+    data_types = list(args.data or [])
+    if args.phase:
+        for phase in args.phase:
+            data_types.extend(PHASE_DATA[phase])
+        # Remove duplicates while preserving order
+        data_types = list(dict.fromkeys(data_types))
 
     delete_data(
         experiment_id=args.experiment_id,
-        data_types=args.data or [],
+        data_types=data_types,
         force=args.force,
         delete_all=args.all,
     )

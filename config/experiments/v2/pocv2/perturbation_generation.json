@@ -5,6 +5,7 @@
     "id": "exp_trajectory_sampling_v7",
     "name": "Controlled Perturbation Generation - Section 3",
     "description": "Generate ~1500 controlled perturbations across 500 typed trajectories with 20% placebo, 50% fine-grained, 30% coarse-grained distribution",
+    "random_seed": 42,
     "storage": {
       "backend": "mongodb",
       "database": "agent_judge_experiment"
@@ -24,7 +25,6 @@
   },
 
   "generation": {
-    "random_seed": 42,
     "llm": {
       "provider": "bedrock",
       "model": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -45,7 +45,6 @@
   "phases": {
     "perturb": {
       "enabled": true,
-      "random_seed": 42,
 
       "generators": {
         "placebo": {

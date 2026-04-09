@@ -2,26 +2,25 @@
 """
 Dump experiment data from MongoDB to JSON files.
 
-Supports dumping trajectories, typed representations, and perturbations
-with consistent naming conventions.
+Supports dumping by phase (recommended) or specific data types.
 
 Usage:
-    # Dump specific data types
-    python ops/dump_experiment_data.py exp_id --data trajectories
-    python ops/dump_experiment_data.py exp_id --data typed
-    python ops/dump_experiment_data.py exp_id --data perturbations
+    # Dump by phase (recommended - dumps all related collections)
+    python ops/dump_experiment_data.py exp_id --phase perturb
+    python ops/dump_experiment_data.py exp_id --phase typing perturb
 
-    # Dump multiple types
-    python ops/dump_experiment_data.py exp_id --data typed perturbations
+    # Dump specific data types
+    python ops/dump_experiment_data.py exp_id --data perturbations
+    python ops/dump_experiment_data.py exp_id --data evaluation_units
 
     # Dump all data
     python ops/dump_experiment_data.py exp_id --all
 
     # Limit results
-    python ops/dump_experiment_data.py exp_id --data trajectories --limit 100
+    python ops/dump_experiment_data.py exp_id --phase perturb --limit 100
 
-    # Custom output directory
-    python ops/dump_experiment_data.py exp_id --data typed --output data/exports
+    # Check status
+    python ops/dump_experiment_data.py exp_id --status
 """
 
 import argparse
@@ -65,10 +64,17 @@ DATA_TYPES = {
     },
     "perturbation_index": {
         "collection": "perturbation_index",
-        "description": "Perturbation index/summary",
+        "description": "Perturbation index/summary (perturb phase)",
         "output_dir": "data/perturbed",
         "filename_template": "{experiment_id}_perturbation_index.json",
         "wrapper_key": "index",
+    },
+    "evaluation_units": {
+        "collection": "evaluation_units",
+        "description": "Evaluation units (perturb phase)",
+        "output_dir": "data/evaluation_units",
+        "filename_template": "{experiment_id}_evaluation_units.json",
+        "wrapper_key": "evaluation_units",
     },
     "judge_outputs": {
         "collection": "judge_outputs",
@@ -77,6 +83,14 @@ DATA_TYPES = {
         "filename_template": "{experiment_id}_judge_outputs.json",
         "wrapper_key": "judge_outputs",
     },
+}
+
+# Mapping of phases to data types (for --phase option)
+PHASE_DATA = {
+    "load": ["trajectories"],
+    "typing": ["typed"],
+    "perturb": ["perturbations", "perturbation_index", "evaluation_units"],
+    "judge": ["judge_outputs"],
 }
 
 
@@ -234,21 +248,28 @@ Data types:
   trajectories       Raw trajectories (load phase)
   typed              Typed trajectories (typing phase)
   perturbations      Perturbed trajectories (perturb phase)
-  perturbation_index Perturbation index/summary
+  perturbation_index Perturbation index/summary (perturb phase)
+  evaluation_units   Evaluation units (perturb phase)
   judge_outputs      Judge evaluation outputs
+
+Phases (dumps all related data types):
+  load      -> trajectories
+  typing    -> typed
+  perturb   -> perturbations, perturbation_index, evaluation_units
+  judge     -> judge_outputs
 
 Output locations (default):
   trajectories       -> data/raw/{exp_id}_trajectories.json
   typed              -> data/typed/{exp_id}_typed.json
   perturbations      -> data/perturbed/{exp_id}_perturbations.json
   perturbation_index -> data/perturbed/{exp_id}_perturbation_index.json
+  evaluation_units   -> data/evaluation_units/{exp_id}_evaluation_units.json
   judge_outputs      -> data/judge_outputs/{exp_id}_judge_outputs.json
 
 Examples:
-  %(prog)s exp_id --data typed
-  %(prog)s exp_id --data typed perturbations
+  %(prog)s exp_id --phase perturb          # Dump all perturb phase data
+  %(prog)s exp_id --data perturbations     # Dump only perturbations
   %(prog)s exp_id --all
-  %(prog)s exp_id --data trajectories --limit 100
   %(prog)s exp_id --status
         """,
     )
@@ -263,6 +284,13 @@ Examples:
         nargs="+",
         choices=list(DATA_TYPES.keys()),
         help="Data types to dump",
+    )
+    parser.add_argument(
+        "--phase",
+        "-p",
+        nargs="+",
+        choices=list(PHASE_DATA.keys()),
+        help="Dump all data for specified phase(s)",
     )
     parser.add_argument(
         "--all",
@@ -295,13 +323,21 @@ Examples:
         show_status(args.experiment_id)
         return
 
-    # Need either --data or --all
-    if not args.data and not args.all:
-        parser.error("Specify --data or --all")
+    # Need either --data, --phase, or --all
+    if not args.data and not args.phase and not args.all:
+        parser.error("Specify --data, --phase, or --all")
+
+    # Expand phases to data types
+    data_types = list(args.data or [])
+    if args.phase:
+        for phase in args.phase:
+            data_types.extend(PHASE_DATA[phase])
+        # Remove duplicates while preserving order
+        data_types = list(dict.fromkeys(data_types))
 
     dump_experiment_data(
         experiment_id=args.experiment_id,
-        data_types=args.data or [],
+        data_types=data_types,
         output_dir=args.output,
         limit=args.limit,
         dump_all=args.all,
