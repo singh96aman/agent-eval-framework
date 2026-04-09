@@ -1,7 +1,7 @@
 """
 Experiment Runner - Schema 2.0.0
 
-7 phases: load, typing, perturb, sample, annotate, judge, compute
+8 phases: load, typing, perturb, evaluation_unit, sample, annotate, judge, compute
 Compute targets defined in config.compute.targets
 """
 
@@ -16,7 +16,7 @@ from src.storage.mongodb import MongoDBStorage
 
 SCHEMA_VERSION = "2.0.0"
 
-# Valid phases
+# Valid phases (evaluation_unit runs automatically at end of perturb)
 PHASES = ["load", "typing", "perturb", "sample", "annotate", "judge", "compute"]
 
 
@@ -108,6 +108,7 @@ class ExperimentRunner:
             "load": self._phase_load,
             "typing": self._phase_typing,
             "perturb": self._phase_perturb,
+            "evaluation_unit": self._phase_evaluation_unit,
             "sample": self._phase_sample,
             "annotate": self._phase_annotate,
             "judge": self._phase_judge,
@@ -312,7 +313,9 @@ class ExperimentRunner:
             for role, count in sorted(roles.items()):
                 print(f"      {role}: {count}")
             print(f"   Total perturbable slots: {total_slots}")
-            print(f"   Avg slots per trajectory: {total_slots / len(typed_trajectories):.1f}")
+            print(
+                f"   Avg slots per trajectory: {total_slots / len(typed_trajectories):.1f}"
+            )
 
     def _phase_perturb(self):
         """
@@ -329,7 +332,7 @@ class ExperimentRunner:
             PerturbationGeneratorV2,
             generate_perturbations_for_batch,
         )
-        from src.perturbations.balancer import PerturbationBalancer, balance_perturbation_batch
+        from src.perturbations.balancer import balance_perturbation_batch
         from src.perturbations.storage import (
             PerturbationStorage,
             PerturbationExporter,
@@ -338,7 +341,6 @@ class ExperimentRunner:
         )
         from src.typing.schema import TypedTrajectory
 
-        phase_config = self.config.get("phases", {}).get("perturb", {})
         targets_config = self.config.get("targets", {})
         output_config = self.config.get("output", {})
 
@@ -373,11 +375,14 @@ class ExperimentRunner:
         # Get target distribution
         total_target = targets_config.get("total_perturbations", 1500)
         per_trajectory = targets_config.get("per_trajectory", {}).get("target", 3)
-        class_weights = targets_config.get("by_class", {
-            "placebo": 0.20,
-            "fine_grained": 0.50,
-            "coarse_grained": 0.30,
-        })
+        class_weights = targets_config.get(
+            "by_class",
+            {
+                "placebo": 0.20,
+                "fine_grained": 0.50,
+                "coarse_grained": 0.30,
+            },
+        )
 
         print(f"\nTarget: {total_target} perturbations")
         print(f"Distribution: {class_weights}")
@@ -387,8 +392,11 @@ class ExperimentRunner:
             print("\nDRY RUN: Would generate perturbations")
             # Generate sample for one trajectory
             if trajectories:
+                experiment_seed = self.config.get("experiment", {}).get(
+                    "random_seed", 42
+                )
                 generator = PerturbationGeneratorV2(
-                    random_seed=phase_config.get("random_seed", 42),
+                    random_seed=experiment_seed,
                     enable_qc=True,
                 )
                 sample_results = generator.generate_for_trajectory(
@@ -398,18 +406,22 @@ class ExperimentRunner:
                 )
                 print(f"\nSample: Generated {len(sample_results)} for first trajectory")
                 for record, _ in sample_results:
-                    print(f"   - {record.perturbation_class}/{record.perturbation_type}")
+                    print(
+                        f"   - {record.perturbation_class}/{record.perturbation_type}"
+                    )
             return
 
         # Initialize generator
         generation_config = self.config.get("generation", {})
         llm_config = generation_config.get("llm", {})
+        experiment_seed = self.config.get("experiment", {}).get("random_seed", 42)
 
         # Get LLM client for Claude-based generators (paraphrase, wrong_plan)
         llm_client = None
         if llm_config.get("provider") == "bedrock":
             try:
                 from src.llm.bedrock_client import get_bedrock_client
+
                 llm_client = get_bedrock_client(log_calls=self.verbose)
                 print(f"Initialized LLM client for: {llm_config.get('use_for', [])}")
             except Exception as e:
@@ -417,12 +429,12 @@ class ExperimentRunner:
                 print("Generators requiring LLM will be skipped")
 
         # Generate perturbations
-        print(f"\nGenerating perturbations...")
+        print("\nGenerating perturbations...")
 
         all_results, index = generate_perturbations_for_batch(
             trajectories=trajectories,
             target_per_trajectory=per_trajectory,
-            random_seed=generation_config.get("random_seed", 42),
+            random_seed=experiment_seed,
             llm_client=llm_client,
             verbose=self.verbose,
         )
@@ -438,7 +450,7 @@ class ExperimentRunner:
             records=records,
             total_target=total_target,
             class_weights=class_weights,
-            random_seed=generation_config.get("random_seed", 42),
+            random_seed=experiment_seed,
         )
 
         print(f"After balancing: {len(balanced_records)} perturbations")
@@ -448,7 +460,8 @@ class ExperimentRunner:
         # Filter all_results to balanced records
         balanced_ids = {r.perturbation_id for r in balanced_records}
         balanced_results = [
-            (record, traj) for record, traj in all_results
+            (record, traj)
+            for record, traj in all_results
             if record.perturbation_id in balanced_ids
         ]
 
@@ -479,11 +492,17 @@ class ExperimentRunner:
         if mongodb_config:
             storage = PerturbationStorage(
                 mongodb_client=self.storage.client,
-                collection_name=mongodb_config.get("collection", "perturbed_trajectories"),
-                index_collection_name=mongodb_config.get("index_collection", "perturbation_index"),
+                collection_name=mongodb_config.get(
+                    "collection", "perturbed_trajectories"
+                ),
+                index_collection_name=mongodb_config.get(
+                    "index_collection", "perturbation_index"
+                ),
             )
 
-            saved = storage.save_perturbations_batch(perturbed_trajectories, self.experiment_id)
+            saved = storage.save_perturbations_batch(
+                perturbed_trajectories, self.experiment_id
+            )
             print(f"\nSaved {saved} perturbations to MongoDB")
 
             storage.save_index(final_index, self.experiment_id)
@@ -496,7 +515,7 @@ class ExperimentRunner:
             grouped = group_by_benchmark(perturbed_trajectories)
             paths = exporter.export_all(grouped, final_index)
 
-            print(f"\nExported to JSON:")
+            print("\nExported to JSON:")
             for key, path in paths.items():
                 print(f"   {key}: {path}")
 
@@ -505,6 +524,91 @@ class ExperimentRunner:
         print("PERTURBATION GENERATION SUMMARY")
         print("=" * 50)
         print(final_index.get_distribution_report())
+
+        # Automatically run evaluation unit assembly
+        self._phase_evaluation_unit()
+
+    def _phase_evaluation_unit(self):
+        """Create evaluation units from typed + perturbed trajectories."""
+        from src.evaluation.unit_assembler import assemble_all_units_from_mongodb
+        from src.evaluation.blinding import generate_blinding_key
+        from src.evaluation.index import build_evaluation_unit_index, save_index
+        from src.evaluation.storage import (
+            save_evaluation_units_to_mongodb,
+            export_evaluation_units_to_json,
+            create_data_directories,
+        )
+        from src.evaluation.validators import validate_all
+
+        phase_config = self.config.get("phases", {}).get("evaluation_unit", {})
+        if not phase_config.get("enabled", True):
+            print("Evaluation unit phase disabled, skipping...")
+            return
+
+        # Use global seed from experiment config
+        experiment_config = self.config.get("experiment", {})
+        blinding_seed = experiment_config.get("random_seed", 42)
+
+        # Output directory for JSON exports (optional)
+        output_dir = phase_config.get("output", {}).get("dir", "data/evaluation_units")
+
+        # Create directories for JSON export
+        create_data_directories(output_dir)
+
+        # Assemble all units from MongoDB
+        print(
+            f"Loading perturbations from MongoDB for experiment '{self.experiment_id}'..."
+        )
+        units = assemble_all_units_from_mongodb(self.storage, self.experiment_id)
+        print(f"Assembled {len(units)} evaluation units")
+
+        # Validate all units
+        print("Validating evaluation units...")
+        validation_errors = 0
+        for unit in units:
+            result = validate_all(unit)
+            if not result["passed"]:
+                validation_errors += result["total_errors"]
+        print(f"Validation complete: {validation_errors} errors")
+
+        # Generate blinding key
+        print("Generating blinding key...")
+        blinding_key = generate_blinding_key(units, blinding_seed)
+        print(f"Blinding balance: {blinding_key['balance_check']['balance_ratio']:.2%}")
+
+        # Build index
+        print("Building index...")
+        index = build_evaluation_unit_index(units)
+
+        if self.dry_run:
+            print("[DRY RUN] Would save to MongoDB and JSON")
+            return
+
+        # Save to MongoDB
+        print("Saving to MongoDB...")
+        saved_count = save_evaluation_units_to_mongodb(
+            units, self.experiment_id, self.storage
+        )
+        print(f"Saved {saved_count} units to MongoDB")
+
+        # Export to JSON
+        print("Exporting to JSON...")
+        export_evaluation_units_to_json(
+            units, f"{output_dir}/canonical", by_benchmark=True
+        )
+        save_index(index, f"{output_dir}/canonical/evaluation_unit_index.json")
+
+        # Save blinding key (private)
+        import json
+
+        with open(f"{output_dir}/private/blinding_key.json", "w") as f:
+            json.dump(blinding_key, f, indent=2)
+        print(f"Blinding key saved to {output_dir}/private/blinding_key.json")
+
+        print("\nEvaluation unit phase complete!")
+        print(f"  Total units: {len(units)}")
+        print(f"  By benchmark: {index['by_benchmark']}")
+        print(f"  By class: {index['by_perturbation_class']}")
 
     def _phase_sample(self):
         """Sample perturbations for annotation."""
@@ -532,7 +636,7 @@ class ExperimentRunner:
 
         # Sample
         total = phase_config.get("total", 100)
-        seed = phase_config.get("seed", 42)
+        seed = self.config.get("experiment", {}).get("random_seed", 42)
         stratify_by = phase_config.get(
             "stratify_by", ["perturbation_type", "position", "benchmark"]
         )

@@ -226,7 +226,7 @@ class TypedStep:
     Derived fields are filled in Pass 2-3 (heuristics).
     """
     # === Identity (from raw, renamed) ===
-    step_index: int
+    step_index: int  # Original position in trajectory (1-indexed)
     raw_text: str
 
     # === Core Typing (Pass 1) ===
@@ -236,6 +236,12 @@ class TypedStep:
     is_terminal_step: bool
     produces_final_answer: bool
     produces_patch: bool
+
+    # === Stable Identity (Section 4.17 Amendment) ===
+    # canonical_step_id: Stable across baseline/perturbed variants (e.g., "gaia_122::step::2")
+    # display_step_index: Position in this variant (may differ from step_index for deletions)
+    canonical_step_id: Optional[str] = None
+    display_step_index: Optional[int] = None
 
     # === Tool Fields (Pass 1) ===
     tool_name: Optional[str] = None
@@ -281,6 +287,8 @@ class TypedStep:
         result = {
             "step_index": self.step_index,
             "raw_text": self.raw_text,
+            "canonical_step_id": self.canonical_step_id,
+            "display_step_index": self.display_step_index,
             "step_role": self.step_role,
             "is_terminal_step": self.is_terminal_step,
             "produces_final_answer": self.produces_final_answer,
@@ -353,7 +361,8 @@ class TypedStep:
                 data[field_name] = ProvenanceField.from_dict(data[field_name])
         # Filter to known fields only
         known_fields = {
-            "step_index", "raw_text", "step_role", "is_terminal_step",
+            "step_index", "raw_text", "canonical_step_id", "display_step_index",
+            "step_role", "is_terminal_step",
             "produces_final_answer", "produces_patch", "tool_name", "tool_arguments",
             "observation", "normalized_operation", "extracted_value", "value_type",
             "source_step", "source_description", "extraction_provenance",
