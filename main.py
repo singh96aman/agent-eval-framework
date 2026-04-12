@@ -2,7 +2,7 @@
 """
 Main entry point for the experiment runner.
 
-6 phases: load, perturb, sample, annotate, judge, compute
+Phases: load, typing, perturb, sample, annotate, judge, compute
 
 Usage:
     python main.py --config schema_2_template --runner load,perturb
@@ -117,7 +117,7 @@ def list_available_configs():
     print()
     print("=" * 70)
     print("Usage: python main.py --config <config_name> --runner <phases>")
-    print("Phases: load, perturb, sample, annotate, judge, compute")
+    print("Phases: load, typing, perturb, sample, annotate, judge, compute")
     print("=" * 70)
 
 
@@ -147,7 +147,7 @@ Examples:
   python main.py --config schema_2_template --runner load --dry-run
   python main.py --list-configs
 
-Phases: load, perturb, sample, annotate, judge, compute
+Phases: load, typing, perturb, sample, annotate, judge, compute
         """
     )
 
@@ -159,7 +159,7 @@ Phases: load, perturb, sample, annotate, judge, compute
     parser.add_argument(
         "--runner",
         type=str,
-        help="Phases to run (comma-separated): load,perturb,sample,annotate,judge,compute"
+        help="Phases to run (comma-separated): load,typing,perturb,sample,annotate,judge,compute"
     )
     parser.add_argument(
         "--dry-run",

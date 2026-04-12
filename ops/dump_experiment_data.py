@@ -78,10 +78,24 @@ DATA_TYPES = {
     },
     "judge_outputs": {
         "collection": "judge_outputs",
-        "description": "Judge evaluation outputs",
+        "description": "Judge evaluation outputs (judge phase)",
         "output_dir": "data/judge_outputs",
         "filename_template": "{experiment_id}_judge_outputs.json",
         "wrapper_key": "judge_outputs",
+    },
+    "judge_eval_outputs": {
+        "collection": "judge_eval_outputs",
+        "description": "Judge eval outputs on evaluation units (compute phase)",
+        "output_dir": "data/judge_outputs/eval_units",
+        "filename_template": "{experiment_id}_judge_eval_outputs.json",
+        "wrapper_key": "judge_eval_outputs",
+    },
+    "outcome_evidence": {
+        "collection": "outcome_evidence",
+        "description": "Outcome evidence records (compute phase)",
+        "output_dir": "data/outcome_evidence",
+        "filename_template": "{experiment_id}_outcome_evidence.json",
+        "wrapper_key": "outcome_evidence",
     },
 }
 
@@ -91,6 +105,7 @@ PHASE_DATA = {
     "typing": ["typed"],
     "perturb": ["perturbations", "perturbation_index", "evaluation_units"],
     "judge": ["judge_outputs"],
+    "compute": ["judge_eval_outputs", "outcome_evidence"],
 }
 
 

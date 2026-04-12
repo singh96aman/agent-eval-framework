@@ -63,6 +63,14 @@ DATA_TYPES = {
         "collection": "judge_outputs",
         "description": "Judge evaluation outputs (judge phase)",
     },
+    "judge_eval_outputs": {
+        "collection": "judge_eval_outputs",
+        "description": "Judge eval outputs on evaluation units (compute phase)",
+    },
+    "outcome_evidence": {
+        "collection": "outcome_evidence",
+        "description": "Outcome evidence records (compute phase)",
+    },
     "annotations": {
         "collection": "annotations",
         "description": "Human annotations (annotate phase)",
@@ -76,6 +84,7 @@ PHASE_DATA = {
     "perturb": ["perturbations", "perturbation_index", "evaluation_units"],
     "judge": ["judge_outputs"],
     "annotate": ["annotations"],
+    "compute": ["judge_eval_outputs", "outcome_evidence"],
 }
 
 
@@ -202,13 +211,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Data types:
-  trajectories       Raw trajectories (load phase)
-  typed              Typed trajectories (typing phase)
-  perturbations      Perturbed trajectories (perturb phase)
-  perturbation_index Perturbation index/summary (perturb phase)
-  evaluation_units   Evaluation units (perturb phase)
-  judge_outputs      Judge evaluation outputs (judge phase)
-  annotations        Human annotations (annotate phase)
+  trajectories        Raw trajectories (load phase)
+  typed               Typed trajectories (typing phase)
+  perturbations       Perturbed trajectories (perturb phase)
+  perturbation_index  Perturbation index/summary (perturb phase)
+  evaluation_units    Evaluation units (perturb phase)
+  judge_outputs       Judge evaluation outputs (judge phase)
+  judge_eval_outputs  Judge eval outputs on evaluation units (compute phase)
+  outcome_evidence    Outcome evidence records (compute phase)
+  annotations         Human annotations (annotate phase)
 
 Phases (deletes all related data types):
   load      -> trajectories
@@ -216,6 +227,7 @@ Phases (deletes all related data types):
   perturb   -> perturbations, perturbation_index, evaluation_units
   judge     -> judge_outputs
   annotate  -> annotations
+  compute   -> judge_eval_outputs, outcome_evidence
 
 Examples:
   %(prog)s exp_id --phase perturb          # Delete all perturb phase data
