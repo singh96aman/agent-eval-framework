@@ -17,7 +17,16 @@ from src.storage.mongodb import MongoDBStorage
 SCHEMA_VERSION = "2.0.0"
 
 # Valid phases (evaluation_unit runs automatically at end of perturb)
-PHASES = ["load", "typing", "perturb", "sample", "annotate", "judge", "compute"]
+PHASES = [
+    "load",
+    "typing",
+    "perturb",
+    "sample",
+    "annotate",
+    "judge",
+    "compute",
+    "analysis",
+]
 
 
 def generate_experiment_id(config: Dict[str, Any]) -> str:
@@ -113,6 +122,7 @@ class ExperimentRunner:
             "annotate": self._phase_annotate,
             "judge": self._phase_judge,
             "compute": self._phase_compute,
+            "analysis": self._phase_analysis,
         }
 
         for idx, phase in enumerate(self.phases_to_run, 1):
@@ -665,9 +675,19 @@ class ExperimentRunner:
 
     def _phase_annotate(self):
         """Interactive human annotation."""
-        from src.annotation.tools import AnnotationTool
-
         phase_config = self.config.get("phases", {}).get("annotate", {})
+
+        # Check annotation mode: "legacy" (old TCS) or "detailed" (5A schema)
+        annotation_mode = phase_config.get("schema", "legacy")
+
+        if annotation_mode == "detailed":
+            self._annotate_detailed(phase_config)
+        else:
+            self._annotate_legacy(phase_config)
+
+    def _annotate_legacy(self, phase_config: Dict[str, Any]):
+        """Legacy annotation mode using simple TCS schema."""
+        from src.annotation.tools import AnnotationTool
 
         # Load samples marked for annotation
         samples = list(
@@ -699,10 +719,45 @@ class ExperimentRunner:
 
         tool.annotate_batch(samples)
 
+    def _annotate_detailed(self, phase_config: Dict[str, Any]):
+        """Detailed annotation mode using 5A Human Labels schema with Streamlit UI."""
+        import subprocess
+        from pathlib import Path
+
+        # Get config for display
+        sample_size = phase_config.get("sample_size", 130)
+        storage_backend = phase_config.get("storage_backend", "mongodb")
+
+        # Check evaluation units exist
+        eval_units_path = phase_config.get(
+            "input", f"data/evaluation_units/{self.experiment_id}_evaluation_units.json"
+        )
+
+        if not Path(eval_units_path).exists():
+            print(f"Evaluation units not found at {eval_units_path}")
+            print("Run perturb phase first to generate evaluation units.")
+            return
+
+        print(f"Evaluation units: {eval_units_path}")
+        print(f"Sample size: {sample_size}")
+        print(f"Storage backend: {storage_backend}")
+
+        if self.dry_run:
+            print("DRY RUN: Would launch Streamlit annotation UI")
+            return
+
+        # Launch Streamlit UI
+        ui_path = Path(__file__).parent.parent / "ops" / "annotation_ui.py"
+        print("\nLaunching annotation UI...")
+        print("Open http://localhost:8501 in your browser")
+        print("Press Ctrl+C to stop the server when done.\n")
+
+        subprocess.run(["streamlit", "run", str(ui_path)])
+
     def _phase_judge(self):
         """Run judge evaluation on perturbations."""
         from src.judges.parallel_evaluator import ParallelJudgeEvaluator
-        from src.judges.claude_judge import create_claude_judge
+        from src.judges import create_claude_judge
 
         phase_config = self.config.get("phases", {}).get("judge", {})
         models_config = phase_config.get("models", [])
@@ -778,6 +833,9 @@ class ExperimentRunner:
             "od": self._compute_od,
             "ccg": self._compute_ccg,
             "calibration": self._compute_calibration,
+            "judge_eval": self._compute_judge_eval,
+            "outcome_evidence": self._compute_outcome_evidence,
+            "aggregate_labels": self._compute_aggregate_labels,
         }
 
         for idx, target in enumerate(targets, 1):
@@ -792,6 +850,24 @@ class ExperimentRunner:
                 print(f"Unknown compute target: {target}")
 
             print()
+
+    def _phase_analysis(self):
+        """Run Section 6 analysis (detection + calibration metrics)."""
+        from src.analysis.section6.runner import run_section6_analysis
+
+        phase_config = self.config.get("phases", {}).get("analysis", {})
+        force = phase_config.get("force", False)
+
+        result = run_section6_analysis(
+            experiment_id=self.experiment_id,
+            storage=self.storage,
+            config=phase_config,
+            force=force,
+            verbose=self.verbose,
+        )
+
+        if result["errors"]:
+            print(f"WARNING: {len(result['errors'])} errors during analysis")
 
     # =========================================================================
     # COMPUTE TARGETS
@@ -1047,3 +1123,324 @@ class ExperimentRunner:
             json.dump(report, f, indent=2, default=str)
 
         print(f"Saved calibration results to {output_path}")
+
+    def _compute_judge_eval(self):
+        """
+        Run LLM Judge evaluation on evaluation units.
+
+        Supports single_trajectory, blinded_pair, and labeled_pair modes.
+        """
+        from src.judges import create_unit_runner, batch_aggregate_across_samples
+        from src.evaluation.storage import load_evaluation_units_from_mongodb
+
+        compute_config = self.config.get("compute", {}).get("judge_eval", {})
+
+        # Get judge config
+        judge_name = compute_config.get("judge", "claude-sonnet-4.5")
+        judge_mode = compute_config.get("mode", "single_trajectory")
+        samples_per_unit = compute_config.get("samples_per_unit", 1)
+        sample_size = compute_config.get("sample_size")
+
+        print(f"Judge: {judge_name}")
+        print(f"Mode: {judge_mode}")
+        print(f"Samples per unit: {samples_per_unit}")
+        print("Storage: MongoDB")
+
+        # Load evaluation units from MongoDB
+        print(
+            f"Loading evaluation units from MongoDB (experiment: {self.experiment_id})"
+        )
+        units = load_evaluation_units_from_mongodb(self.experiment_id, self.storage)
+
+        if not units:
+            print("No evaluation units found in MongoDB.")
+            print("Run perturb phase first to generate evaluation units.")
+            return
+
+        print(f"Loaded {len(units)} evaluation units from MongoDB")
+
+        # Sample if requested
+        if sample_size and sample_size < len(units):
+            import random
+
+            seed = self.config.get("experiment", {}).get("random_seed", 42)
+            random.seed(seed)
+            units = random.sample(units, sample_size)
+            print(f"Sampled {sample_size} units (seed={seed})")
+
+        if self.dry_run:
+            print("DRY RUN: Would run judge evaluation")
+            return
+
+        # Create runner
+        runner_config = {
+            "temperature": compute_config.get("temperature", 0),
+            "max_tokens": compute_config.get("max_tokens", 2000),
+            "checkpoint_interval": compute_config.get("checkpoint_interval", 25),
+            "rate_limit_delay": compute_config.get("rate_limit_delay", 0.5),
+        }
+
+        try:
+            runner = create_unit_runner(judge_name, runner_config)
+        except Exception as e:
+            print(f"Error creating judge runner: {e}")
+            return
+
+        # Run batch evaluation (uses MongoDB for storage and checkpointing)
+        parallelization = compute_config.get("parallelization", 2)
+        outputs = runner.run_batch(
+            units=units,
+            mode=judge_mode,
+            resume=compute_config.get("resume", True),
+            samples_per_unit=samples_per_unit,
+            storage=self.storage,
+            experiment_id=self.experiment_id,
+            parallelization=parallelization,
+        )
+
+        # Aggregate results
+        if outputs:
+            aggregated = batch_aggregate_across_samples(outputs)
+            print(f"Aggregated {len(aggregated)} unit results")
+
+        print(f"\nJudge evaluation complete: {len(outputs)} outputs generated")
+
+    def _compute_outcome_evidence(self):
+        """
+        Compute Outcome Evidence via Tier 3 grading.
+
+        Grades baseline and perturbed trajectories to compute outcome degradation.
+        """
+        from src.outcome_evidence.schema import (
+            OutcomeRecord,
+            EvidenceMethod,
+            BaselineOutcome,
+            PerturbedOutcome,
+            OutcomeMetrics,
+        )
+        from src.outcome_evidence.tier_3.grading import get_grader
+        from src.outcome_evidence.metrics import compute_outcome_degradation
+        from src.outcome_evidence.storage import (
+            save_outcome_evidence_to_mongodb,
+            load_outcome_evidence_from_mongodb,
+        )
+        from src.evaluation.storage import load_evaluation_units_from_mongodb
+
+        compute_config = self.config.get("compute", {}).get("outcome_evidence", {})
+        sample_size = compute_config.get("sample_size")
+
+        print("Storage: MongoDB")
+
+        # Load evaluation units from MongoDB
+        print(
+            f"Loading evaluation units from MongoDB (experiment: {self.experiment_id})"
+        )
+        units = load_evaluation_units_from_mongodb(self.experiment_id, self.storage)
+
+        if not units:
+            print("No evaluation units found in MongoDB.")
+            print("Run perturb phase first to generate evaluation units.")
+            return
+
+        print(f"Loaded {len(units)} evaluation units from MongoDB")
+
+        # Sample if requested
+        if sample_size and sample_size < len(units):
+            import random
+
+            seed = self.config.get("experiment", {}).get("random_seed", 42)
+            random.seed(seed)
+            units = random.sample(units, sample_size)
+            print(f"Sampled {sample_size} units (seed={seed})")
+
+        if self.dry_run:
+            print("DRY RUN: Would compute outcome evidence")
+            return
+
+        # Check for existing outcomes in MongoDB (resume logic)
+        resume = compute_config.get("resume", True)
+        completed_ids = set()
+        if resume:
+            existing = load_outcome_evidence_from_mongodb(
+                self.experiment_id, self.storage
+            )
+            completed_ids = set(o.evaluation_unit_id for o in existing)
+            print(f"Resuming: {len(completed_ids)} units already completed")
+
+        # Filter to remaining units
+        remaining_units = [
+            u for u in units if u.get("evaluation_unit_id") not in completed_ids
+        ]
+        print(f"Remaining: {len(remaining_units)} units to process")
+
+        if not remaining_units:
+            print("All units already processed.")
+            return
+
+        outcomes = []
+        errors = 0
+
+        for i, unit in enumerate(remaining_units, 1):
+            unit_id = unit.get("evaluation_unit_id", f"unit_{i}")
+            benchmark = unit.get("benchmark", "unknown")
+
+            try:
+                # Get grader for benchmark
+                grader = get_grader(benchmark)
+
+                # Get baseline trajectory
+                baseline_data = unit.get("baseline", {})
+                baseline_traj = baseline_data.get("trajectory", {})
+
+                # Get perturbed trajectory
+                perturbed_data = unit.get("perturbed", {})
+                perturbed_traj = perturbed_data.get("trajectory", {})
+
+                if not baseline_traj or not perturbed_traj:
+                    continue
+
+                # Grade both trajectories
+                baseline_result = grader.grade(baseline_traj)
+                perturbed_result = grader.grade(perturbed_traj)
+
+                # Compute outcome degradation
+                od_value = compute_outcome_degradation(
+                    baseline_score=baseline_result.score,
+                    perturbed_score=perturbed_result.score,
+                )
+
+                # Derive binary degradation: 1 if baseline better, -1 if perturbed better, 0 if same
+                if od_value > 0:
+                    od_binary = 1
+                elif od_value < 0:
+                    od_binary = -1
+                else:
+                    od_binary = 0
+
+                # Get trajectory variant IDs
+                baseline_variant_id = baseline_data.get(
+                    "trajectory_variant_id",
+                    baseline_traj.get("trajectory_id", f"{unit_id}_baseline"),
+                )
+                perturbed_variant_id = perturbed_data.get(
+                    "trajectory_variant_id",
+                    perturbed_traj.get("trajectory_id", f"{unit_id}_perturbed"),
+                )
+
+                # Create structured outcomes
+                baseline_outcome = BaselineOutcome(
+                    trajectory_variant_id=baseline_variant_id,
+                    outcome_score=baseline_result.score,
+                    outcome_binary=baseline_result.passed,
+                    verifier_output=baseline_result.to_dict(),
+                )
+                perturbed_outcome = PerturbedOutcome(
+                    trajectory_variant_id=perturbed_variant_id,
+                    outcome_score=perturbed_result.score,
+                    outcome_binary=perturbed_result.passed,
+                    verifier_output=perturbed_result.to_dict(),
+                )
+                metrics = OutcomeMetrics(
+                    outcome_degradation=od_value,
+                    outcome_degradation_binary=od_binary,
+                )
+
+                # Create outcome record
+                outcome = OutcomeRecord.create(
+                    evaluation_unit_id=unit_id,
+                    replay_tier=3,
+                    evidence_method=EvidenceMethod.FINAL_ANSWER_GRADING,
+                    baseline=baseline_outcome,
+                    perturbed=perturbed_outcome,
+                    metrics=metrics,
+                )
+
+                outcomes.append(outcome)
+
+                if i % 50 == 0 or i == len(remaining_units):
+                    print(f"Progress: {i}/{len(remaining_units)} units processed")
+
+            except Exception as e:
+                print(f"Error processing {unit_id}: {e}")
+                errors += 1
+                continue
+
+        # Save results to MongoDB
+        if outcomes:
+            saved_count = save_outcome_evidence_to_mongodb(
+                outcomes, self.storage, self.experiment_id
+            )
+            print(f"Saved {saved_count} outcome records to MongoDB")
+
+        # Summary
+        if outcomes:
+            od_values = [o.metrics.outcome_degradation for o in outcomes if o.metrics]
+            positive_od = sum(1 for od in od_values if od > 0)
+            zero_od = sum(1 for od in od_values if od == 0)
+            negative_od = sum(1 for od in od_values if od < 0)
+
+            print(f"\n{'=' * 50}")
+            print("OUTCOME EVIDENCE SUMMARY")
+            print(f"{'=' * 50}")
+            print(f"Total outcomes: {len(outcomes)}")
+            print(f"Errors: {errors}")
+            print(f"Positive OD: {positive_od} ({100*positive_od/len(outcomes):.1f}%)")
+            print(f"Zero OD: {zero_od} ({100*zero_od/len(outcomes):.1f}%)")
+            print(f"Negative OD: {negative_od} ({100*negative_od/len(outcomes):.1f}%)")
+
+    def _compute_aggregate_labels(self):
+        """
+        Aggregate raw human labels into aggregated_human_labels.
+
+        Reads from human_labels collection and writes to aggregated_human_labels.
+        """
+        from src.human_labels.schema import AnnotationRecord
+        from src.human_labels.aggregation import aggregate_annotations
+
+        print(f"Aggregating human labels for {self.experiment_id}")
+
+        # Load raw human labels
+        raw_collection = self.storage.db["human_labels"]
+        raw_docs = list(raw_collection.find({"experiment_id": self.experiment_id}))
+
+        if not raw_docs:
+            print("No raw human labels found")
+            return
+
+        print(f"Found {len(raw_docs)} raw annotations")
+
+        # Convert to AnnotationRecord objects
+        annotations = []
+        for doc in raw_docs:
+            try:
+                ann = AnnotationRecord.from_dict(doc)
+                annotations.append(ann)
+            except Exception as e:
+                print(f"Warning: Could not parse annotation: {e}")
+
+        if not annotations:
+            print("No valid annotations to aggregate")
+            return
+
+        # Aggregate
+        aggregated = aggregate_annotations(annotations)
+        print(f"Aggregated into {len(aggregated)} labels")
+
+        if self.dry_run:
+            print("DRY RUN: Would save aggregated labels")
+            return
+
+        # Save to aggregated_human_labels collection
+        agg_collection = self.storage.db["aggregated_human_labels"]
+        saved = 0
+        for agg in aggregated:
+            doc = agg.to_dict()
+            doc["experiment_id"] = self.experiment_id
+            agg_collection.update_one(
+                {"evaluation_unit_id": agg.evaluation_unit_id},
+                {"$set": doc},
+                upsert=True,
+            )
+            saved += 1
+
+        print(f"Saved {saved} aggregated labels to MongoDB")

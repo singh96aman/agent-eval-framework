@@ -13,7 +13,7 @@ from collections import Counter
 
 from src.annotation.stratified_sampler import (
     StratifiedAnnotationSampler,
-    validate_annotations
+    validate_annotations,
 )
 
 
@@ -28,10 +28,17 @@ def sample_perturbations():
     idx = 0
 
     conditions = [
-        ("planning", "early"), ("planning", "middle"), ("planning", "late"),
-        ("tool_selection", "early"), ("tool_selection", "middle"), ("tool_selection", "late"),
-        ("parameter", "early"), ("parameter", "middle"), ("parameter", "late"),
-        ("data_reference", "middle"), ("data_reference", "late"),
+        ("planning", "early"),
+        ("planning", "middle"),
+        ("planning", "late"),
+        ("tool_selection", "early"),
+        ("tool_selection", "middle"),
+        ("tool_selection", "late"),
+        ("parameter", "early"),
+        ("parameter", "middle"),
+        ("parameter", "late"),
+        ("data_reference", "middle"),
+        ("data_reference", "late"),
     ]
 
     benchmarks = ["toolbench", "gaia", "swebench"]
@@ -43,17 +50,19 @@ def sample_perturbations():
             for tier in tiers:
                 # Create 5-6 perturbations per (condition, benchmark, tier)
                 for i in range(6):
-                    perturbations.append({
-                        "perturbation_id": f"pert_{idx}",
-                        "original_trajectory_id": f"{benchmark}_traj_{idx}",
-                        "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
-                        "perturbation_type": ptype,
-                        "perturbation_position": pos,
-                        "quality_tier": tier,
-                        "is_primary_for_experiment": True,
-                        "original_step_content": f"Original content {idx}",
-                        "perturbed_step_content": f"Perturbed content {idx}"
-                    })
+                    perturbations.append(
+                        {
+                            "perturbation_id": f"pert_{idx}",
+                            "original_trajectory_id": f"{benchmark}_traj_{idx}",
+                            "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
+                            "perturbation_type": ptype,
+                            "perturbation_position": pos,
+                            "quality_tier": tier,
+                            "is_primary_for_experiment": True,
+                            "original_step_content": f"Original content {idx}",
+                            "perturbed_step_content": f"Perturbed content {idx}",
+                        }
+                    )
                     idx += 1
 
     return perturbations
@@ -76,15 +85,21 @@ class TestStratifiedAnnotationSampler:
 
         # Count by condition
         condition_counts = Counter(
-            f"{p['perturbation_type']}_{p['perturbation_position']}"
-            for p in selected
+            f"{p['perturbation_type']}_{p['perturbation_position']}" for p in selected
         )
 
         expected_conditions = {
-            "planning_early", "planning_middle", "planning_late",
-            "tool_selection_early", "tool_selection_middle", "tool_selection_late",
-            "parameter_early", "parameter_middle", "parameter_late",
-            "data_reference_middle", "data_reference_late"
+            "planning_early",
+            "planning_middle",
+            "planning_late",
+            "tool_selection_early",
+            "tool_selection_middle",
+            "tool_selection_late",
+            "parameter_early",
+            "parameter_middle",
+            "parameter_late",
+            "data_reference_middle",
+            "data_reference_late",
         }
 
         # All conditions should be present
@@ -160,14 +175,16 @@ class TestStratifiedAnnotationSampler:
         """Verify only primary perturbations are sampled."""
         perturbations = []
         for i in range(200):
-            perturbations.append({
-                "perturbation_id": f"pert_{i}",
-                "original_trajectory_id": f"toolbench_traj_{i}",
-                "perturbation_type": "planning",
-                "perturbation_position": "early",
-                "quality_tier": "high",
-                "is_primary_for_experiment": i < 100  # Only first 100 are primary
-            })
+            perturbations.append(
+                {
+                    "perturbation_id": f"pert_{i}",
+                    "original_trajectory_id": f"toolbench_traj_{i}",
+                    "perturbation_type": "planning",
+                    "perturbation_position": "early",
+                    "quality_tier": "high",
+                    "is_primary_for_experiment": i < 100,  # Only first 100 are primary
+                }
+            )
 
         sampler = StratifiedAnnotationSampler(perturbations, random_seed=42)
 
@@ -201,17 +218,17 @@ class TestValidateAnnotations:
                 "annotation": {
                     "task_success_degradation": 0,
                     "subsequent_error_rate": 1,
-                    "criticality_rating": 3
-                }
+                    "criticality_rating": 3,
+                },
             },
             {
                 "perturbation_id": "p2",
                 "annotation": {
                     "task_success_degradation": 1,
                     "subsequent_error_rate": 2,
-                    "criticality_rating": 4
-                }
-            }
+                    "criticality_rating": 4,
+                },
+            },
         ]
 
         result = validate_annotations(annotations)
@@ -229,12 +246,9 @@ class TestValidateAnnotations:
                 "annotation": {
                     "task_success_degradation": 0
                     # Missing subsequent_error_rate and criticality_rating
-                }
+                },
             },
-            {
-                "perturbation_id": "p2",
-                "annotation": {}  # Empty
-            }
+            {"perturbation_id": "p2", "annotation": {}},  # Empty
         ]
 
         result = validate_annotations(annotations)
@@ -249,25 +263,25 @@ class TestValidateAnnotations:
                 "annotation": {
                     "task_success_degradation": 2,  # Invalid: should be 0 or 1
                     "subsequent_error_rate": 1,
-                    "criticality_rating": 3
-                }
+                    "criticality_rating": 3,
+                },
             },
             {
                 "perturbation_id": "p2",
                 "annotation": {
                     "task_success_degradation": 0,
                     "subsequent_error_rate": 5,  # Invalid: should be 0-3
-                    "criticality_rating": 3
-                }
+                    "criticality_rating": 3,
+                },
             },
             {
                 "perturbation_id": "p3",
                 "annotation": {
                     "task_success_degradation": 0,
                     "subsequent_error_rate": 1,
-                    "criticality_rating": 6  # Invalid: should be 1-5
-                }
-            }
+                    "criticality_rating": 6,  # Invalid: should be 1-5
+                },
+            },
         ]
 
         result = validate_annotations(annotations)

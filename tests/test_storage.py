@@ -10,7 +10,7 @@ from src.storage.mongodb import MongoDBStorage
 @pytest.fixture
 def mock_mongo_client():
     """Mock MongoDB client."""
-    with patch('src.storage.mongodb.MongoClient') as mock_client:
+    with patch("src.storage.mongodb.MongoClient") as mock_client:
         # Mock the client and database
         mock_db = MagicMock()
         mock_client.return_value.__getitem__.return_value = mock_db
@@ -26,10 +26,7 @@ class TestMongoDBStorage:
         """Test storage initialization."""
         mock_client, mock_db = mock_mongo_client
 
-        storage = MongoDBStorage(
-            uri="mongodb://localhost:27017",
-            database="test_db"
-        )
+        storage = MongoDBStorage(uri="mongodb://localhost:27017", database="test_db")
 
         assert storage.uri == "mongodb://localhost:27017"
         assert storage.database_name == "test_db"
@@ -49,6 +46,7 @@ class TestMongoDBStorage:
 
         # Make ping command raise exception
         from pymongo.errors import ConnectionFailure
+
         mock_client.return_value.admin.command.side_effect = ConnectionFailure()
 
         storage = MongoDBStorage(test_connection=False)
@@ -66,7 +64,7 @@ class TestMongoDBStorage:
             "trajectory_id": "test_traj_1",
             "benchmark": "toolbench",
             "steps": [],
-            "ground_truth": {}
+            "ground_truth": {},
         }
 
         # Mock insert result
@@ -89,10 +87,7 @@ class TestMongoDBStorage:
 
         storage = MongoDBStorage()
 
-        expected_traj = {
-            "trajectory_id": "test_traj_1",
-            "benchmark": "toolbench"
-        }
+        expected_traj = {"trajectory_id": "test_traj_1", "benchmark": "toolbench"}
 
         storage.trajectories.find_one = MagicMock(return_value=expected_traj)
 
@@ -113,7 +108,7 @@ class TestMongoDBStorage:
             "trajectory_id": "test_traj_1",
             "annotator": "human_1",
             "task_success_degradation": 1.0,
-            "subsequent_error_rate": 0.5
+            "subsequent_error_rate": 0.5,
         }
 
         mock_result = MagicMock()
@@ -134,7 +129,7 @@ class TestMongoDBStorage:
             "trajectory_id": "test_traj_1",
             "judge_model": "claude-3.5-sonnet",
             "overall_score": 85.0,
-            "errors": []
+            "errors": [],
         }
 
         mock_result = MagicMock()
@@ -159,7 +154,7 @@ class TestMongoDBStorage:
             "tcs": 100.0,
             "jps": 30.0,
             "ccg": -0.7,
-            "judge_model": "claude-3.5-sonnet"
+            "judge_model": "claude-3.5-sonnet",
         }
 
         mock_result = MagicMock()
@@ -180,7 +175,7 @@ class TestMongoDBStorage:
             "experiment_id": "exp_poc_1",
             "name": "POC Experiment",
             "description": "Initial POC with 50 trajectories",
-            "config": {}
+            "config": {},
         }
 
         mock_result = MagicMock()

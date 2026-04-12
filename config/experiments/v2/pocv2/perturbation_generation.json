@@ -43,6 +43,16 @@
   },
 
   "phases": {
+    "annotate": {
+      "schema": "detailed",
+      "annotator_id": "researcher",
+      "mode": "blinded_pair",
+      "sample_size": 50,
+      "output_dir": "data/human_labels",
+      "storage_backend": "mongodb",
+      "resume": true
+    },
+
     "perturb": {
       "enabled": true,
 
@@ -80,10 +90,21 @@
   },
 
   "compute": {
-    "targets": ["perturbation_summary"],
+    "targets": ["judge_eval", "outcome_evidence", "aggregate_labels"],
     "output": {
       "dir": "results",
       "checkpoints": true
+    },
+
+    "judge_eval": {
+      "judge": "claude-sonnet-4.5",
+      "mode": "single_trajectory",
+      "samples_per_unit": 1,
+      "parallelization": 2
+    },
+
+    "outcome_evidence": {
+      "resume": true
     }
   },
 

@@ -849,6 +849,7 @@ class TestQualityFiltersV2:
             "thresholds": {
                 "reject_null_outcomes": True,
                 "max_missing_tool_input_rate": 1.0,  # Disable this filter for test
+                "use_strict_filter": False,  # Disable strict filter to test null_outcome
             },
         }
         passes, reason = apply_quality_filters(traj, quality_config, "toolbench")
@@ -875,6 +876,7 @@ class TestQualityFiltersV2:
                 "require_finish_step": True,
                 "reject_null_outcomes": False,
                 "max_missing_tool_input_rate": 1.0,  # Disable this filter for test
+                "use_strict_filter": False,  # Disable strict filter to test missing_finish_step
             },
         }
         passes, reason = apply_quality_filters(traj, quality_config, "toolbench")
@@ -1021,6 +1023,7 @@ class TestQualityFiltersV2:
                 "reject_null_outcomes": False,
                 "max_http_error_rate": 1.0,  # Would pass alone
                 "max_thought_none": 10,  # Would pass alone
+                "use_strict_filter": False,  # Disable strict filter to test combined_errors
             },
         }
         passes, reason = apply_quality_filters(traj, quality_config, "toolbench")
@@ -1201,6 +1204,7 @@ class TestQualityFiltersV2:
                 "reject_null_outcomes": False,
                 "max_missing_tool_input_rate": 1.0,
                 "max_empty_content_rate": 1.0,  # Disable this filter for test
+                "use_strict_filter": False,  # Disable strict filter to test graceful_failure
             },
         }
         passes, reason = apply_quality_filters(traj, quality_config, "toolbench")

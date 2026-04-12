@@ -10,21 +10,21 @@ from .tools import (
     AnnotationReviewer,
     Annotation,
     load_annotation,
-    save_annotation
+    save_annotation,
 )
 from .stratified_sampler import (
     StratifiedAnnotationSampler,
     load_annotations_from_file,
-    validate_annotations
+    validate_annotations,
 )
 
 __all__ = [
-    'AnnotationInterface',
-    'AnnotationReviewer',
-    'Annotation',
-    'load_annotation',
-    'save_annotation',
-    'StratifiedAnnotationSampler',
-    'load_annotations_from_file',
-    'validate_annotations'
+    "AnnotationInterface",
+    "AnnotationReviewer",
+    "Annotation",
+    "load_annotation",
+    "save_annotation",
+    "StratifiedAnnotationSampler",
+    "load_annotations_from_file",
+    "validate_annotations",
 ]

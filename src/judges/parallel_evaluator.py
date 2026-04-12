@@ -8,10 +8,9 @@ with support for batching, checkpointing, rate limiting, and resume functionalit
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 
 from src.judges import Judge
-from src.judges.schema import JudgeOutput, EvaluationResults
+from src.judges.schema import JudgeOutput
 from src.data.schema import Trajectory
 from src.storage.mongodb import MongoDBStorage
 
@@ -33,12 +32,7 @@ class ParallelJudgeEvaluator:
         rate_limit_delay_seconds: float (delay between batches)
     """
 
-    def __init__(
-        self,
-        judge: Judge,
-        storage: MongoDBStorage,
-        config: Dict[str, Any]
-    ):
+    def __init__(self, judge: Judge, storage: MongoDBStorage, config: Dict[str, Any]):
         """
         Initialize parallel evaluator.
 
@@ -61,10 +55,7 @@ class ParallelJudgeEvaluator:
         self.max_retries = config.get("max_retries", 3)
 
     def evaluate_all(
-        self,
-        perturbations: List[Dict],
-        experiment_id: str,
-        resume: bool = True
+        self, perturbations: List[Dict], experiment_id: str, resume: bool = True
     ) -> List[Dict]:
         """
         Evaluate all perturbations with parallelization.
@@ -102,18 +93,22 @@ class ParallelJudgeEvaluator:
 
         # Process in parallel batches
         for i in range(0, total, self.parallelization):
-            batch = perturbations[i:i + self.parallelization]
+            batch = perturbations[i : i + self.parallelization]
             batch_num = i // self.parallelization + 1
             total_batches = (total + self.parallelization - 1) // self.parallelization
 
-            print(f"Processing batch {batch_num}/{total_batches} "
-                  f"({len(batch)} perturbations)...")
+            print(
+                f"Processing batch {batch_num}/{total_batches} "
+                f"({len(batch)} perturbations)..."
+            )
 
             batch_results = self._evaluate_batch_parallel(batch, experiment_id)
             results.extend(batch_results)
 
             # Checkpoint periodically
-            successful_in_batch = [r for r in batch_results if r.get("status") == "success"]
+            successful_in_batch = [
+                r for r in batch_results if r.get("status") == "success"
+            ]
             if successful_in_batch:
                 self._checkpoint(successful_in_batch, experiment_id)
                 checkpointed += len(successful_in_batch)
@@ -121,8 +116,10 @@ class ParallelJudgeEvaluator:
                 # Calculate success rate for this batch
                 success_count = len(successful_in_batch)
                 fail_count = len(batch_results) - success_count
-                print(f"  Checkpoint: {checkpointed}/{total} evaluated "
-                      f"(batch: {success_count} success, {fail_count} failed)")
+                print(
+                    f"  Checkpoint: {checkpointed}/{total} evaluated "
+                    f"(batch: {success_count} success, {fail_count} failed)"
+                )
 
             # Rate limiting between batches
             if i + self.parallelization < total:
@@ -143,9 +140,7 @@ class ParallelJudgeEvaluator:
         return results
 
     def _evaluate_batch_parallel(
-        self,
-        batch: List[Dict],
-        experiment_id: str
+        self, batch: List[Dict], experiment_id: str
     ) -> List[Dict]:
         """
         Evaluate batch using ThreadPoolExecutor.
@@ -176,20 +171,18 @@ class ParallelJudgeEvaluator:
                     # Log error but continue
                     pert_id = pert.get("perturbation_id", "unknown")
                     print(f"    Error evaluating {pert_id}: {e}")
-                    results.append({
-                        "perturbation_id": pert_id,
-                        "trajectory_id": pert.get("perturbed_trajectory_id"),
-                        "status": "failed",
-                        "error": str(e)
-                    })
+                    results.append(
+                        {
+                            "perturbation_id": pert_id,
+                            "trajectory_id": pert.get("perturbed_trajectory_id"),
+                            "status": "failed",
+                            "error": str(e),
+                        }
+                    )
 
         return results
 
-    def _evaluate_single(
-        self,
-        perturbation: Dict,
-        experiment_id: str
-    ) -> Dict:
+    def _evaluate_single(self, perturbation: Dict, experiment_id: str) -> Dict:
         """
         Evaluate a single perturbation.
 
@@ -212,14 +205,14 @@ class ParallelJudgeEvaluator:
                     "perturbation_id": pert_id,
                     "trajectory_id": perturbed_traj_id,
                     "status": "failed",
-                    "error": f"Trajectory {perturbed_traj_id} not found"
+                    "error": f"Trajectory {perturbed_traj_id} not found",
                 }
 
             # Call judge
             output = self.judge.evaluate(
                 trajectory,
                 retry_on_failure=self.retry_on_failure,
-                max_retries=self.max_retries
+                max_retries=self.max_retries,
             )
 
             if output:
@@ -236,14 +229,14 @@ class ParallelJudgeEvaluator:
                     # Include perturbation metadata for CCG calculation
                     "perturbation_type": perturbation.get("perturbation_type"),
                     "perturbation_position": perturbation.get("perturbation_position"),
-                    "benchmark": self._get_benchmark(perturbation)
+                    "benchmark": self._get_benchmark(perturbation),
                 }
             else:
                 return {
                     "perturbation_id": pert_id,
                     "trajectory_id": perturbed_traj_id,
                     "status": "failed",
-                    "error": "Judge returned None"
+                    "error": "Judge returned None",
                 }
 
         except Exception as e:
@@ -251,13 +244,11 @@ class ParallelJudgeEvaluator:
                 "perturbation_id": pert_id,
                 "trajectory_id": perturbed_traj_id,
                 "status": "failed",
-                "error": str(e)
+                "error": str(e),
             }
 
     def _filter_evaluated(
-        self,
-        perturbations: List[Dict],
-        experiment_id: str
+        self, perturbations: List[Dict], experiment_id: str
     ) -> List[Dict]:
         """
         Filter out already-evaluated perturbations.
@@ -278,7 +269,7 @@ class ParallelJudgeEvaluator:
             existing_count = self.storage.count_judge_outputs(
                 experiment_id=experiment_id,
                 trajectory_id=perturbed_traj_id,
-                judge_name=self.judge.name
+                judge_name=self.judge.name,
             )
 
             if existing_count == 0:
@@ -286,11 +277,7 @@ class ParallelJudgeEvaluator:
 
         return remaining
 
-    def _checkpoint(
-        self,
-        results: List[Dict],
-        experiment_id: str
-    ):
+    def _checkpoint(self, results: List[Dict], experiment_id: str):
         """
         Save results to MongoDB.
 
@@ -305,15 +292,11 @@ class ParallelJudgeEvaluator:
 
                 # Store using existing storage method
                 self.storage.store_judge_output(
-                    JudgeOutput.from_dict(evaluation),
-                    experiment_id,
-                    sample_number=1
+                    JudgeOutput.from_dict(evaluation), experiment_id, sample_number=1
                 )
 
     def _load_trajectory(
-        self,
-        perturbation: Dict,
-        experiment_id: str
+        self, perturbation: Dict, experiment_id: str
     ) -> Optional[Trajectory]:
         """
         Load trajectory object from perturbation record.
@@ -333,8 +316,7 @@ class ParallelJudgeEvaluator:
 
         # Get trajectory from MongoDB
         traj_dict = self.storage.get_trajectory_by_experiment(
-            perturbed_traj_id,
-            source_exp_id
+            perturbed_traj_id, source_exp_id
         )
 
         if not traj_dict:
@@ -342,13 +324,13 @@ class ParallelJudgeEvaluator:
 
         # Clean dict for Trajectory.from_dict()
         clean_dict = {
-            'trajectory_id': traj_dict['trajectory_id'],
-            'benchmark': traj_dict['benchmark'],
-            'steps': traj_dict['steps'],
-            'ground_truth': traj_dict['ground_truth'],
-            'metadata': traj_dict.get('metadata', {}),
-            'domain': traj_dict.get('domain'),
-            'complexity': traj_dict.get('complexity')
+            "trajectory_id": traj_dict["trajectory_id"],
+            "benchmark": traj_dict["benchmark"],
+            "steps": traj_dict["steps"],
+            "ground_truth": traj_dict["ground_truth"],
+            "metadata": traj_dict.get("metadata", {}),
+            "domain": traj_dict.get("domain"),
+            "complexity": traj_dict.get("complexity"),
         }
 
         return Trajectory.from_dict(clean_dict)
@@ -374,10 +356,7 @@ class ParallelJudgeEvaluator:
 
         return "unknown"
 
-    def get_evaluation_summary(
-        self,
-        experiment_id: str
-    ) -> Dict[str, Any]:
+    def get_evaluation_summary(self, experiment_id: str) -> Dict[str, Any]:
         """
         Get summary statistics for evaluations.
 
@@ -388,18 +367,13 @@ class ParallelJudgeEvaluator:
             Summary dict with counts and averages
         """
         outputs = self.storage.get_judge_outputs(
-            experiment_id=experiment_id,
-            judge_name=self.judge.name
+            experiment_id=experiment_id, judge_name=self.judge.name
         )
 
         if not outputs:
-            return {
-                "count": 0,
-                "avg_score": 0.0,
-                "avg_jps": 0.0
-            }
+            return {"count": 0, "avg_score": 0.0, "avg_jps": 0.0}
 
-        scores = [o.get('overall_score', 0) for o in outputs]
+        scores = [o.get("overall_score", 0) for o in outputs]
         jps_values = [100 - s for s in scores]
 
         return {
@@ -407,5 +381,5 @@ class ParallelJudgeEvaluator:
             "avg_score": sum(scores) / len(scores),
             "avg_jps": sum(jps_values) / len(jps_values),
             "min_score": min(scores),
-            "max_score": max(scores)
+            "max_score": max(scores),
         }

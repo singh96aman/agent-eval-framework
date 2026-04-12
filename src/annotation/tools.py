@@ -6,13 +6,12 @@ of perturbations in agent trajectories.
 """
 
 import json
-import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from src.data.schema import Trajectory, PerturbedTrajectory
+from src.data.schema import PerturbedTrajectory
 from src.storage.mongodb import MongoDBStorage
 
 
@@ -30,6 +29,7 @@ class Annotation:
         timestamp: When annotation was created
         annotation_time_seconds: How long annotation took
     """
+
     perturbation_id: str
     annotator_id: str
     task_success_degradation: int  # 0 or 1
@@ -41,15 +41,15 @@ class Annotation:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON storage."""
         data = asdict(self)
-        data['timestamp'] = self.timestamp.isoformat()
+        data["timestamp"] = self.timestamp.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Annotation':
+    def from_dict(cls, data: Dict[str, Any]) -> "Annotation":
         """Create from dictionary."""
         data = data.copy()
-        if isinstance(data.get('timestamp'), str):
-            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if isinstance(data.get("timestamp"), str):
+            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
         return cls(**data)
 
     def compute_tcs(self) -> float:
@@ -97,14 +97,16 @@ class AnnotationInterface:
             Perturbation document with embedded trajectories, or None if not found
         """
         # Load perturbation record (contains trajectory IDs)
-        pert_record = self.storage.db['perturbations'].find_one({'perturbation_id': perturbation_id})
+        pert_record = self.storage.db["perturbations"].find_one(
+            {"perturbation_id": perturbation_id}
+        )
         if not pert_record:
             return None
 
         # Load the referenced trajectories
         # Note: get_trajectory() automatically strips storage metadata
-        orig_traj = self.storage.get_trajectory(pert_record['original_trajectory_id'])
-        pert_traj = self.storage.get_trajectory(pert_record['perturbed_trajectory_id'])
+        orig_traj = self.storage.get_trajectory(pert_record["original_trajectory_id"])
+        pert_traj = self.storage.get_trajectory(pert_record["perturbed_trajectory_id"])
 
         if not orig_traj or not pert_traj:
             print(f"⚠️  Missing trajectories for perturbation {perturbation_id}")
@@ -113,20 +115,18 @@ class AnnotationInterface:
         # Reconstruct full perturbation object with only schema-expected fields
         # Note: perturbation_id is NOT part of PerturbedTrajectory schema
         full_perturbation = {
-            'original_trajectory': orig_traj,
-            'perturbed_trajectory': pert_traj,
-            'perturbation_type': pert_record['perturbation_type'],
-            'perturbation_position': pert_record['perturbation_position'],
-            'perturbed_step_number': pert_record['perturbed_step_number'],
-            'original_step_content': pert_record['original_step_content'],
-            'perturbed_step_content': pert_record['perturbed_step_content'],
-            'perturbation_metadata': pert_record.get(
-                'perturbation_metadata', {}
-            )
+            "original_trajectory": orig_traj,
+            "perturbed_trajectory": pert_traj,
+            "perturbation_type": pert_record["perturbation_type"],
+            "perturbation_position": pert_record["perturbation_position"],
+            "perturbed_step_number": pert_record["perturbed_step_number"],
+            "original_step_content": pert_record["original_step_content"],
+            "perturbed_step_content": pert_record["perturbed_step_content"],
+            "perturbation_metadata": pert_record.get("perturbation_metadata", {}),
         }
 
         # Store perturbation_id separately for annotation saving
-        full_perturbation['_perturbation_id'] = pert_record['perturbation_id']
+        full_perturbation["_perturbation_id"] = pert_record["perturbation_id"]
 
         return full_perturbation
 
@@ -138,12 +138,11 @@ class AnnotationInterface:
             perturbation_data: Perturbation document from MongoDB
         """
         # Extract perturbation_id before passing to from_dict
-        pert_id = perturbation_data.get('_perturbation_id', 'unknown')
+        pert_id = perturbation_data.get("_perturbation_id", "unknown")
 
         # Remove _perturbation_id before deserializing (it's not in schema)
         data_for_schema = {
-            k: v for k, v in perturbation_data.items()
-            if k != '_perturbation_id'
+            k: v for k, v in perturbation_data.items() if k != "_perturbation_id"
         }
 
         perturbed = PerturbedTrajectory.from_dict(data_for_schema)
@@ -167,8 +166,11 @@ class AnnotationInterface:
 
         # Show planning if available (look for planning/reasoning steps before tools)
         planning_steps = [
-            s for s in perturbed.original_trajectory.steps[:perturbed.perturbed_step_number]
-            if s.step_type.value in ['planning', 'reasoning'] and not s.tool_name
+            s
+            for s in perturbed.original_trajectory.steps[
+                : perturbed.perturbed_step_number
+            ]
+            if s.step_type.value in ["planning", "reasoning"] and not s.tool_name
         ]
         if planning_steps:
             print("─" * 80)
@@ -184,7 +186,7 @@ class AnnotationInterface:
         print()
 
         for i, step in enumerate(perturbed.original_trajectory.steps, 1):
-            is_perturbed = (step.step_number == perturbed.perturbed_step_number)
+            is_perturbed = step.step_number == perturbed.perturbed_step_number
 
             if i <= perturbed.perturbed_step_number:
                 if is_perturbed:
@@ -194,7 +196,7 @@ class AnnotationInterface:
                         step.step_type.value,
                         perturbed.original_step_content,
                         perturbed.perturbed_step_content,
-                        step.tool_name
+                        step.tool_name,
                     )
                     break  # Stop after showing the perturbation
                 else:
@@ -203,7 +205,7 @@ class AnnotationInterface:
 
         # Show what happened after perturbation (complete content)
         remaining_steps = perturbed.perturbed_trajectory.steps[
-            perturbed.perturbed_step_number:
+            perturbed.perturbed_step_number :
         ]
         if remaining_steps:
             print("\n" + "─" * 80)
@@ -225,7 +227,7 @@ class AnnotationInterface:
         # Content (complete, no truncation)
         content = step.content.strip()
         # Indent each line
-        for line in content.split('\n'):
+        for line in content.split("\n"):
             print(f"  {line}")
 
         # Tool info
@@ -245,7 +247,7 @@ class AnnotationInterface:
         step_type: str,
         original: str,
         perturbed: str,
-        tool_name: Optional[str] = None
+        tool_name: Optional[str] = None,
     ) -> None:
         """
         Display sequential comparison of original vs perturbed step.
@@ -299,7 +301,7 @@ class AnnotationInterface:
             if len(word) > width:
                 # Add current line if any
                 if current_line:
-                    lines.append(' '.join(current_line))
+                    lines.append(" ".join(current_line))
                     current_line = []
                     current_length = 0
 
@@ -318,16 +320,18 @@ class AnnotationInterface:
                 current_length += len(word) + (1 if current_line else 0)
             else:
                 if current_line:
-                    lines.append(' '.join(current_line))
+                    lines.append(" ".join(current_line))
                 current_line = [word]
                 current_length = len(word)
 
         if current_line:
-            lines.append(' '.join(current_line))
+            lines.append(" ".join(current_line))
 
         return lines if lines else [""]
 
-    def prompt_annotation(self, perturbation_id: str, annotator_id: str = "default") -> Annotation:
+    def prompt_annotation(
+        self, perturbation_id: str, annotator_id: str = "default"
+    ) -> Annotation:
         """
         Prompt user for annotation input.
 
@@ -345,11 +349,15 @@ class AnnotationInterface:
 
         # Task Success Degradation
         while True:
-            tsd_input = input("\n1. Did the perturbation cause the task to FAIL? (yes/no): ").strip().lower()
-            if tsd_input in ['yes', 'y', '1']:
+            tsd_input = (
+                input("\n1. Did the perturbation cause the task to FAIL? (yes/no): ")
+                .strip()
+                .lower()
+            )
+            if tsd_input in ["yes", "y", "1"]:
                 tsd = 1
                 break
-            elif tsd_input in ['no', 'n', '0']:
+            elif tsd_input in ["no", "n", "0"]:
                 tsd = 0
                 break
             else:
@@ -358,7 +366,9 @@ class AnnotationInterface:
         # Subsequent Error Rate
         while True:
             try:
-                ser_input = input("\n2. How many errors occurred AFTER this perturbation? (count): ").strip()
+                ser_input = input(
+                    "\n2. How many errors occurred AFTER this perturbation? (count): "
+                ).strip()
                 ser = int(ser_input)
                 if ser >= 0:
                     break
@@ -368,7 +378,9 @@ class AnnotationInterface:
                 print("   ⚠️  Please enter a valid number")
 
         # Notes
-        notes = input("\n3. Any additional notes? (optional, press Enter to skip): ").strip()
+        notes = input(
+            "\n3. Any additional notes? (optional, press Enter to skip): "
+        ).strip()
 
         end_time = datetime.utcnow()
         annotation_time = (end_time - start_time).total_seconds()
@@ -380,7 +392,7 @@ class AnnotationInterface:
             subsequent_error_rate=ser,
             notes=notes,
             timestamp=end_time,
-            annotation_time_seconds=annotation_time
+            annotation_time_seconds=annotation_time,
         )
 
         # Display computed TCS
@@ -401,13 +413,14 @@ class AnnotationInterface:
         Returns:
             True if annotation exists, False otherwise
         """
-        existing = self.storage.db['annotations'].find_one({
-            'perturbation_id': perturbation_id,
-            'annotator_id': annotator_id
-        })
+        existing = self.storage.db["annotations"].find_one(
+            {"perturbation_id": perturbation_id, "annotator_id": annotator_id}
+        )
         return existing is not None
 
-    def annotate(self, perturbation_id: str, annotator_id: str = "default") -> Optional[Annotation]:
+    def annotate(
+        self, perturbation_id: str, annotator_id: str = "default"
+    ) -> Optional[Annotation]:
         """
         Full annotation workflow: load, display, prompt, save.
 
@@ -428,7 +441,7 @@ class AnnotationInterface:
         if self.annotation_exists(perturbation_id, annotator_id):
             print(f"\n⚠️  Annotation already exists in MongoDB")
             overwrite = input("Overwrite? (yes/no): ").strip().lower()
-            if overwrite not in ['yes', 'y']:
+            if overwrite not in ["yes", "y"]:
                 print("Cancelled.")
                 return None
 
@@ -461,33 +474,33 @@ class AnnotationInterface:
         annotation_id = f"{annotation.perturbation_id}_{annotation.annotator_id}"
 
         # Get perturbation to extract experiment_id
-        pert_record = self.storage.db['perturbations'].find_one({
-            'perturbation_id': annotation.perturbation_id
-        })
-        experiment_id = pert_record['experiment_id'] if pert_record else None
+        pert_record = self.storage.db["perturbations"].find_one(
+            {"perturbation_id": annotation.perturbation_id}
+        )
+        experiment_id = pert_record["experiment_id"] if pert_record else None
 
         # Prepare document for MongoDB (matching schema)
         doc = {
-            'annotation_id': annotation_id,  # Unique ID
-            'perturbation_id': annotation.perturbation_id,
-            'experiment_id': experiment_id,
-            'annotator_id': annotation.annotator_id,
-            'task_success_degradation': annotation.task_success_degradation,
-            'subsequent_error_rate': annotation.subsequent_error_rate,
-            'tcs_score': annotation.compute_tcs(),
-            'notes': annotation.notes,
-            'annotated_at': annotation.timestamp,
-            'annotation_time_seconds': annotation.annotation_time_seconds
+            "annotation_id": annotation_id,  # Unique ID
+            "perturbation_id": annotation.perturbation_id,
+            "experiment_id": experiment_id,
+            "annotator_id": annotation.annotator_id,
+            "task_success_degradation": annotation.task_success_degradation,
+            "subsequent_error_rate": annotation.subsequent_error_rate,
+            "tcs_score": annotation.compute_tcs(),
+            "notes": annotation.notes,
+            "annotated_at": annotation.timestamp,
+            "annotation_time_seconds": annotation.annotation_time_seconds,
         }
 
         # Save to MongoDB (upsert to allow re-annotation)
-        self.storage.db['annotations'].replace_one(
-            {'annotation_id': annotation_id},
-            doc,
-            upsert=True
+        self.storage.db["annotations"].replace_one(
+            {"annotation_id": annotation_id}, doc, upsert=True
         )
 
-    def batch_annotate(self, perturbation_ids: List[str], annotator_id: str = "default") -> List[Annotation]:
+    def batch_annotate(
+        self, perturbation_ids: List[str], annotator_id: str = "default"
+    ) -> List[Annotation]:
         """
         Annotate multiple perturbations in sequence.
 
@@ -511,9 +524,13 @@ class AnnotationInterface:
 
             # Ask to continue
             if i < len(perturbation_ids):
-                continue_input = input("\nContinue to next? (yes/no/quit): ").strip().lower()
-                if continue_input in ['no', 'n', 'quit', 'q']:
-                    print(f"Stopping. Annotated {len(annotations)}/{len(perturbation_ids)}")
+                continue_input = (
+                    input("\nContinue to next? (yes/no/quit): ").strip().lower()
+                )
+                if continue_input in ["no", "n", "quit", "q"]:
+                    print(
+                        f"Stopping. Annotated {len(annotations)}/{len(perturbation_ids)}"
+                    )
                     break
 
         return annotations
@@ -550,7 +567,7 @@ class AnnotationReviewer:
 
         for filepath in self.annotations_dir.glob("*.json"):
             try:
-                with open(filepath, 'r') as f:
+                with open(filepath, "r") as f:
                     data = json.load(f)
                     annotations.append(Annotation.from_dict(data))
             except Exception as e:
@@ -584,7 +601,7 @@ class AnnotationReviewer:
             "tcs_mean": sum(tcs_scores) / len(tcs_scores),
             "tcs_min": min(tcs_scores),
             "tcs_max": max(tcs_scores),
-            "annotators": list(set(a.annotator_id for a in annotations))
+            "annotators": list(set(a.annotator_id for a in annotations)),
         }
 
     def print_summary(self) -> None:
@@ -596,7 +613,7 @@ class AnnotationReviewer:
         print("=" * 80)
         print(f"Total annotations: {stats['total']}")
 
-        if stats['total'] > 0:
+        if stats["total"] > 0:
             print(f"\nTask Success Degradation:")
             print(f"  Mean: {stats['tsd_mean']:.2f}")
             print(f"  Task failures: {stats['tsd_task_failures']}/{stats['total']}")
@@ -614,7 +631,9 @@ class AnnotationReviewer:
         print("=" * 80)
 
 
-def load_annotation(perturbation_id: str, annotations_dir: Path = Path("data/annotations")) -> Optional[Annotation]:
+def load_annotation(
+    perturbation_id: str, annotations_dir: Path = Path("data/annotations")
+) -> Optional[Annotation]:
     """
     Load annotation from file.
 
@@ -631,7 +650,7 @@ def load_annotation(perturbation_id: str, annotations_dir: Path = Path("data/ann
         return None
 
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             data = json.load(f)
             return Annotation.from_dict(data)
     except Exception as e:
@@ -639,7 +658,9 @@ def load_annotation(perturbation_id: str, annotations_dir: Path = Path("data/ann
         return None
 
 
-def save_annotation(annotation: Annotation, annotations_dir: Path = Path("data/annotations")) -> bool:
+def save_annotation(
+    annotation: Annotation, annotations_dir: Path = Path("data/annotations")
+) -> bool:
     """
     Save annotation to file.
 
@@ -654,7 +675,7 @@ def save_annotation(annotation: Annotation, annotations_dir: Path = Path("data/a
     filepath = annotations_dir / f"{annotation.perturbation_id}.json"
 
     try:
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(annotation.to_dict(), f, indent=2)
         return True
     except Exception as e:

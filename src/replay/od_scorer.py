@@ -19,6 +19,7 @@ from src.llm import get_bedrock_client
 @dataclass
 class ODResult:
     """Result of OD computation for a single perturbation."""
+
     perturbation_id: str
     baseline_outcome: float  # 0-100
     perturbed_outcome: float  # 0-100
@@ -41,7 +42,7 @@ class ODResult:
             "grader_model": self.grader_model,
             "baseline_reasoning": self.baseline_reasoning,
             "perturbed_reasoning": self.perturbed_reasoning,
-            "computed_at": self.computed_at
+            "computed_at": self.computed_at,
         }
 
 
@@ -96,8 +97,7 @@ class ODScorer:
         """
         self.config = config
         self.grader_model = config.get(
-            "grader_model",
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+            "grader_model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         )
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 1000)
@@ -170,9 +170,7 @@ class ODScorer:
         return "Not available"
 
     def grade_outcome(
-        self,
-        trajectory: Dict[str, Any],
-        task_description: Optional[str] = None
+        self, trajectory: Dict[str, Any], task_description: Optional[str] = None
     ) -> Tuple[float, str]:
         """
         Grade a trajectory's outcome.
@@ -191,9 +189,7 @@ class ODScorer:
 
         # Build prompt
         prompt = OUTCOME_GRADER_PROMPT.format(
-            task_description=task,
-            final_answer=final_answer,
-            ground_truth=ground_truth
+            task_description=task, final_answer=final_answer, ground_truth=ground_truth
         )
 
         try:
@@ -202,13 +198,13 @@ class ODScorer:
                 model_id=self.grader_model,
                 prompt=prompt,
                 max_tokens=self.max_tokens,
-                temperature=self.temperature
+                temperature=self.temperature,
             )
 
             response_text = result.get("response", "")
 
             # Parse JSON response
-            json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+            json_match = re.search(r"\{[^{}]*\}", response_text, re.DOTALL)
             if json_match:
                 parsed = json.loads(json_match.group())
                 score = float(parsed.get("score", 50))
@@ -239,7 +235,7 @@ class ODScorer:
         self,
         baseline_trajectory: Dict[str, Any],
         perturbed_trajectory: Dict[str, Any],
-        perturbation_id: str
+        perturbation_id: str,
     ) -> ODResult:
         """
         Compute OD for a single perturbation.
@@ -276,7 +272,7 @@ class ODScorer:
             grader_model=self.grader_model,
             baseline_reasoning=baseline_reasoning,
             perturbed_reasoning=perturbed_reasoning,
-            computed_at=datetime.utcnow().isoformat()
+            computed_at=datetime.utcnow().isoformat(),
         )
 
     def compute_batch(
@@ -284,7 +280,7 @@ class ODScorer:
         perturbations: List[Dict[str, Any]],
         storage,
         batch_size: int = 20,
-        resume: bool = True
+        resume: bool = True,
     ) -> List[ODResult]:
         """
         Compute OD for a batch of perturbations.
@@ -313,12 +309,8 @@ class ODScorer:
                 continue
 
             # Load trajectories
-            baseline_traj = storage.get_trajectory(
-                pert.get("original_trajectory_id")
-            )
-            perturbed_traj = storage.get_trajectory(
-                pert.get("perturbed_trajectory_id")
-            )
+            baseline_traj = storage.get_trajectory(pert.get("original_trajectory_id"))
+            perturbed_traj = storage.get_trajectory(pert.get("perturbed_trajectory_id"))
 
             if not baseline_traj or not perturbed_traj:
                 print(f"   Warning: Missing trajectory for {pert_id}")
@@ -326,15 +318,12 @@ class ODScorer:
 
             # Compute OD
             try:
-                od_result = self.compute_od(
-                    baseline_traj, perturbed_traj, pert_id
-                )
+                od_result = self.compute_od(baseline_traj, perturbed_traj, pert_id)
                 results.append(od_result)
 
                 # Update perturbation in MongoDB
                 storage.perturbations.update_one(
-                    {"perturbation_id": pert_id},
-                    {"$set": {"od": od_result.to_dict()}}
+                    {"perturbation_id": pert_id}, {"$set": {"od": od_result.to_dict()}}
                 )
 
             except Exception as e:
@@ -343,8 +332,10 @@ class ODScorer:
 
             # Progress logging
             if (i + 1) % 10 == 0:
-                print(f"   Processed {i + 1}/{len(perturbations)} "
-                      f"(skipped: {skipped})")
+                print(
+                    f"   Processed {i + 1}/{len(perturbations)} "
+                    f"(skipped: {skipped})"
+                )
 
         return results
 
@@ -355,6 +346,7 @@ class ODScorer:
             "failed_count": self.failed_count,
             "success_rate": (
                 self.graded_count / (self.graded_count + self.failed_count)
-                if (self.graded_count + self.failed_count) > 0 else 0
-            )
+                if (self.graded_count + self.failed_count) > 0
+                else 0
+            ),
         }

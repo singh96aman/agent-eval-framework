@@ -20,10 +20,29 @@ class StepTyper:
     FINISH_TOOLS = {"finish", "submit", "give_answer", "submit_answer", "final_answer"}
 
     # Tool names that produce patches (SWE-bench)
-    PATCH_TOOLS = {"str_replace_editor", "file_edit", "patch", "apply_patch", "edit_file", "write"}
+    PATCH_TOOLS = {
+        "str_replace_editor",
+        "file_edit",
+        "patch",
+        "apply_patch",
+        "edit_file",
+        "write",
+    }
 
     # Tool names that are read-only (never produce patches)
-    READ_ONLY_TOOLS = {"view", "view_file", "file_view", "read", "open", "cat", "search", "find", "list", "ls", "grep"}
+    READ_ONLY_TOOLS = {
+        "view",
+        "view_file",
+        "file_view",
+        "read",
+        "open",
+        "cat",
+        "search",
+        "find",
+        "list",
+        "ls",
+        "grep",
+    }
 
     # Commands that produce patches (for str_replace_editor)
     PATCH_COMMANDS = {"str_replace", "create", "insert"}
@@ -63,15 +82,11 @@ class StepTyper:
 
     def __init__(self):
         # Compile patterns for efficiency
-        self._planning_re = re.compile(
-            "|".join(self.PLANNING_PATTERNS), re.IGNORECASE
-        )
+        self._planning_re = re.compile("|".join(self.PLANNING_PATTERNS), re.IGNORECASE)
         self._reasoning_re = re.compile(
             "|".join(self.REASONING_PATTERNS), re.IGNORECASE
         )
-        self._decision_re = re.compile(
-            "|".join(self.DECISION_PATTERNS), re.IGNORECASE
-        )
+        self._decision_re = re.compile("|".join(self.DECISION_PATTERNS), re.IGNORECASE)
         self._extraction_patterns = [
             re.compile(p, re.IGNORECASE) for p in self.EXTRACTION_PATTERNS
         ]
@@ -225,7 +240,10 @@ class StepTyper:
                 elif "bash_command" in tool_input:
                     bash_cmd = tool_input.get("bash_command", "").lower()
                     # Detect file-modifying bash commands
-                    if any(kw in bash_cmd for kw in [">>", ">", "echo", "sed", "patch", "cp", "mv"]):
+                    if any(
+                        kw in bash_cmd
+                        for kw in [">>", ">", "echo", "sed", "patch", "cp", "mv"]
+                    ):
                         produces_patch = True
             # str_replace_editor produces patch only for write commands
             elif tool_name_lower == "str_replace_editor":
@@ -274,7 +292,9 @@ class StepTyper:
         if tool_lower in self.EXECUTE_TOOLS:
             # But bash with file-modifying commands is "write"
             bash_cmd = tool_input.get("bash_command", "").lower()
-            if bash_cmd and any(kw in bash_cmd for kw in [">>", ">", "echo", "sed", "patch"]):
+            if bash_cmd and any(
+                kw in bash_cmd for kw in [">>", ">", "echo", "sed", "patch"]
+            ):
                 return "write"
             return "execute"
 
@@ -287,7 +307,12 @@ class StepTyper:
             return "write"
 
         # Step role fallback for non-tool steps
-        if not tool_name or step_role in ("planning", "reasoning", "extraction", "decision"):
+        if not tool_name or step_role in (
+            "planning",
+            "reasoning",
+            "extraction",
+            "decision",
+        ):
             return "reason"
 
         # Default based on whether it looks like a tool call

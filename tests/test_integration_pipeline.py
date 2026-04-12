@@ -24,7 +24,6 @@ from typing import Dict, Any
 
 from src.data.schema import Trajectory, Step, GroundTruth
 
-
 # Test data directories
 TEST_DATA_DIR = Path(__file__).parent / "data"
 RESULTS_DIR = TEST_DATA_DIR / "results"
@@ -58,7 +57,7 @@ class IntegrationTestPipeline:
             "trajectories": [],
             "annotations": [],
             "judge_evaluations": [],
-            "ccg_scores": []
+            "ccg_scores": [],
         }
 
         # Load stubbed responses
@@ -115,11 +114,11 @@ class IntegrationTestPipeline:
                 "perturbations_generated": 0,
                 "annotations_completed": 0,
                 "evaluations_completed": 0,
-                "ccg_scores_computed": 0
+                "ccg_scores_computed": 0,
             },
             "status": "created",
             "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.utcnow().isoformat(),
         }
         return self.experiment_id
 
@@ -140,7 +139,7 @@ class IntegrationTestPipeline:
             benchmark=traj_data["benchmark"],
             steps=steps,
             ground_truth=ground_truth,
-            metadata=traj_data.get("metadata", {})
+            metadata=traj_data.get("metadata", {}),
         )
 
         # Store with experiment_id FOREIGN KEY
@@ -163,7 +162,9 @@ class IntegrationTestPipeline:
         perturb_config = self.stubbed_responses["perturbations"]["planning_early"]
 
         # Copy original trajectory
-        perturbed_steps = [Step.from_dict(s.to_dict()) for s in original_trajectory.steps]
+        perturbed_steps = [
+            Step.from_dict(s.to_dict()) for s in original_trajectory.steps
+        ]
 
         # Apply perturbation to step 1
         perturbed_steps[0].content = perturb_config["perturbed_content"]
@@ -173,8 +174,10 @@ class IntegrationTestPipeline:
             trajectory_id=f"{original_trajectory.trajectory_id}_perturbed",
             benchmark=original_trajectory.benchmark,
             steps=perturbed_steps,
-            ground_truth=GroundTruth.from_dict(original_trajectory.ground_truth.to_dict()),
-            metadata=original_trajectory.metadata.copy()
+            ground_truth=GroundTruth.from_dict(
+                original_trajectory.ground_truth.to_dict()
+            ),
+            metadata=original_trajectory.metadata.copy(),
         )
 
         # Store with experiment_id FOREIGN KEY
@@ -188,7 +191,7 @@ class IntegrationTestPipeline:
             "perturbed_step_number": 1,
             "original_step_content": perturb_config["original_content"],
             "perturbed_step_content": perturb_config["perturbed_content"],
-            "metadata": perturb_config["perturbation_metadata"]
+            "metadata": perturb_config["perturbation_metadata"],
         }
         perturbed_doc["stored_at"] = datetime.utcnow().isoformat()
 
@@ -219,7 +222,7 @@ class IntegrationTestPipeline:
             "true_criticality_score": annotation_data["true_criticality_score"],
             "confidence": annotation_data["confidence"],
             "notes": annotation_data["notes"],
-            "annotated_at": datetime.utcnow().isoformat()
+            "annotated_at": datetime.utcnow().isoformat(),
         }
 
         self.outputs["annotations"].append(annotation_doc)
@@ -252,7 +255,7 @@ class IntegrationTestPipeline:
             "api_call": judge_data["api_call"],
             "temperature": 0.7,
             "max_tokens": 2000,
-            "evaluated_at": datetime.utcnow().isoformat()
+            "evaluated_at": datetime.utcnow().isoformat(),
         }
 
         self.outputs["judge_evaluations"].append(evaluation_doc)
@@ -267,7 +270,7 @@ class IntegrationTestPipeline:
         self,
         perturbed_trajectory: Trajectory,
         annotation: Dict[str, Any],
-        evaluation: Dict[str, Any]
+        evaluation: Dict[str, Any],
     ):
         """Step 7: Compute CCG score."""
         tcs = annotation["true_criticality_score"]
@@ -301,7 +304,7 @@ class IntegrationTestPipeline:
             "criticality_calibration_gap": ccg,
             "calibration_status": calibration_status,
             "gap_magnitude": gap_magnitude,
-            "computed_at": datetime.utcnow().isoformat()
+            "computed_at": datetime.utcnow().isoformat(),
         }
 
         self.outputs["ccg_scores"].append(ccg_doc)
@@ -407,11 +410,7 @@ class TestIntegrationPipeline:
     NO MONGODB REQUIRED!
     """
 
-    def test_experiment_schema_format(
-        self,
-        pipeline_results,
-        experiment_data
-    ):
+    def test_experiment_schema_format(self, pipeline_results, experiment_data):
         """Test experiment follows foreign key schema (no arrays!)."""
         # Verify no arrays of IDs
         msg = "❌ experiments should NOT have trajectory_refs array!"
@@ -437,11 +436,7 @@ class TestIntegrationPipeline:
 
         print("✅ Experiment schema correct (no arrays, only counts)")
 
-    def test_trajectory_schema_format(
-        self,
-        pipeline_results,
-        trajectories_data
-    ):
+    def test_trajectory_schema_format(self, pipeline_results, trajectories_data):
         """Test trajectories have experiment_id foreign key."""
         assert len(trajectories_data) == 2  # 1 original + 1 perturbed
 
@@ -477,11 +472,7 @@ class TestIntegrationPipeline:
 
         print("✅ Trajectory schema correct (foreign keys present)")
 
-    def test_annotation_schema_format(
-        self,
-        pipeline_results,
-        annotations_data
-    ):
+    def test_annotation_schema_format(self, pipeline_results, annotations_data):
         """Test annotations have foreign keys."""
         assert len(annotations_data) == 1
 
@@ -518,11 +509,7 @@ class TestIntegrationPipeline:
 
         print("✅ Annotation schema correct (foreign keys + TCS)")
 
-    def test_judge_evaluation_schema_format(
-        self,
-        pipeline_results,
-        evaluations_data
-    ):
+    def test_judge_evaluation_schema_format(self, pipeline_results, evaluations_data):
         """Test judge evaluations have foreign keys."""
         assert len(evaluations_data) == 1
 
@@ -566,11 +553,7 @@ class TestIntegrationPipeline:
 
         print("✅ Judge evaluation schema correct (foreign keys + JPS)")
 
-    def test_ccg_score_schema_format(
-        self,
-        pipeline_results,
-        ccg_data
-    ):
+    def test_ccg_score_schema_format(self, pipeline_results, ccg_data):
         """Test CCG scores have all foreign keys."""
         assert len(ccg_data) == 1
 
@@ -623,7 +606,7 @@ class TestIntegrationPipeline:
         trajectories_data,
         annotations_data,
         evaluations_data,
-        ccg_data
+        ccg_data,
     ):
         """Test that foreign keys correctly link across all collections."""
         # Get IDs
@@ -651,11 +634,7 @@ class TestIntegrationPipeline:
 
         print("✅ Foreign key linkage correct across all collections")
 
-    def test_expected_ccg_value(
-        self,
-        pipeline_results,
-        ccg_data
-    ):
+    def test_expected_ccg_value(self, pipeline_results, ccg_data):
         """Test computed CCG matches expected from stubbed data."""
         ccg = ccg_data[0]
 
@@ -666,13 +645,10 @@ class TestIntegrationPipeline:
         expected = stubbed["expected_ccg"]
 
         # Verify values match
-        assert ccg["true_criticality_score"] == \
-            expected["true_criticality_score"]
-        assert ccg["judge_penalty_score"] == \
-            expected["judge_penalty_score"]
+        assert ccg["true_criticality_score"] == expected["true_criticality_score"]
+        assert ccg["judge_penalty_score"] == expected["judge_penalty_score"]
         ccg_diff = abs(
-            ccg["criticality_calibration_gap"] -
-            expected["criticality_calibration_gap"]
+            ccg["criticality_calibration_gap"] - expected["criticality_calibration_gap"]
         )
         assert ccg_diff < 0.01
         assert ccg["calibration_status"] == expected["calibration_status"]

@@ -44,30 +44,60 @@ class DependencyAnalyzer:
     # Invalid file path PREFIXES - XML tag artifacts that should never be paths
     # These are filtered even with additional segments
     INVALID_PATH_PREFIXES = {
-        "/function", "/parameter",  # XML tag artifacts from SWE-bench format
+        "/function",
+        "/parameter",  # XML tag artifacts from SWE-bench format
         "/encrypted-tbn0.gstatic.com",  # URL artifacts
-        "/images", "/www", "/http", "/https",  # URL-like patterns
+        "/images",
+        "/www",
+        "/http",
+        "/https",  # URL-like patterns
     }
 
     # Paths that are only invalid if they're the EXACT match (no additional segments)
     # e.g., /testbed is invalid but /testbed/src/main.py is valid
     INVALID_EXACT_PATHS = {
-        "/testbed", "/usr/bin/env",
+        "/testbed",
+        "/usr/bin/env",
     }
 
     # Entity blocklist - parser artifacts and generic tokens
     ENTITY_BLOCKLIST = {
         # XML tag artifacts
-        "/function", "/parameter", "function", "parameter",
+        "/function",
+        "/parameter",
+        "function",
+        "parameter",
         # Generic tool words
-        "file_edit", "file_view", "str_replace_editor", "edit", "file", "view",
-        "search_code", "view_file", "bash", "submit",
+        "file_edit",
+        "file_view",
+        "str_replace_editor",
+        "edit",
+        "file",
+        "view",
+        "search_code",
+        "view_file",
+        "bash",
+        "submit",
         # Generic paths
-        "/testbed", "testbed",
+        "/testbed",
+        "testbed",
         # Noise
-        "raw", "content", "command", "path", "old_str", "new_str",
-        "result", "response", "output", "input", "value", "data",
-        "error", "success", "true", "false",
+        "raw",
+        "content",
+        "command",
+        "path",
+        "old_str",
+        "new_str",
+        "result",
+        "response",
+        "output",
+        "input",
+        "value",
+        "data",
+        "error",
+        "success",
+        "true",
+        "false",
     }
 
     def __init__(self):
@@ -176,12 +206,14 @@ class DependencyAnalyzer:
             if matched_artifacts:
                 artifact_name = list(matched_artifacts)[0]
                 direct_deps.add(prev_index)
-                edges.append(DependencyEdge(
-                    type=DependencyType.USES_OBSERVATION_FROM.value,
-                    source_step=prev_index,
-                    reason=f"Consumes artifact from step {prev_index}",
-                    evidence=f"artifact:{artifact_name}",
-                ))
+                edges.append(
+                    DependencyEdge(
+                        type=DependencyType.USES_OBSERVATION_FROM.value,
+                        source_step=prev_index,
+                        reason=f"Consumes artifact from step {prev_index}",
+                        evidence=f"artifact:{artifact_name}",
+                    )
+                )
                 continue
 
             # Priority 2: Textual reference
@@ -189,24 +221,30 @@ class DependencyAnalyzer:
             if ref_info:
                 dep_type = self._infer_dependency_type(content, prev_role)
                 direct_deps.add(prev_index)
-                edges.append(DependencyEdge(
-                    type=dep_type,
-                    source_step=prev_index,
-                    reason=f"Textual reference to step {prev_index}",
-                    evidence=f"textual:{ref_info}",
-                ))
+                edges.append(
+                    DependencyEdge(
+                        type=dep_type,
+                        source_step=prev_index,
+                        reason=f"Textual reference to step {prev_index}",
+                        evidence=f"textual:{ref_info}",
+                    )
+                )
                 continue
 
             # Priority 3: Extracted value usage
             if prev_role == "extraction" and step.get("source_step") == prev_index:
                 extracted_val = prev.get("extracted_value")
                 direct_deps.add(prev_index)
-                edges.append(DependencyEdge(
-                    type=DependencyType.USES_EXTRACTED_VALUE_FROM.value,
-                    source_step=prev_index,
-                    reason=f"Uses extracted value from step {prev_index}",
-                    evidence=f"extracted:{extracted_val}" if extracted_val else None,
-                ))
+                edges.append(
+                    DependencyEdge(
+                        type=DependencyType.USES_EXTRACTED_VALUE_FROM.value,
+                        source_step=prev_index,
+                        reason=f"Uses extracted value from step {prev_index}",
+                        evidence=(
+                            f"extracted:{extracted_val}" if extracted_val else None
+                        ),
+                    )
+                )
                 continue
 
             # Priority 4: File/path reuse
@@ -214,12 +252,14 @@ class DependencyAnalyzer:
             if shared_files:
                 shared_file = list(shared_files)[0]
                 direct_deps.add(prev_index)
-                edges.append(DependencyEdge(
-                    type=DependencyType.ACTS_ON_ENTITY_FROM.value,
-                    source_step=prev_index,
-                    reason=f"References same file as step {prev_index}",
-                    evidence=f"file_path:{shared_file}",
-                ))
+                edges.append(
+                    DependencyEdge(
+                        type=DependencyType.ACTS_ON_ENTITY_FROM.value,
+                        source_step=prev_index,
+                        reason=f"References same file as step {prev_index}",
+                        evidence=f"file_path:{shared_file}",
+                    )
+                )
                 continue
 
             # Priority 5: Entity overlap (lowest confidence, strict threshold)
@@ -248,7 +288,7 @@ class DependencyAnalyzer:
                         continue
 
                 # Classify as symbol if it looks like a function/class name
-                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', entity) and len(entity) > 5:
+                if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", entity) and len(entity) > 5:
                     # Skip generic words
                     if entity_lower not in {"function", "class", "method", "variable"}:
                         structured_evidence.append(f"symbol:{entity}")
@@ -258,21 +298,21 @@ class DependencyAnalyzer:
             if len(structured_evidence) >= 2:
                 evidence_str = "|".join(sorted(structured_evidence)[:3])
                 direct_deps.add(prev_index)
-                edges.append(DependencyEdge(
-                    type=DependencyType.ACTS_ON_ENTITY_FROM.value,
-                    source_step=prev_index,
-                    reason=f"Shares {len(structured_evidence)} domain entities",
-                    evidence=evidence_str,
-                ))
+                edges.append(
+                    DependencyEdge(
+                        type=DependencyType.ACTS_ON_ENTITY_FROM.value,
+                        source_step=prev_index,
+                        reason=f"Shares {len(structured_evidence)} domain entities",
+                        evidence=evidence_str,
+                    )
+                )
                 continue
 
         # NOTE: Removed sequential tool_call fallback - dependencies must be grounded
 
         return direct_deps, edges
 
-    def _extract_file_paths(
-        self, content: str, tool_args: Dict[str, Any]
-    ) -> Set[str]:
+    def _extract_file_paths(self, content: str, tool_args: Dict[str, Any]) -> Set[str]:
         """
         Extract file paths from content and tool arguments.
 
@@ -341,8 +381,7 @@ class DependencyAnalyzer:
 
         # Check for file name reference from previous step
         prev_files = self._extract_file_paths(
-            prev_step.get("raw_text", "") or "",
-            prev_step.get("tool_arguments") or {}
+            prev_step.get("raw_text", "") or "", prev_step.get("tool_arguments") or {}
         )
         for prev_file in prev_files:
             # Extract just the filename (last component)

@@ -30,8 +30,8 @@ from src.typing.slot_typer import SlotTyper
 from src.typing.critical_path import CriticalPathScorer
 from src.typing.typer import TrajectoryTyper
 
-
 # === Fixtures ===
+
 
 @pytest.fixture
 def toolbench_step():
@@ -40,7 +40,7 @@ def toolbench_step():
         "step_id": "step_1",
         "step_number": 1,
         "step_type": "tool_execution",
-        "content": "Thought: I will search for nutrition data.\nAction: api_nutrition\nAction Input: {\"ingr\": \"oatmeal\"}",
+        "content": 'Thought: I will search for nutrition data.\nAction: api_nutrition\nAction Input: {"ingr": "oatmeal"}',
         "tool_name": "api_nutrition_data_for_edamam",
         "tool_input": {"ingr": "oatmeal"},
         "tool_output": '{"calories": 150}',
@@ -141,6 +141,7 @@ def sample_trajectory():
 
 # === StepTyper Tests ===
 
+
 class TestStepTyper:
     def test_classify_tool_call(self, toolbench_step):
         typer = StepTyper()
@@ -175,7 +176,13 @@ class TestStepTyper:
 
     def test_extraction_fields(self, gaia_extraction_step):
         typer = StepTyper()
-        prev_steps = [{"step_number": 1, "tool_output": "search results", "tool_name": "web_search"}]
+        prev_steps = [
+            {
+                "step_number": 1,
+                "tool_output": "search results",
+                "tool_name": "web_search",
+            }
+        ]
         extraction = typer.extract_extraction_fields(
             gaia_extraction_step, StepRole.EXTRACTION.value, prev_steps
         )
@@ -185,6 +192,7 @@ class TestStepTyper:
 
 
 # === EntityExtractor Tests ===
+
 
 class TestEntityExtractor:
     def test_extract_file_paths(self):
@@ -217,12 +225,25 @@ class TestEntityExtractor:
 
 # === DependencyAnalyzer Tests ===
 
+
 class TestDependencyAnalyzer:
     def test_direct_dependencies(self):
         analyzer = DependencyAnalyzer()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "raw_text": "First step", "produced_artifacts": [{"name": "result_1"}], "consumed_artifacts": []},
-            {"step_index": 2, "step_role": "tool_call", "raw_text": "Uses result from previous step", "produced_artifacts": [], "consumed_artifacts": ["result_1"]},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "raw_text": "First step",
+                "produced_artifacts": [{"name": "result_1"}],
+                "consumed_artifacts": [],
+            },
+            {
+                "step_index": 2,
+                "step_role": "tool_call",
+                "raw_text": "Uses result from previous step",
+                "produced_artifacts": [],
+                "consumed_artifacts": ["result_1"],
+            },
         ]
         entity_map = {1: {"entity1"}, 2: {"entity1"}}
         result = analyzer.analyze_dependencies(typed_steps, entity_map)
@@ -231,9 +252,27 @@ class TestDependencyAnalyzer:
     def test_transitive_closure(self):
         analyzer = DependencyAnalyzer()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "raw_text": "Step 1", "produced_artifacts": [{"name": "a"}], "consumed_artifacts": []},
-            {"step_index": 2, "step_role": "tool_call", "raw_text": "Step 2", "produced_artifacts": [{"name": "b"}], "consumed_artifacts": ["a"]},
-            {"step_index": 3, "step_role": "tool_call", "raw_text": "Step 3", "produced_artifacts": [], "consumed_artifacts": ["b"]},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "raw_text": "Step 1",
+                "produced_artifacts": [{"name": "a"}],
+                "consumed_artifacts": [],
+            },
+            {
+                "step_index": 2,
+                "step_role": "tool_call",
+                "raw_text": "Step 2",
+                "produced_artifacts": [{"name": "b"}],
+                "consumed_artifacts": ["a"],
+            },
+            {
+                "step_index": 3,
+                "step_role": "tool_call",
+                "raw_text": "Step 3",
+                "produced_artifacts": [],
+                "consumed_artifacts": ["b"],
+            },
         ]
         entity_map = {1: set(), 2: set(), 3: set()}
         result = analyzer.analyze_dependencies(typed_steps, entity_map)
@@ -243,36 +282,76 @@ class TestDependencyAnalyzer:
 
 # === ArtifactTracker Tests ===
 
+
 class TestArtifactTracker:
-    def test_produces_search_results(self):
+    def test_produces_api_response(self):
+        """Test that tool calls with output produce api_response artifacts."""
         tracker = ArtifactTracker()
+        # Use a tool name not in READ_ONLY_TOOLS to produce an artifact
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "tool_name": "web_search", "raw_text": "", "observation": "results", "tool_arguments": {}},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "tool_name": "api_call",
+                "raw_text": "",
+                "observation": "results",
+                "tool_arguments": {},
+            },
         ]
         result = tracker.track_artifacts(typed_steps)
         artifacts = result[0]["produced_artifacts"]
-        assert any("search_results" in a["artifact_type"] for a in artifacts)
+        assert any("api_response" in a["artifact_type"] for a in artifacts)
 
     def test_produces_patch(self):
+        """Test that edit tools with produces_patch flag produce patch artifacts."""
         tracker = ArtifactTracker()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "tool_name": "str_replace_editor", "raw_text": "", "observation": "", "tool_arguments": {"old_str": "x", "new_str": "y"}},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "tool_name": "str_replace_editor",
+                "raw_text": "",
+                "observation": "",
+                "tool_arguments": {"old_str": "x", "new_str": "y"},
+                "produces_patch": True,
+            },
         ]
         result = tracker.track_artifacts(typed_steps)
         artifacts = result[0]["produced_artifacts"]
         assert any("patch" in a["artifact_type"] for a in artifacts)
 
     def test_consumed_artifacts(self):
+        """Test that extraction steps consume artifacts from dependencies."""
         tracker = ArtifactTracker()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "tool_name": "search", "raw_text": "", "observation": "data", "tool_arguments": {}, "depends_on_steps": []},
-            {"step_index": 2, "step_role": "extraction", "tool_name": None, "raw_text": "Extract (42)", "observation": None, "tool_arguments": None, "depends_on_steps": [1], "extracted_value": 42, "value_type": "integer"},
+            # Use bash tool (not read-only) which produces text output
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "tool_name": "bash",
+                "raw_text": "",
+                "observation": "data",
+                "tool_arguments": {},
+                "depends_on_steps": [],
+            },
+            {
+                "step_index": 2,
+                "step_role": "extraction",
+                "tool_name": None,
+                "raw_text": "Extract (42)",
+                "observation": None,
+                "tool_arguments": None,
+                "depends_on_steps": [1],
+                "extracted_value": 42,
+                "value_type": "integer",
+            },
         ]
         result = tracker.track_artifacts(typed_steps)
         assert len(result[1]["consumed_artifacts"]) > 0
 
 
 # === SlotTyper Tests ===
+
 
 class TestSlotTyper:
     def test_tool_name_slot(self, toolbench_step):
@@ -319,12 +398,29 @@ class TestSlotTyper:
 
 # === CriticalPathScorer Tests ===
 
+
 class TestCriticalPathScorer:
     def test_terminal_step_high_score(self):
         scorer = CriticalPathScorer()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "is_terminal_step": False, "produces_final_answer": False, "depends_on_steps": [], "transitive_depends_on": [], "produced_artifacts": []},
-            {"step_index": 2, "step_role": "final_response", "is_terminal_step": True, "produces_final_answer": True, "depends_on_steps": [1], "transitive_depends_on": [1], "produced_artifacts": []},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "is_terminal_step": False,
+                "produces_final_answer": False,
+                "depends_on_steps": [],
+                "transitive_depends_on": [],
+                "produced_artifacts": [],
+            },
+            {
+                "step_index": 2,
+                "step_role": "final_response",
+                "is_terminal_step": True,
+                "produces_final_answer": True,
+                "depends_on_steps": [1],
+                "transitive_depends_on": [1],
+                "produced_artifacts": [],
+            },
         ]
         result = scorer.score_trajectory(typed_steps, "toolbench")
         # Terminal/final_response steps should have high criticality (>= 0.9)
@@ -333,8 +429,24 @@ class TestCriticalPathScorer:
     def test_extraction_not_recoverable(self):
         scorer = CriticalPathScorer()
         typed_steps = [
-            {"step_index": 1, "step_role": "tool_call", "is_terminal_step": False, "produces_final_answer": False, "depends_on_steps": [], "transitive_depends_on": [], "produced_artifacts": []},
-            {"step_index": 2, "step_role": "extraction", "is_terminal_step": False, "produces_final_answer": False, "depends_on_steps": [1], "transitive_depends_on": [1], "produced_artifacts": []},
+            {
+                "step_index": 1,
+                "step_role": "tool_call",
+                "is_terminal_step": False,
+                "produces_final_answer": False,
+                "depends_on_steps": [],
+                "transitive_depends_on": [],
+                "produced_artifacts": [],
+            },
+            {
+                "step_index": 2,
+                "step_role": "extraction",
+                "is_terminal_step": False,
+                "produces_final_answer": False,
+                "depends_on_steps": [1],
+                "transitive_depends_on": [1],
+                "produced_artifacts": [],
+            },
         ]
         result = scorer.score_trajectory(typed_steps, "gaia")
         assert result[1]["recoverable_if_wrong"]["value"] is False
@@ -342,13 +454,23 @@ class TestCriticalPathScorer:
     def test_extraction_not_observable(self):
         scorer = CriticalPathScorer()
         typed_steps = [
-            {"step_index": 1, "step_role": "extraction", "is_terminal_step": False, "produces_final_answer": False, "observation": None, "depends_on_steps": [], "transitive_depends_on": [], "produced_artifacts": []},
+            {
+                "step_index": 1,
+                "step_role": "extraction",
+                "is_terminal_step": False,
+                "produces_final_answer": False,
+                "observation": None,
+                "depends_on_steps": [],
+                "transitive_depends_on": [],
+                "produced_artifacts": [],
+            },
         ]
         result = scorer.score_trajectory(typed_steps, "gaia")
         assert result[0]["observable_if_wrong"]["value"] is False
 
 
 # === TrajectoryTyper Integration Tests ===
+
 
 class TestTrajectoryTyper:
     def test_type_full_trajectory(self, sample_trajectory):
@@ -406,6 +528,7 @@ class TestTrajectoryTyper:
 
 
 # === Schema Tests ===
+
 
 class TestSchema:
     def test_typed_step_to_dict(self):
