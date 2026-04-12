@@ -34,31 +34,26 @@ class SlotTyper:
         "filename": ValueType.FILEPATH,
         "directory": ValueType.FILEPATH,
         "dir": ValueType.FILEPATH,
-
         # Line/position arguments
         "line": ValueType.LINE_NUMBER,
         "line_number": ValueType.LINE_NUMBER,
         "start_line": ValueType.LINE_NUMBER,
         "end_line": ValueType.LINE_NUMBER,
-
         # Query arguments
         "query": ValueType.SEARCH_QUERY,
         "search": ValueType.SEARCH_QUERY,
         "q": ValueType.SEARCH_QUERY,
         "keyword": ValueType.SEARCH_QUERY,
-
         # Code arguments
         "code": ValueType.CODE_SNIPPET,
         "old_str": ValueType.CODE_SNIPPET,
         "new_str": ValueType.CODE_SNIPPET,
         "content": ValueType.CODE_SNIPPET,
         "command": ValueType.STRING,
-
         # URL arguments
         "url": ValueType.URL,
         "endpoint": ValueType.API_ENDPOINT,
         "api": ValueType.API_ENDPOINT,
-
         # Network arguments
         "ip": ValueType.IPV4,
         "ip_address": ValueType.IPV4,
@@ -66,14 +61,12 @@ class SlotTyper:
         "domain": ValueType.DOMAIN,
         "hostname": ValueType.DOMAIN,
         "email": ValueType.EMAIL,
-
         # Coordinate arguments
         "latitude": ValueType.LATITUDE,
         "lat": ValueType.LATITUDE,
         "longitude": ValueType.LONGITUDE,
         "lng": ValueType.LONGITUDE,
         "lon": ValueType.LONGITUDE,
-
         # Numeric arguments
         "count": ValueType.INTEGER,
         "limit": ValueType.INTEGER,
@@ -82,7 +75,6 @@ class SlotTyper:
         "num": ValueType.INTEGER,
         "threshold": ValueType.FLOAT,
         "temperature": ValueType.FLOAT,
-
         # Identifier arguments
         "name": ValueType.IDENTIFIER,
         "id": ValueType.IDENTIFIER,
@@ -106,18 +98,14 @@ class SlotTyper:
         # Pattern for code snippets
         self._code_re = re.compile(r"[\{\}\(\)\[\];=]|def |class |import ")
         # Pattern for IPv4 addresses (check before filepath!)
-        self._ipv4_re = re.compile(
-            r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-        )
+        self._ipv4_re = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
         # Pattern for domain names
         self._domain_re = re.compile(
             r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
             r"(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
         )
         # Pattern for email addresses
-        self._email_re = re.compile(
-            r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        )
+        self._email_re = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         # Pattern for coordinates (decimal degrees)
         self._coord_re = re.compile(r"^-?\d{1,3}\.\d+$")
 
@@ -309,9 +297,7 @@ class SlotTyper:
 
         return ValueType.STRING.value
 
-    def _get_perturbation_types(
-        self, arg_name: str, value_type: str
-    ) -> List[str]:
+    def _get_perturbation_types(self, arg_name: str, value_type: str) -> List[str]:
         """Determine allowed perturbation types for a slot."""
         perturbations = list(self.PARAM_PERTURBATIONS)
 

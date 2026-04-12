@@ -19,6 +19,7 @@ from dataclasses import dataclass
 @dataclass
 class CheckResult:
     """Result of a pre-requisite check."""
+
     check_name: str
     passed: bool
     message: str
@@ -103,13 +104,13 @@ class PrerequisiteChecker:
                 check_name="Directory Structure",
                 passed=False,
                 message=f"Missing: {', '.join(missing_dirs)}",
-                details={"missing": missing_dirs}
+                details={"missing": missing_dirs},
             )
         else:
             result = CheckResult(
                 check_name="Directory Structure",
                 passed=True,
-                message="All required directories exist"
+                message="All required directories exist",
             )
 
         self.results.append(result)
@@ -123,11 +124,8 @@ class PrerequisiteChecker:
             result = CheckResult(
                 check_name="MongoDB Connection",
                 passed=False,
-                message=(
-                    "MONGODB_URI not set in environment. "
-                    "Set in .env file."
-                ),
-                details={"env_var": "MONGODB_URI"}
+                message=("MONGODB_URI not set in environment. " "Set in .env file."),
+                details={"env_var": "MONGODB_URI"},
             )
             self.results.append(result)
             return result
@@ -141,7 +139,7 @@ class PrerequisiteChecker:
                     check_name="MongoDB Connection",
                     passed=False,
                     message="pymongo not installed. Run: pip install pymongo",
-                    details={"error": "pymongo module not found"}
+                    details={"error": "pymongo module not found"},
                 )
                 self.results.append(result)
                 return result
@@ -158,14 +156,14 @@ class PrerequisiteChecker:
                     check_name="MongoDB Connection",
                     passed=True,
                     message="Connected to MongoDB successfully",
-                    details={"uri": mongodb_uri.split("@")[-1]}
+                    details={"uri": mongodb_uri.split("@")[-1]},
                 )
             else:
                 result = CheckResult(
                     check_name="MongoDB Connection",
                     passed=False,
                     message="Could not connect to MongoDB",
-                    details={"uri": mongodb_uri}
+                    details={"uri": mongodb_uri},
                 )
 
         except ImportError as e:
@@ -173,14 +171,14 @@ class PrerequisiteChecker:
                 check_name="MongoDB Connection",
                 passed=False,
                 message=f"Import error: {str(e)}",
-                details={"error": str(e), "type": "ImportError"}
+                details={"error": str(e), "type": "ImportError"},
             )
         except Exception as e:
             result = CheckResult(
                 check_name="MongoDB Connection",
                 passed=False,
                 message=f"MongoDB connection failed: {str(e)}",
-                details={"error": str(e)}
+                details={"error": str(e)},
             )
 
         self.results.append(result)
@@ -198,7 +196,7 @@ class PrerequisiteChecker:
                     "HUGGINGFACE_TOKEN not set. Get token from: "
                     "https://huggingface.co/settings/tokens"
                 ),
-                details={"env_var": "HUGGINGFACE_TOKEN"}
+                details={"env_var": "HUGGINGFACE_TOKEN"},
             )
             self.results.append(result)
             return result
@@ -219,26 +217,23 @@ class PrerequisiteChecker:
                 result = CheckResult(
                     check_name="HuggingFace Access",
                     passed=True,
-                    message=(
-                        "HuggingFace token valid and datasets accessible"
-                    ),
-                    details={"token_set": True}
+                    message=("HuggingFace token valid and datasets accessible"),
+                    details={"token_set": True},
                 )
             except Exception as e:
                 result = CheckResult(
                     check_name="HuggingFace Access",
                     passed=False,
                     message=f"HuggingFace access failed: {str(e)}",
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
 
         except ImportError:
             result = CheckResult(
                 check_name="HuggingFace Access",
                 passed=False,
-                message="datasets library not installed. "
-                        "Run: pip install datasets",
-                details={"error": "ImportError"}
+                message="datasets library not installed. " "Run: pip install datasets",
+                details={"error": "ImportError"},
             )
 
         self.results.append(result)
@@ -252,8 +247,8 @@ class PrerequisiteChecker:
             from botocore.exceptions import ClientError
 
             model_id = os.getenv(
-                'AWS_BEDROCK_CLAUDE_3_5_SONNET',
-                'anthropic.claude-3-5-sonnet-20241022-v2:0'
+                "AWS_BEDROCK_CLAUDE_3_5_SONNET",
+                "anthropic.claude-3-5-sonnet-20241022-v2:0",
             )
 
             # Check AWS credentials
@@ -266,10 +261,9 @@ class PrerequisiteChecker:
                         check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=False,
                         message=(
-                            "AWS credentials not found. "
-                            "Configure via AWS CLI."
+                            "AWS credentials not found. " "Configure via AWS CLI."
                         ),
-                        details={"error": "NoCredentials"}
+                        details={"error": "NoCredentials"},
                     )
                     self.results.append(result)
                     return result
@@ -279,7 +273,7 @@ class PrerequisiteChecker:
                     check_name="Claude 3.5 Sonnet (Bedrock)",
                     passed=False,
                     message=f"AWS credentials error: {str(e)}",
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
                 self.results.append(result)
                 return result
@@ -287,23 +281,18 @@ class PrerequisiteChecker:
             # Create Bedrock client and make test call
             try:
                 client = boto3.client(
-                    service_name='bedrock-runtime',
-                    region_name=os.getenv('AWS_REGION', 'us-east-1')
+                    service_name="bedrock-runtime",
+                    region_name=os.getenv("AWS_REGION", "us-east-1"),
                 )
 
                 # Make "hello world" test call using Converse API
                 response = client.converse(
                     modelId=model_id,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [{"text": "Hello"}]
-                        }
-                    ]
+                    messages=[{"role": "user", "content": [{"text": "Hello"}]}],
                 )
 
                 # Check response is valid
-                if 'output' in response and 'message' in response['output']:
+                if "output" in response and "message" in response["output"]:
                     result = CheckResult(
                         check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=True,
@@ -312,34 +301,30 @@ class PrerequisiteChecker:
                             f"Model: {model_id.split('.')[-1]}"
                         ),
                         details={
-                            "region": os.getenv('AWS_REGION', 'us-east-1'),
+                            "region": os.getenv("AWS_REGION", "us-east-1"),
                             "model_id": model_id,
-                            "tokens_used": response.get('usage', {}).get('totalTokens', 0)
-                        }
+                            "tokens_used": response.get("usage", {}).get(
+                                "totalTokens", 0
+                            ),
+                        },
                     )
                 else:
                     result = CheckResult(
                         check_name="Claude 3.5 Sonnet (Bedrock)",
                         passed=False,
                         message="Unexpected response format from model",
-                        details={"response": str(response)[:200]}
+                        details={"response": str(response)[:200]},
                     )
 
             except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-                error_msg = e.response.get('Error', {}).get('Message', '')
+                error_code = e.response.get("Error", {}).get("Code", "Unknown")
+                error_msg = e.response.get("Error", {}).get("Message", "")
 
                 result = CheckResult(
                     check_name="Claude 3.5 Sonnet (Bedrock)",
                     passed=False,
-                    message=(
-                        f"Bedrock API error: {error_code}. "
-                        f"{error_msg[:100]}"
-                    ),
-                    details={
-                        "error_code": error_code,
-                        "model_id": model_id
-                    }
+                    message=(f"Bedrock API error: {error_code}. " f"{error_msg[:100]}"),
+                    details={"error_code": error_code, "model_id": model_id},
                 )
 
             except Exception as e:
@@ -347,7 +332,7 @@ class PrerequisiteChecker:
                     check_name="Claude 3.5 Sonnet (Bedrock)",
                     passed=False,
                     message=f"Test call failed: {str(e)[:100]}",
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
 
         except ImportError:
@@ -355,7 +340,7 @@ class PrerequisiteChecker:
                 check_name="Claude 3.5 Sonnet (Bedrock)",
                 passed=False,
                 message="boto3 not installed. Run: pip install boto3",
-                details={"error": "ImportError"}
+                details={"error": "ImportError"},
             )
 
         self.results.append(result)
@@ -368,7 +353,7 @@ class PrerequisiteChecker:
             import json
             from botocore.exceptions import ClientError
 
-            model_id = os.getenv('AWS_BEDROCK_GPT_OSS')
+            model_id = os.getenv("AWS_BEDROCK_GPT_OSS")
 
             if not model_id:
                 result = CheckResult(
@@ -378,7 +363,7 @@ class PrerequisiteChecker:
                         "AWS_BEDROCK_GPT_OSS not set in .env. "
                         "Set to Bedrock model ID for GPT-OSS."
                     ),
-                    details={"env_var": "AWS_BEDROCK_GPT_OSS"}
+                    details={"env_var": "AWS_BEDROCK_GPT_OSS"},
                 )
                 self.results.append(result)
                 return result
@@ -393,7 +378,7 @@ class PrerequisiteChecker:
                         check_name="GPT-OSS 120B (Bedrock)",
                         passed=False,
                         message="AWS credentials not found.",
-                        details={"error": "NoCredentials"}
+                        details={"error": "NoCredentials"},
                     )
                     self.results.append(result)
                     return result
@@ -403,7 +388,7 @@ class PrerequisiteChecker:
                     check_name="GPT-OSS 120B (Bedrock)",
                     passed=False,
                     message=f"AWS credentials error: {str(e)}",
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
                 self.results.append(result)
                 return result
@@ -411,23 +396,18 @@ class PrerequisiteChecker:
             # Create Bedrock client and make test call
             try:
                 client = boto3.client(
-                    service_name='bedrock-runtime',
-                    region_name=os.getenv('AWS_REGION', 'us-east-1')
+                    service_name="bedrock-runtime",
+                    region_name=os.getenv("AWS_REGION", "us-east-1"),
                 )
 
                 # Make "hello world" test call using Converse API
                 response = client.converse(
                     modelId=model_id,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [{"text": "Hello"}]
-                        }
-                    ]
+                    messages=[{"role": "user", "content": [{"text": "Hello"}]}],
                 )
 
                 # Check response is valid
-                if 'output' in response and 'message' in response['output']:
+                if "output" in response and "message" in response["output"]:
                     result = CheckResult(
                         check_name="GPT-OSS 120B (Bedrock)",
                         passed=True,
@@ -436,35 +416,34 @@ class PrerequisiteChecker:
                             f"Model: {model_id.split('.')[-1]}"
                         ),
                         details={
-                            "region": os.getenv('AWS_REGION', 'us-east-1'),
+                            "region": os.getenv("AWS_REGION", "us-east-1"),
                             "model_id": model_id,
-                            "tokens_used": response.get('usage', {}).get('totalTokens', 0)
-                        }
+                            "tokens_used": response.get("usage", {}).get(
+                                "totalTokens", 0
+                            ),
+                        },
                     )
                 else:
                     result = CheckResult(
                         check_name="GPT-OSS 120B (Bedrock)",
                         passed=False,
                         message="Unexpected response format from model",
-                        details={"response": str(response)[:200]}
+                        details={"response": str(response)[:200]},
                     )
 
             except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-                error_msg = e.response.get('Error', {}).get('Message', '')
+                error_code = e.response.get("Error", {}).get("Code", "Unknown")
+                error_msg = e.response.get("Error", {}).get("Message", "")
 
                 result = CheckResult(
                     check_name="GPT-OSS 120B (Bedrock)",
                     passed=False,
-                    message=(
-                        f"Bedrock API error: {error_code}. "
-                        f"{error_msg[:100]}"
-                    ),
+                    message=(f"Bedrock API error: {error_code}. " f"{error_msg[:100]}"),
                     details={
                         "error_code": error_code,
                         "model_id": model_id,
-                        "hint": "Verify model ID is correct for GPT-OSS on Bedrock"
-                    }
+                        "hint": "Verify model ID is correct for GPT-OSS on Bedrock",
+                    },
                 )
 
             except Exception as e:
@@ -472,7 +451,7 @@ class PrerequisiteChecker:
                     check_name="GPT-OSS 120B (Bedrock)",
                     passed=False,
                     message=f"Test call failed: {str(e)[:100]}",
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
 
         except ImportError:
@@ -480,7 +459,7 @@ class PrerequisiteChecker:
                 check_name="GPT-OSS 120B (Bedrock)",
                 passed=False,
                 message="boto3 not installed. Run: pip install boto3",
-                details={"error": "ImportError"}
+                details={"error": "ImportError"},
             )
 
         self.results.append(result)
@@ -515,13 +494,13 @@ class PrerequisiteChecker:
                     f"Missing: {', '.join(missing_packages)}. "
                     "Run: pip install -r requirements.txt"
                 ),
-                details={"missing": missing_packages}
+                details={"missing": missing_packages},
             )
         else:
             result = CheckResult(
                 check_name="Python Dependencies",
                 passed=True,
-                message="All required packages installed"
+                message="All required packages installed",
             )
 
         self.results.append(result)
@@ -539,10 +518,10 @@ class PrerequisiteChecker:
                     "check": r.check_name,
                     "passed": r.passed,
                     "message": r.message,
-                    "details": r.details
+                    "details": r.details,
                 }
                 for r in self.results
-            ]
+            ],
         }
 
 
@@ -557,9 +536,12 @@ def main():
     # Load .env file
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
-        print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
+        print(
+            "Warning: python-dotenv not installed. Install with: pip install python-dotenv"
+        )
 
     checker = PrerequisiteChecker()
     all_passed = checker.run_all_checks()

@@ -1,84 +1,82 @@
 """
-Perturbation generation framework for agent trajectories.
+Section 3: Controlled Perturbations Module.
 
-This module generates realistic errors in agent trajectories to test
-judge calibration to error criticality.
+Main entry points:
+- generator_v2: PerturbationGeneratorV2, generate_perturbations_for_batch
+- qc: PerturbationQC for quality control
+- utils: Schema, storage, balancing utilities
+
+Usage:
+    from src.perturbations import (
+        PerturbationGeneratorV2,
+        generate_perturbations_for_batch,
+        balance_perturbation_batch,
+        PerturbationStorage,
+        PerturbationQC,
+    )
 """
 
-from .generator import PerturbationGenerator
-from .strategies import (
-    PlanningErrorStrategy,
-    ToolSelectionErrorStrategy,
-    ParameterErrorStrategy,
+# Main generator
+from src.perturbations.generator_v2 import (
+    PerturbationGeneratorV2,
+    generate_perturbations_for_batch,
 )
-from .tool_similarity import ToolSimilarityMatcher
-from .qc import (
+
+# Quality control
+from src.perturbations.qc import (
     PerturbationQC,
-    run_qc,
-    run_qc_batch,
-    get_qc_statistics,
     SchemaValidator,
     DiffValidator,
-    CoherenceValidator,
     ClassFamilyValidator,
-    ImpactDeriver,
-    ValidationResult,
 )
-from .coarse_grained import (
-    BaseCoarseGrainedGenerator,
-    SkippedPrerequisiteGenerator,
-    WrongPlanGenerator,
-    FalseTerminalGenerator,
-    PrematureTerminationGenerator,
-    WrongToolFamilyGenerator,
-    get_coarse_grained_generator,
-    get_all_coarse_grained_generators,
-)
-from .fine_grained import (
-    BaseFineGrainedGenerator,
-    DataReferenceGenerator,
-    ParameterGenerator,
-    ToolSelectionNearNeighborGenerator,
-    get_fine_grained_generator,
-    generate_data_reference_perturbation,
-    generate_parameter_perturbation,
-    generate_tool_selection_perturbation,
+
+# Utilities (schema, storage, balancer)
+from src.perturbations.utils import (
+    # Schema
+    PerturbationClass,
+    PerturbationFamily,
+    PerturbationType,
+    PerturbationRecord,
+    PerturbationIndex,
+    # Storage
+    PerturbationStorage,
+    PerturbationExporter,
+    build_index_from_perturbations,
+    group_by_benchmark,
+    filter_valid_perturbations,
+    # Balancer
+    BatchDistribution,
+    PerturbationBalancer,
+    balance_perturbation_batch,
+    # Tool similarity
+    ToolSimilarityMatcher,
 )
 
 __all__ = [
-    # Original exports
-    "PerturbationGenerator",
-    "PlanningErrorStrategy",
-    "ToolSelectionErrorStrategy",
-    "ParameterErrorStrategy",
-    "ToolSimilarityMatcher",
-    # QC Pipeline
+    # Generator
+    "PerturbationGeneratorV2",
+    "generate_perturbations_for_batch",
+    # QC
     "PerturbationQC",
-    "run_qc",
-    "run_qc_batch",
-    "get_qc_statistics",
     "SchemaValidator",
     "DiffValidator",
-    "CoherenceValidator",
     "ClassFamilyValidator",
-    "ImpactDeriver",
-    "ValidationResult",
-    # Coarse-grained generators
-    "BaseCoarseGrainedGenerator",
-    "SkippedPrerequisiteGenerator",
-    "WrongPlanGenerator",
-    "FalseTerminalGenerator",
-    "PrematureTerminationGenerator",
-    "WrongToolFamilyGenerator",
-    "get_coarse_grained_generator",
-    "get_all_coarse_grained_generators",
-    # Fine-grained generators (Phase 2B)
-    "BaseFineGrainedGenerator",
-    "DataReferenceGenerator",
-    "ParameterGenerator",
-    "ToolSelectionNearNeighborGenerator",
-    "get_fine_grained_generator",
-    "generate_data_reference_perturbation",
-    "generate_parameter_perturbation",
-    "generate_tool_selection_perturbation",
+    # Schema
+    "PerturbationClass",
+    "PerturbationFamily",
+    "PerturbationType",
+    "PerturbationRecord",
+    "PerturbationIndex",
+    # Storage
+    "PerturbationStorage",
+    "PerturbationExporter",
+    "build_index_from_perturbations",
+    "group_by_benchmark",
+    "filter_valid_perturbations",
+    # Balancer
+    "BatchDistribution",
+    "PerturbationBalancer",
+    "balance_perturbation_batch",
+    # Tool similarity
+    "ToolSimilarityMatcher",
 ]

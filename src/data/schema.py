@@ -376,9 +376,7 @@ class PerturbedTrajectory:
     def from_dict(cls, data: Dict[str, Any]) -> "PerturbedTrajectory":
         """Create PerturbedTrajectory from dictionary."""
         data = data.copy()
-        data["original_trajectory"] = Trajectory.from_dict(
-            data["original_trajectory"]
-        )
+        data["original_trajectory"] = Trajectory.from_dict(data["original_trajectory"])
         data["perturbed_trajectory"] = Trajectory.from_dict(
             data["perturbed_trajectory"]
         )

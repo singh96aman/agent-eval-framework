@@ -20,7 +20,7 @@ from src.storage.mongodb import MongoDBStorage
 
 @pytest.mark.skipif(
     not os.getenv("MONGODB_URI") or "mongodb+srv" not in os.getenv("MONGODB_URI", ""),
-    reason="MongoDB Atlas credentials not configured"
+    reason="MongoDB Atlas credentials not configured",
 )
 class TestMongoDBAtlas:
     """
@@ -32,9 +32,9 @@ class TestMongoDBAtlas:
     @pytest.fixture(scope="class")
     def storage(self):
         """Create MongoDB Atlas storage connection."""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Testing MongoDB Atlas Connection")
-        print("="*60)
+        print("=" * 60)
 
         storage = MongoDBStorage(test_connection=True)
 
@@ -61,19 +61,19 @@ class TestMongoDBAtlas:
         experiment_id = "test_atlas_experiment_001"
 
         # Create test experiment
-        storage.db["test_experiments"].insert_one({
-            "experiment_id": experiment_id,
-            "name": "Atlas Connection Test",
-            "progress": {
-                "trajectories_loaded": 0
-            },
-            "created_at": datetime.utcnow()
-        })
+        storage.db["test_experiments"].insert_one(
+            {
+                "experiment_id": experiment_id,
+                "name": "Atlas Connection Test",
+                "progress": {"trajectories_loaded": 0},
+                "created_at": datetime.utcnow(),
+            }
+        )
 
         # Read it back
-        experiment = storage.db["test_experiments"].find_one({
-            "experiment_id": experiment_id
-        })
+        experiment = storage.db["test_experiments"].find_one(
+            {"experiment_id": experiment_id}
+        )
 
         assert experiment is not None
         assert experiment["experiment_id"] == experiment_id
@@ -88,25 +88,29 @@ class TestMongoDBAtlas:
         experiment_id = "test_fk_001"
 
         # Create experiment
-        storage.db["test_experiments"].insert_one({
-            "experiment_id": experiment_id,
-            "name": "Foreign Key Test",
-            "progress": {"trajectories_loaded": 0}
-        })
+        storage.db["test_experiments"].insert_one(
+            {
+                "experiment_id": experiment_id,
+                "name": "Foreign Key Test",
+                "progress": {"trajectories_loaded": 0},
+            }
+        )
 
         # Create trajectories with foreign key
         for i in range(3):
-            storage.db["test_trajectories"].insert_one({
-                "trajectory_id": f"traj_{i}",
-                "experiment_id": experiment_id,  # Foreign key!
-                "benchmark": "toolbench",
-                "is_perturbed": False
-            })
+            storage.db["test_trajectories"].insert_one(
+                {
+                    "trajectory_id": f"traj_{i}",
+                    "experiment_id": experiment_id,  # Foreign key!
+                    "benchmark": "toolbench",
+                    "is_perturbed": False,
+                }
+            )
 
         # Query using foreign key
-        trajectories = list(storage.db["test_trajectories"].find({
-            "experiment_id": experiment_id
-        }))
+        trajectories = list(
+            storage.db["test_trajectories"].find({"experiment_id": experiment_id})
+        )
 
         assert len(trajectories) == 3
         for traj in trajectories:
@@ -122,8 +126,7 @@ class TestMongoDBAtlas:
 
         # Verify experiment_id index exists
         has_experiment_index = any(
-            "experiment_id" in idx.get("key", [{}])[0]
-            for idx in indexes.values()
+            "experiment_id" in idx.get("key", [{}])[0] for idx in indexes.values()
         )
 
         assert has_experiment_index, "experiment_id index should exist"

@@ -26,24 +26,56 @@ class EntityExtractor:
     # Parser artifacts and generic tokens to filter out
     ENTITY_BLOCKLIST = {
         # XML tag artifacts from SWE-bench format
-        "/function", "/parameter", "function", "parameter",
+        "/function",
+        "/parameter",
+        "function",
+        "parameter",
         # Generic tool words
-        "file_edit", "file_view", "str_replace_editor", "edit", "file", "view",
-        "search_code", "view_file", "bash", "submit",
+        "file_edit",
+        "file_view",
+        "str_replace_editor",
+        "edit",
+        "file",
+        "view",
+        "search_code",
+        "view_file",
+        "bash",
+        "submit",
         # Generic paths/roots
-        "/testbed", "testbed",
+        "/testbed",
+        "testbed",
         # Common noise words
-        "raw", "content", "command", "path", "old_str", "new_str",
-        "insert_line", "view_range",
+        "raw",
+        "content",
+        "command",
+        "path",
+        "old_str",
+        "new_str",
+        "insert_line",
+        "view_range",
         # Generic descriptors
-        "result", "response", "output", "input", "value", "data",
-        "error", "success", "failed", "true", "false",
+        "result",
+        "response",
+        "output",
+        "input",
+        "value",
+        "data",
+        "error",
+        "success",
+        "failed",
+        "true",
+        "false",
     }
 
     # Path prefixes that are always invalid (XML artifacts, URLs)
     INVALID_PATH_PREFIXES = (
-        "/function", "/parameter", "/www", "/http", "/https",
-        "/encrypted", "/images",
+        "/function",
+        "/parameter",
+        "/www",
+        "/http",
+        "/https",
+        "/encrypted",
+        "/images",
     )
 
     # File path patterns
@@ -86,7 +118,7 @@ class EntityExtractor:
     # Number patterns (potential extracted values)
     NUMBER_PATTERNS = [
         r"\((\d+(?:\.\d+)?)\)",  # Numbers in parentheses
-        r"=\s*(\d+(?:\.\d+)?)",   # Assignments
+        r"=\s*(\d+(?:\.\d+)?)",  # Assignments
         r"(?:is|equals?|result)\s*[:=]?\s*(\d+(?:\.\d+)?)",
     ]
 
@@ -102,7 +134,9 @@ class EntityExtractor:
 
         # Compile patterns
         self._file_path_re = [re.compile(p) for p in self.FILE_PATH_PATTERNS]
-        self._line_number_re = [re.compile(p, re.IGNORECASE) for p in self.LINE_NUMBER_PATTERNS]
+        self._line_number_re = [
+            re.compile(p, re.IGNORECASE) for p in self.LINE_NUMBER_PATTERNS
+        ]
         self._code_entity_re = [re.compile(p) for p in self.CODE_ENTITY_PATTERNS]
         self._api_re = [re.compile(p, re.IGNORECASE) for p in self.API_PATTERNS]
         self._url_re = re.compile(self.URL_PATTERN)
@@ -115,6 +149,7 @@ class EntityExtractor:
         """Initialize spaCy model lazily."""
         try:
             import spacy
+
             self._nlp = spacy.load("en_core_web_sm")
         except (ImportError, OSError):
             self.use_spacy = False
@@ -241,7 +276,15 @@ class EntityExtractor:
 
         for ent in doc.ents:
             # Include relevant entity types
-            if ent.label_ in {"ORG", "PRODUCT", "PERSON", "GPE", "LOC", "FAC", "WORK_OF_ART"}:
+            if ent.label_ in {
+                "ORG",
+                "PRODUCT",
+                "PERSON",
+                "GPE",
+                "LOC",
+                "FAC",
+                "WORK_OF_ART",
+            }:
                 entities.add(ent.text)
 
         return entities
@@ -273,8 +316,25 @@ class EntityExtractor:
                 continue
 
             # Skip common stop words
-            if lower in {"the", "a", "an", "is", "are", "was", "were", "be", "been",
-                         "null", "none", "this", "that", "from", "with", "will", "have"}:
+            if lower in {
+                "the",
+                "a",
+                "an",
+                "is",
+                "are",
+                "was",
+                "were",
+                "be",
+                "been",
+                "null",
+                "none",
+                "this",
+                "that",
+                "from",
+                "with",
+                "will",
+                "have",
+            }:
                 continue
 
             # Skip pure numbers (unless they look like line numbers or specific values)

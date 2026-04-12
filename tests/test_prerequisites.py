@@ -31,9 +31,7 @@ class TestCheckResult:
     def test_check_result_creation(self):
         """Test creating a CheckResult."""
         result = CheckResult(
-            check_name="Test Check",
-            passed=True,
-            message="Everything is fine"
+            check_name="Test Check", passed=True, message="Everything is fine"
         )
         assert result.check_name == "Test Check"
         assert result.passed is True
@@ -41,18 +39,12 @@ class TestCheckResult:
 
     def test_check_result_string(self):
         """Test string representation."""
-        result = CheckResult(
-            check_name="Test Check",
-            passed=True,
-            message="OK"
-        )
+        result = CheckResult(check_name="Test Check", passed=True, message="OK")
         assert "✓ PASS" in str(result)
         assert "Test Check" in str(result)
 
         result_fail = CheckResult(
-            check_name="Test Check",
-            passed=False,
-            message="Failed"
+            check_name="Test Check", passed=False, message="Failed"
         )
         assert "✗ FAIL" in str(result_fail)
 
@@ -85,7 +77,7 @@ class TestPrerequisiteChecker:
             assert result.details is not None
             assert "missing" in result.details
 
-    @patch.dict('os.environ', {}, clear=True)
+    @patch.dict("os.environ", {}, clear=True)
     def test_check_mongodb_connection_no_uri(self, temp_project_dir):
         """Test MongoDB check with no URI configured."""
         checker = PrerequisiteChecker(temp_project_dir)
@@ -94,7 +86,7 @@ class TestPrerequisiteChecker:
         assert result.passed is False
         assert "MONGODB_URI" in result.message
 
-    @patch.dict('os.environ', {}, clear=True)
+    @patch.dict("os.environ", {}, clear=True)
     def test_check_huggingface_no_token(self, temp_project_dir):
         """Test HuggingFace check with no token."""
         checker = PrerequisiteChecker(temp_project_dir)
@@ -103,7 +95,7 @@ class TestPrerequisiteChecker:
         assert result.passed is False
         assert "HUGGINGFACE_TOKEN" in result.message
 
-    @patch('boto3.Session')
+    @patch("boto3.Session")
     def test_check_claude_bedrock_no_credentials(self, mock_session, temp_project_dir):
         """Test Claude Bedrock check with no credentials."""
         mock_session.return_value.get_credentials.return_value = None
@@ -114,9 +106,11 @@ class TestPrerequisiteChecker:
         assert result.passed is False
         assert "credentials not found" in result.message.lower()
 
-    @patch('boto3.client')
-    @patch('boto3.Session')
-    def test_check_claude_bedrock_success(self, mock_session, mock_client, temp_project_dir):
+    @patch("boto3.client")
+    @patch("boto3.Session")
+    def test_check_claude_bedrock_success(
+        self, mock_session, mock_client, temp_project_dir
+    ):
         """Test Claude Bedrock check with successful API call."""
         # Mock credentials
         mock_credentials = MagicMock()
@@ -125,15 +119,10 @@ class TestPrerequisiteChecker:
         # Mock Bedrock client response (Converse API format)
         mock_bedrock_runtime = MagicMock()
         mock_response = {
-            'output': {
-                'message': {
-                    'role': 'assistant',
-                    'content': [{'text': 'Hello'}]
-                }
+            "output": {
+                "message": {"role": "assistant", "content": [{"text": "Hello"}]}
             },
-            'usage': {
-                'totalTokens': 20
-            }
+            "usage": {"totalTokens": 20},
         }
         mock_bedrock_runtime.converse.return_value = mock_response
         mock_client.return_value = mock_bedrock_runtime
@@ -144,7 +133,7 @@ class TestPrerequisiteChecker:
         assert result.passed is True
         assert "successful" in result.message.lower()
 
-    @patch.dict('os.environ', {}, clear=True)
+    @patch.dict("os.environ", {}, clear=True)
     def test_check_gpt_oss_no_model_id(self, temp_project_dir):
         """Test GPT-OSS check with no model ID configured."""
         checker = PrerequisiteChecker(temp_project_dir)
@@ -153,10 +142,12 @@ class TestPrerequisiteChecker:
         assert result.passed is False
         assert "AWS_BEDROCK_GPT_OSS" in result.message
 
-    @patch.dict('os.environ', {'AWS_BEDROCK_GPT_OSS': 'test-model-id'})
-    @patch('boto3.client')
-    @patch('boto3.Session')
-    def test_check_gpt_oss_with_model(self, mock_session, mock_client, temp_project_dir):
+    @patch.dict("os.environ", {"AWS_BEDROCK_GPT_OSS": "test-model-id"})
+    @patch("boto3.client")
+    @patch("boto3.Session")
+    def test_check_gpt_oss_with_model(
+        self, mock_session, mock_client, temp_project_dir
+    ):
         """Test GPT-OSS check with model ID configured."""
         # Mock credentials
         mock_credentials = MagicMock()
@@ -165,15 +156,10 @@ class TestPrerequisiteChecker:
         # Mock Bedrock client response (Converse API format)
         mock_bedrock_runtime = MagicMock()
         mock_response = {
-            'output': {
-                'message': {
-                    'role': 'assistant',
-                    'content': [{'text': 'Hello'}]
-                }
+            "output": {
+                "message": {"role": "assistant", "content": [{"text": "Hello"}]}
             },
-            'usage': {
-                'totalTokens': 20
-            }
+            "usage": {"totalTokens": 20},
         }
         mock_bedrock_runtime.converse.return_value = mock_response
         mock_client.return_value = mock_bedrock_runtime
@@ -212,8 +198,8 @@ class TestPrerequisiteChecker:
         assert isinstance(summary["results"], list)
         assert len(summary["results"]) == 2
 
-    @patch.dict('os.environ', {}, clear=True)
-    @patch('sys.stdout')
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("sys.stdout")
     def test_run_all_checks(self, mock_stdout, temp_project_dir):
         """Test running all checks."""
         checker = PrerequisiteChecker(temp_project_dir)

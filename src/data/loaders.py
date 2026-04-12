@@ -45,11 +45,13 @@ def _parse_tool_input(action_input_str: str) -> Optional[Dict[str, Any]]:
 import re
 
 # Compiled patterns for SWE-bench tool parsing
-_SWEBENCH_FUNCTION_RE = re.compile(r'<function=(\w+)>')
-_SWEBENCH_PARAM_RE = re.compile(r'<parameter=(\w+)>(.*?)</parameter>', re.DOTALL)
+_SWEBENCH_FUNCTION_RE = re.compile(r"<function=(\w+)>")
+_SWEBENCH_PARAM_RE = re.compile(r"<parameter=(\w+)>(.*?)</parameter>", re.DOTALL)
 
 
-def _parse_swebench_tool_args(content: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+def _parse_swebench_tool_args(
+    content: str,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
     Parse SWE-bench content to extract structured tool arguments.
 
@@ -1115,7 +1117,9 @@ def _parse_swebench_item(
 
             # Determine canonical tool name and step type
             # Pass tool_input to check command (view vs str_replace)
-            tool_name, step_type_str = _determine_swebench_tool_name(content, parsed_tool, tool_input)
+            tool_name, step_type_str = _determine_swebench_tool_name(
+                content, parsed_tool, tool_input
+            )
             step_type = (
                 StepType.TOOL_EXECUTION
                 if step_type_str == "TOOL_EXECUTION"

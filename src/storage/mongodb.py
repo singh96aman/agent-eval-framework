@@ -14,19 +14,19 @@ from datetime import datetime
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
 
-
 # Storage metadata fields (added by storage layer, not part of domain schema)
 STORAGE_METADATA_FIELDS = {
-    'experiment_id',
-    'stored_at',
-    'created_at',
-    'is_perturbed',
-    '_id'  # MongoDB's internal ID
+    "experiment_id",
+    "stored_at",
+    "created_at",
+    "is_perturbed",
+    "_id",  # MongoDB's internal ID
 }
 
 
-def strip_storage_metadata(doc: Dict[str, Any],
-                           extra_fields: Optional[Set[str]] = None) -> Dict[str, Any]:
+def strip_storage_metadata(
+    doc: Dict[str, Any], extra_fields: Optional[Set[str]] = None
+) -> Dict[str, Any]:
     """
     Remove storage metadata fields from a document.
 
@@ -78,8 +78,7 @@ class MongoDBStorage:
         """
         self.uri = uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         self.database_name = database or os.getenv(
-            "MONGODB_DATABASE",
-            "agent_judge_experiment"
+            "MONGODB_DATABASE", "agent_judge_experiment"
         )
 
         # Detect if using MongoDB Atlas
@@ -94,9 +93,7 @@ class MongoDBStorage:
         # Test connection
         if test_connection:
             if not self.test_connection():
-                raise ConnectionFailure(
-                    f"Failed to connect to MongoDB at {self.uri}"
-                )
+                raise ConnectionFailure(f"Failed to connect to MongoDB at {self.uri}")
             print(f"✅ Connected to MongoDB {'Atlas' if self.is_atlas else 'local'}")
 
         # Collection references
@@ -122,61 +119,76 @@ class MongoDBStorage:
         - All downstream entities: Have experiment_id
         """
         # Trajectories: Tagged with experiment_id
-        self.trajectories.create_index([
-            ("trajectory_id", ASCENDING),
-            ("experiment_id", ASCENDING)
-        ], unique=True)
+        self.trajectories.create_index(
+            [("trajectory_id", ASCENDING), ("experiment_id", ASCENDING)], unique=True
+        )
         self.trajectories.create_index([("experiment_id", ASCENDING)])
         self.trajectories.create_index([("benchmark", ASCENDING)])
         self.trajectories.create_index([("is_perturbed", ASCENDING)])
-        self.trajectories.create_index([
-            ("experiment_id", ASCENDING),
-            ("is_perturbed", ASCENDING)
-        ])
+        self.trajectories.create_index(
+            [("experiment_id", ASCENDING), ("is_perturbed", ASCENDING)]
+        )
 
         # Perturbations: Experiment-scoped (NEW collection!)
         self.perturbations.create_index([("perturbation_id", ASCENDING)], unique=True)
-        self.perturbations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
-        self.perturbations.create_index([("original_trajectory_id", ASCENDING)])  # FK to trajectories
-        self.perturbations.create_index([("perturbed_trajectory_id", ASCENDING)])  # FK to trajectories
-        self.perturbations.create_index([
-            ("perturbation_type", ASCENDING),
-            ("perturbation_position", ASCENDING)
-        ])  # Compound index for analysis queries
+        self.perturbations.create_index(
+            [("experiment_id", ASCENDING)]
+        )  # FK to experiments
+        self.perturbations.create_index(
+            [("original_trajectory_id", ASCENDING)]
+        )  # FK to trajectories
+        self.perturbations.create_index(
+            [("perturbed_trajectory_id", ASCENDING)]
+        )  # FK to trajectories
+        self.perturbations.create_index(
+            [("perturbation_type", ASCENDING), ("perturbation_position", ASCENDING)]
+        )  # Compound index for analysis queries
 
         # Annotations: indexed by trajectory ID and experiment FK
         self.annotations.create_index([("annotation_id", ASCENDING)], unique=True)
-        self.annotations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
-        self.annotations.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
+        self.annotations.create_index(
+            [("experiment_id", ASCENDING)]
+        )  # FK to experiments
+        self.annotations.create_index(
+            [("trajectory_id", ASCENDING)]
+        )  # FK to trajectories
         self.annotations.create_index([("annotator", ASCENDING)])
-        self.annotations.create_index([
-            ("experiment_id", ASCENDING),
-            ("trajectory_id", ASCENDING)
-        ])  # Compound index
+        self.annotations.create_index(
+            [("experiment_id", ASCENDING), ("trajectory_id", ASCENDING)]
+        )  # Compound index
 
         # Judge evaluations: indexed by trajectory, judge, and experiment FK
         self.judge_evaluations.create_index([("evaluation_id", ASCENDING)], unique=True)
-        self.judge_evaluations.create_index([("experiment_id", ASCENDING)])  # FK to experiments
-        self.judge_evaluations.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
-        self.judge_evaluations.create_index([
-            ("trajectory_id", ASCENDING),
-            ("judge_model", ASCENDING)
-        ])
-        self.judge_evaluations.create_index([
-            ("experiment_id", ASCENDING),
-            ("judge_model", ASCENDING)
-        ])  # Filter by experiment and judge
+        self.judge_evaluations.create_index(
+            [("experiment_id", ASCENDING)]
+        )  # FK to experiments
+        self.judge_evaluations.create_index(
+            [("trajectory_id", ASCENDING)]
+        )  # FK to trajectories
+        self.judge_evaluations.create_index(
+            [("trajectory_id", ASCENDING), ("judge_model", ASCENDING)]
+        )
+        self.judge_evaluations.create_index(
+            [("experiment_id", ASCENDING), ("judge_model", ASCENDING)]
+        )  # Filter by experiment and judge
 
         # CCG scores: indexed by experiment and condition with FKs
         self.ccg_scores.create_index([("ccg_id", ASCENDING)], unique=True)
-        self.ccg_scores.create_index([("experiment_id", ASCENDING)])  # FK to experiments
-        self.ccg_scores.create_index([("trajectory_id", ASCENDING)])  # FK to trajectories
-        self.ccg_scores.create_index([("annotation_id", ASCENDING)])  # FK to annotations
-        self.ccg_scores.create_index([("evaluation_id", ASCENDING)])  # FK to evaluations
-        self.ccg_scores.create_index([
-            ("perturbation_type", ASCENDING),
-            ("perturbation_position", ASCENDING)
-        ])
+        self.ccg_scores.create_index(
+            [("experiment_id", ASCENDING)]
+        )  # FK to experiments
+        self.ccg_scores.create_index(
+            [("trajectory_id", ASCENDING)]
+        )  # FK to trajectories
+        self.ccg_scores.create_index(
+            [("annotation_id", ASCENDING)]
+        )  # FK to annotations
+        self.ccg_scores.create_index(
+            [("evaluation_id", ASCENDING)]
+        )  # FK to evaluations
+        self.ccg_scores.create_index(
+            [("perturbation_type", ASCENDING), ("perturbation_position", ASCENDING)]
+        )
         self.ccg_scores.create_index([("judge_model", ASCENDING)])
 
         # Experiments: indexed by ID and timestamp
@@ -224,10 +236,7 @@ class MongoDBStorage:
         except DuplicateKeyError:
             # Update existing - remove _id to avoid immutable field error
             doc.pop("_id", None)
-            self.trajectories.replace_one(
-                {"trajectory_id": doc["trajectory_id"]},
-                doc
-            )
+            self.trajectories.replace_one({"trajectory_id": doc["trajectory_id"]}, doc)
             return doc["trajectory_id"]
 
     def save_trajectories_bulk(self, trajectories: List[Dict[str, Any]]) -> int:
@@ -274,9 +283,7 @@ class MongoDBStorage:
         return None
 
     def get_trajectory_by_experiment(
-        self,
-        trajectory_id: str,
-        experiment_id: str
+        self, trajectory_id: str, experiment_id: str
     ) -> Optional[Dict[str, Any]]:
         """
         Get trajectory by ID for a specific experiment.
@@ -288,18 +295,15 @@ class MongoDBStorage:
         Returns:
             Trajectory dict with only domain schema fields, or None if not found
         """
-        doc = self.trajectories.find_one({
-            "trajectory_id": trajectory_id,
-            "experiment_id": experiment_id
-        })
+        doc = self.trajectories.find_one(
+            {"trajectory_id": trajectory_id, "experiment_id": experiment_id}
+        )
         if doc:
             return strip_storage_metadata(doc)
         return None
 
     def get_trajectories_by_benchmark(
-        self,
-        benchmark: str,
-        limit: Optional[int] = None
+        self, benchmark: str, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Get all trajectories from a specific benchmark.
@@ -312,8 +316,7 @@ class MongoDBStorage:
         return [strip_storage_metadata(doc) for doc in cursor]
 
     def get_perturbed_trajectories(
-        self,
-        benchmark: Optional[str] = None
+        self, benchmark: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get all perturbed trajectories from cache.
@@ -337,7 +340,7 @@ class MongoDBStorage:
         experiment_id: str,
         skip: int = 0,
         limit: Optional[int] = None,
-        is_perturbed: Optional[bool] = None
+        is_perturbed: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get trajectories for a specific experiment with pagination.
@@ -366,7 +369,9 @@ class MongoDBStorage:
             trajectory_ids = [p["perturbed_trajectory_id"] for p in perturbations]
         elif is_perturbed is False:
             # Only originals (unique)
-            trajectory_ids = list(set([p["original_trajectory_id"] for p in perturbations]))
+            trajectory_ids = list(
+                set([p["original_trajectory_id"] for p in perturbations])
+            )
         else:
             # Both originals and perturbed
             original_ids = [p["original_trajectory_id"] for p in perturbations]
@@ -374,9 +379,9 @@ class MongoDBStorage:
             trajectory_ids = list(set(original_ids + perturbed_ids))
 
         # Get trajectories by IDs with pagination
-        cursor = self.trajectories.find({
-            "trajectory_id": {"$in": trajectory_ids}
-        }).skip(skip)
+        cursor = self.trajectories.find(
+            {"trajectory_id": {"$in": trajectory_ids}}
+        ).skip(skip)
 
         if limit:
             cursor = cursor.limit(limit)
@@ -384,9 +389,7 @@ class MongoDBStorage:
         return [strip_storage_metadata(doc) for doc in cursor]
 
     def count_trajectories(
-        self,
-        experiment_id: Optional[str] = None,
-        is_perturbed: Optional[bool] = None
+        self, experiment_id: Optional[str] = None, is_perturbed: Optional[bool] = None
     ) -> int:
         """
         Count trajectories matching criteria.
@@ -403,7 +406,9 @@ class MongoDBStorage:
         """
         if experiment_id:
             # Query via perturbations
-            perturbations = list(self.perturbations.find({"experiment_id": experiment_id}))
+            perturbations = list(
+                self.perturbations.find({"experiment_id": experiment_id})
+            )
 
             if not perturbations:
                 return 0
@@ -412,7 +417,9 @@ class MongoDBStorage:
             if is_perturbed is True:
                 trajectory_ids = [p["perturbed_trajectory_id"] for p in perturbations]
             elif is_perturbed is False:
-                trajectory_ids = list(set([p["original_trajectory_id"] for p in perturbations]))
+                trajectory_ids = list(
+                    set([p["original_trajectory_id"] for p in perturbations])
+                )
             else:
                 original_ids = [p["original_trajectory_id"] for p in perturbations]
                 perturbed_ids = [p["perturbed_trajectory_id"] for p in perturbations]
@@ -452,8 +459,7 @@ class MongoDBStorage:
         except DuplicateKeyError:
             # Update existing
             self.perturbations.replace_one(
-                {"perturbation_id": perturbation["perturbation_id"]},
-                perturbation
+                {"perturbation_id": perturbation["perturbation_id"]}, perturbation
             )
             return perturbation["perturbation_id"]
 
@@ -488,10 +494,9 @@ class MongoDBStorage:
         self, perturbation_id: str, experiment_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get perturbation by ID and experiment."""
-        return self.perturbations.find_one({
-            "perturbation_id": perturbation_id,
-            "experiment_id": experiment_id
-        })
+        return self.perturbations.find_one(
+            {"perturbation_id": perturbation_id, "experiment_id": experiment_id}
+        )
 
     def get_perturbations_by_experiment(
         self,
@@ -499,7 +504,7 @@ class MongoDBStorage:
         skip: int = 0,
         limit: Optional[int] = None,
         perturbation_type: Optional[str] = None,
-        perturbation_position: Optional[str] = None
+        perturbation_position: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all perturbations for a specific experiment.
@@ -528,7 +533,7 @@ class MongoDBStorage:
     def count_perturbations(
         self,
         experiment_id: Optional[str] = None,
-        perturbation_type: Optional[str] = None
+        perturbation_type: Optional[str] = None,
     ) -> int:
         """
         Count perturbations matching criteria.
@@ -566,9 +571,7 @@ class MongoDBStorage:
         return str(result.inserted_id)
 
     def get_annotation(
-        self,
-        trajectory_id: str,
-        annotator: Optional[str] = None
+        self, trajectory_id: str, annotator: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Get annotation for a trajectory."""
         query = {"trajectory_id": trajectory_id}
@@ -577,8 +580,7 @@ class MongoDBStorage:
         return self.annotations.find_one(query)
 
     def get_all_annotations(
-        self,
-        experiment_id: Optional[str] = None
+        self, experiment_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get all annotations, optionally filtered by experiment."""
         query = {}
@@ -587,10 +589,7 @@ class MongoDBStorage:
         return list(self.annotations.find(query))
 
     def get_annotations_by_experiment(
-        self,
-        experiment_id: str,
-        skip: int = 0,
-        limit: Optional[int] = None
+        self, experiment_id: str, skip: int = 0, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Get annotations for a specific experiment with pagination.
@@ -605,17 +604,13 @@ class MongoDBStorage:
         Returns:
             List of annotation dicts
         """
-        cursor = self.annotations.find(
-            {"experiment_id": experiment_id}
-        ).skip(skip)
+        cursor = self.annotations.find({"experiment_id": experiment_id}).skip(skip)
         if limit:
             cursor = cursor.limit(limit)
         return list(cursor)
 
     def count_annotations(
-        self,
-        experiment_id: Optional[str] = None,
-        trajectory_id: Optional[str] = None
+        self, experiment_id: Optional[str] = None, trajectory_id: Optional[str] = None
     ) -> int:
         """
         Count annotations matching criteria.
@@ -652,9 +647,7 @@ class MongoDBStorage:
         return str(result.inserted_id)
 
     def get_judge_evaluations(
-        self,
-        trajectory_id: str,
-        judge_model: Optional[str] = None
+        self, trajectory_id: str, judge_model: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get judge evaluations for a trajectory."""
         query = {"trajectory_id": trajectory_id}
@@ -663,9 +656,7 @@ class MongoDBStorage:
         return list(self.judge_evaluations.find(query))
 
     def get_all_evaluations(
-        self,
-        experiment_id: Optional[str] = None,
-        judge_model: Optional[str] = None
+        self, experiment_id: Optional[str] = None, judge_model: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get all judge evaluations."""
         query = {}
@@ -680,7 +671,7 @@ class MongoDBStorage:
         experiment_id: str,
         skip: int = 0,
         limit: Optional[int] = None,
-        judge_model: Optional[str] = None
+        judge_model: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get judge evaluations for a specific experiment with pagination.
@@ -709,7 +700,7 @@ class MongoDBStorage:
         self,
         experiment_id: Optional[str] = None,
         trajectory_id: Optional[str] = None,
-        judge_model: Optional[str] = None
+        judge_model: Optional[str] = None,
     ) -> int:
         """
         Count judge evaluations matching criteria.
@@ -732,10 +723,7 @@ class MongoDBStorage:
         return self.judge_evaluations.count_documents(query)
 
     def check_evaluation_cache(
-        self,
-        trajectory_id: str,
-        judge_model: str,
-        sample_number: int = 1
+        self, trajectory_id: str, judge_model: str, sample_number: int = 1
     ) -> Optional[Dict[str, Any]]:
         """
         Check if judge evaluation exists in cache.
@@ -750,11 +738,13 @@ class MongoDBStorage:
         Returns:
             Existing evaluation dict or None if cache miss
         """
-        return self.judge_evaluations.find_one({
-            "trajectory_id": trajectory_id,
-            "judge_model": judge_model,
-            "sample_number": sample_number
-        })
+        return self.judge_evaluations.find_one(
+            {
+                "trajectory_id": trajectory_id,
+                "judge_model": judge_model,
+                "sample_number": sample_number,
+            }
+        )
 
     # === Judge Output Storage (New Schema) ===
 
@@ -762,7 +752,7 @@ class MongoDBStorage:
         self,
         judge_output: Any,  # JudgeOutput from src/judges/schema
         experiment_id: str,
-        sample_number: int = 1
+        sample_number: int = 1,
     ) -> str:
         """
         Store a JudgeOutput object from the new judge system.
@@ -795,7 +785,7 @@ class MongoDBStorage:
         self,
         experiment_id: str,
         judge_name: Optional[str] = None,
-        trajectory_id: Optional[str] = None
+        trajectory_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get judge outputs from the new judge system.
@@ -820,7 +810,7 @@ class MongoDBStorage:
         self,
         experiment_id: str,
         trajectory_id: Optional[str] = None,
-        judge_name: Optional[str] = None
+        judge_name: Optional[str] = None,
     ) -> int:
         """
         Count judge outputs matching criteria.
@@ -841,11 +831,7 @@ class MongoDBStorage:
 
         return self.judge_evaluations.count_documents(query)
 
-    def check_judge_output_exists(
-        self,
-        experiment_id: str,
-        evaluation_id: str
-    ) -> bool:
+    def check_judge_output_exists(self, experiment_id: str, evaluation_id: str) -> bool:
         """
         Check if a specific judge evaluation already exists.
 
@@ -858,10 +844,9 @@ class MongoDBStorage:
         Returns:
             True if evaluation exists, False otherwise
         """
-        existing = self.judge_evaluations.find_one({
-            "experiment_id": experiment_id,
-            "evaluation_id": evaluation_id
-        })
+        existing = self.judge_evaluations.find_one(
+            {"experiment_id": experiment_id, "evaluation_id": evaluation_id}
+        )
         return existing is not None
 
     # === CCG Score Storage ===
@@ -890,7 +875,7 @@ class MongoDBStorage:
         perturbation_type: Optional[str] = None,
         perturbation_position: Optional[str] = None,
         skip: int = 0,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get CCG scores filtered by experiment and conditions with pagination.
@@ -920,7 +905,7 @@ class MongoDBStorage:
         self,
         experiment_id: Optional[str] = None,
         perturbation_type: Optional[str] = None,
-        perturbation_position: Optional[str] = None
+        perturbation_position: Optional[str] = None,
     ) -> int:
         """
         Count CCG scores matching criteria.
@@ -942,10 +927,7 @@ class MongoDBStorage:
             query["perturbation_position"] = perturbation_position
         return self.ccg_scores.count_documents(query)
 
-    def get_ccg_aggregates(
-        self,
-        experiment_id: str
-    ) -> Dict[str, Any]:
+    def get_ccg_aggregates(self, experiment_id: str) -> Dict[str, Any]:
         """
         Compute aggregate CCG statistics by condition.
 
@@ -962,7 +944,7 @@ class MongoDBStorage:
                 "$group": {
                     "_id": {
                         "type": "$perturbation_type",
-                        "position": "$perturbation_position"
+                        "position": "$perturbation_position",
                     },
                     "mean_ccg": {"$avg": "$ccg"},
                     "std_ccg": {"$stdDevPop": "$ccg"},
@@ -970,7 +952,7 @@ class MongoDBStorage:
                     "mean_tcs": {"$avg": "$tcs"},
                     "mean_jps": {"$avg": "$jps"},
                 }
-            }
+            },
         ]
 
         results = list(self.ccg_scores.aggregate(pipeline))
@@ -1013,15 +995,11 @@ class MongoDBStorage:
             return experiment_config["experiment_id"]
         except DuplicateKeyError:
             raise ValueError(
-                f"Experiment {experiment_config['experiment_id']} "
-                "already exists"
+                f"Experiment {experiment_config['experiment_id']} " "already exists"
             )
 
     def update_experiment_status(
-        self,
-        experiment_id: str,
-        status: str,
-        progress: Optional[Dict[str, Any]] = None
+        self, experiment_id: str, status: str, progress: Optional[Dict[str, Any]] = None
     ):
         """
         Update experiment status and progress.
@@ -1034,23 +1012,13 @@ class MongoDBStorage:
                 "evaluations_completed": 150
             }
         """
-        update = {
-            "status": status,
-            "updated_at": datetime.utcnow()
-        }
+        update = {"status": status, "updated_at": datetime.utcnow()}
         if progress:
             update["progress"] = progress
 
-        self.experiments.update_one(
-            {"experiment_id": experiment_id},
-            {"$set": update}
-        )
+        self.experiments.update_one({"experiment_id": experiment_id}, {"$set": update})
 
-    def update_experiment_progress(
-        self,
-        experiment_id: str,
-        **counts: int
-    ):
+    def update_experiment_progress(self, experiment_id: str, **counts: int):
         """
         Update experiment progress counts.
 
@@ -1065,18 +1033,15 @@ class MongoDBStorage:
         if not counts:
             return
 
-        update = {
-            f"progress.{key}": value
-            for key, value in counts.items()
-        }
+        update = {f"progress.{key}": value for key, value in counts.items()}
         update["updated_at"] = datetime.utcnow()
 
         self.experiments.update_one(
             {"experiment_id": experiment_id},
             {
                 "$set": {"updated_at": datetime.utcnow()},
-                "$inc": {f"progress.{key}": value for key, value in counts.items()}
-            }
+                "$inc": {f"progress.{key}": value for key, value in counts.items()},
+            },
         )
 
     def get_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
@@ -1085,11 +1050,7 @@ class MongoDBStorage:
 
     def list_experiments(self, limit: int = 10) -> List[Dict[str, Any]]:
         """List recent experiments."""
-        return list(
-            self.experiments.find()
-            .sort("created_at", DESCENDING)
-            .limit(limit)
-        )
+        return list(self.experiments.find().sort("created_at", DESCENDING).limit(limit))
 
     def close(self):
         """Close MongoDB connection."""

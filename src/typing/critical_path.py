@@ -35,23 +35,23 @@ class CriticalPathScorer:
 
     # Role recovery likelihood (can later steps compensate?)
     ROLE_RECOVERABILITY = {
-        StepRole.PLANNING.value: True,     # Can re-plan
-        StepRole.DECISION.value: True,     # Can reconsider
-        StepRole.TOOL_CALL.value: True,    # Can retry
+        StepRole.PLANNING.value: True,  # Can re-plan
+        StepRole.DECISION.value: True,  # Can reconsider
+        StepRole.TOOL_CALL.value: True,  # Can retry
         StepRole.EXTRACTION.value: False,  # Silent propagation
-        StepRole.REASONING.value: True,    # Can reconsider
+        StepRole.REASONING.value: True,  # Can reconsider
         StepRole.OBSERVATION.value: True,  # External data
         StepRole.FINAL_RESPONSE.value: False,  # End of trajectory
     }
 
     # Role observability (will error be visible?)
     ROLE_OBSERVABILITY = {
-        StepRole.PLANNING.value: True,      # Plans are explicit
-        StepRole.DECISION.value: True,      # Decisions are explicit
-        StepRole.TOOL_CALL.value: True,     # Tool output visible
-        StepRole.EXTRACTION.value: False,   # Silent wrong value
-        StepRole.REASONING.value: True,     # Reasoning is explicit
-        StepRole.OBSERVATION.value: True,   # Observations are explicit
+        StepRole.PLANNING.value: True,  # Plans are explicit
+        StepRole.DECISION.value: True,  # Decisions are explicit
+        StepRole.TOOL_CALL.value: True,  # Tool output visible
+        StepRole.EXTRACTION.value: False,  # Silent wrong value
+        StepRole.REASONING.value: True,  # Reasoning is explicit
+        StepRole.OBSERVATION.value: True,  # Observations are explicit
         StepRole.FINAL_RESPONSE.value: True,  # Output visible
     }
 
@@ -130,9 +130,7 @@ class CriticalPathScorer:
 
         return typed_steps
 
-    def _compute_fanout_map(
-        self, typed_steps: List[Dict[str, Any]]
-    ) -> Dict[int, int]:
+    def _compute_fanout_map(self, typed_steps: List[Dict[str, Any]]) -> Dict[int, int]:
         """Compute how many downstream steps depend on each step."""
         fanout: Dict[int, int] = {}
 
@@ -148,14 +146,14 @@ class CriticalPathScorer:
 
             # Also count transitive dependencies (with lower weight)
             for dep_idx in step.get("transitive_depends_on", []):
-                if dep_idx in fanout and dep_idx not in step.get("depends_on_steps", []):
+                if dep_idx in fanout and dep_idx not in step.get(
+                    "depends_on_steps", []
+                ):
                     fanout[dep_idx] += 0.5
 
         return fanout
 
-    def _find_terminal_step(
-        self, typed_steps: List[Dict[str, Any]]
-    ) -> int:
+    def _find_terminal_step(self, typed_steps: List[Dict[str, Any]]) -> int:
         """Find the index of the terminal step."""
         for step in typed_steps:
             if step.get("is_terminal_step"):
@@ -230,18 +228,18 @@ class CriticalPathScorer:
 
         # affects_final_answer
         affects_answer = (
-            step.get("produces_final_answer", False) or
-            is_upstream_of_terminal or
-            step_role in ("extraction", "final_response")
+            step.get("produces_final_answer", False)
+            or is_upstream_of_terminal
+            or step_role in ("extraction", "final_response")
         )
 
         # affects_patch (SWE-bench specific)
         affects_patch = False
         if benchmark == "swebench":
             affects_patch = (
-                step.get("produces_patch", False) or
-                step_role in ("extraction", "decision") or
-                any(
+                step.get("produces_patch", False)
+                or step_role in ("extraction", "decision")
+                or any(
                     "patch" in (a.get("artifact_type", "") or "")
                     for a in step.get("produced_artifacts", [])
                 )
@@ -261,9 +259,9 @@ class CriticalPathScorer:
 
         # affects_tool_execution
         affects_tool = (
-            step_role == "tool_call" or
-            step_role == "planning" or
-            any(
+            step_role == "tool_call"
+            or step_role == "planning"
+            or any(
                 downstream.get("step_role") == "tool_call"
                 for downstream in typed_steps
                 if step_index in downstream.get("depends_on_steps", [])
@@ -348,10 +346,7 @@ def get_criticality_summary(typed_steps: List[Dict[str, Any]]) -> Dict[str, Any]
     Returns:
         Summary dict with statistics
     """
-    scores = [
-        s.get("critical_path_score", {}).get("value", 0)
-        for s in typed_steps
-    ]
+    scores = [s.get("critical_path_score", {}).get("value", 0) for s in typed_steps]
 
     if not scores:
         return {"mean": 0, "max": 0, "min": 0, "high_criticality_count": 0}

@@ -19,7 +19,6 @@ from src.typing.artifact_tracker import ArtifactTracker
 from src.typing.slot_typer import SlotTyper
 from src.typing.critical_path import CriticalPathScorer
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -99,9 +98,7 @@ class TrajectoryTyper:
             step["perturbable_slots"] = self.slot_typer.identify_slots(step)
 
         # Pass 2-3: Critical path scoring
-        typed_steps = self.critical_path_scorer.score_trajectory(
-            typed_steps, benchmark
-        )
+        typed_steps = self.critical_path_scorer.score_trajectory(typed_steps, benchmark)
 
         # Convert to TypedStep objects
         typed_traj.steps = [self._dict_to_typed_step(s) for s in typed_steps]

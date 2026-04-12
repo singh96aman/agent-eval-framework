@@ -40,19 +40,21 @@ def mock_judge():
         output.reasoning = "Test reasoning"
         output.tokens_used = 100
         output.evaluation_time_ms = 500
-        output.to_dict = Mock(return_value={
-            "trajectory_id": trajectory.trajectory_id,
-            "judge_name": "test-judge",
-            "model_id": "test-model",
-            "overall_score": 75.0,
-            "task_success": 1,
-            "completeness": 80.0,
-            "efficiency_errors": 0,
-            "hallucination": 0,
-            "sycophancy": 0,
-            "step_errors": [],
-            "reasoning": "Test reasoning"
-        })
+        output.to_dict = Mock(
+            return_value={
+                "trajectory_id": trajectory.trajectory_id,
+                "judge_name": "test-judge",
+                "model_id": "test-model",
+                "overall_score": 75.0,
+                "task_success": 1,
+                "completeness": 80.0,
+                "efficiency_errors": 0,
+                "hallucination": 0,
+                "sycophancy": 0,
+                "step_errors": [],
+                "reasoning": "Test reasoning",
+            }
+        )
         return output
 
     judge.evaluate = mock_evaluate
@@ -94,7 +96,7 @@ def sample_perturbations():
             "original_trajectory_id": f"orig_{i}",
             "perturbed_trajectory_id": f"perturbed_{i}",
             "perturbation_type": "planning",
-            "perturbation_position": "early"
+            "perturbation_position": "early",
         }
         for i in range(10)
     ]
@@ -114,13 +116,11 @@ def sample_trajectories(sample_perturbations):
                     "step_id": "step_1",
                     "step_number": 1,
                     "step_type": "planning",
-                    "content": "Test step"
+                    "content": "Test step",
                 }
             ],
-            "ground_truth": {
-                "task_description": "Test task"
-            },
-            "metadata": {}
+            "ground_truth": {"task_description": "Test task"},
+            "metadata": {},
         }
     return trajectories
 
@@ -133,7 +133,7 @@ class TestParallelJudgeEvaluator:
         config = {
             "judge_parallelization": 3,
             "checkpoint_batch_size": 10,
-            "rate_limit_delay_seconds": 0.1
+            "rate_limit_delay_seconds": 0.1,
         }
 
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
@@ -160,15 +160,13 @@ class TestParallelJudgeEvaluator:
         config = {
             "judge_parallelization": 2,
             "checkpoint_batch_size": 5,
-            "rate_limit_delay_seconds": 0.01
+            "rate_limit_delay_seconds": 0.01,
         }
 
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
 
         results = evaluator.evaluate_all(
-            sample_perturbations,
-            experiment_id="test_exp",
-            resume=False
+            sample_perturbations, experiment_id="test_exp", resume=False
         )
 
         # Should have results for all perturbations
@@ -186,7 +184,13 @@ class TestParallelJudgeEvaluator:
 
         # Mock that first 5 perturbations are already evaluated
         def mock_count(experiment_id, trajectory_id=None, judge_name=None):
-            if trajectory_id in ["perturbed_0", "perturbed_1", "perturbed_2", "perturbed_3", "perturbed_4"]:
+            if trajectory_id in [
+                "perturbed_0",
+                "perturbed_1",
+                "perturbed_2",
+                "perturbed_3",
+                "perturbed_4",
+            ]:
                 return 1
             return 0
 
@@ -196,9 +200,7 @@ class TestParallelJudgeEvaluator:
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
 
         results = evaluator.evaluate_all(
-            sample_perturbations,
-            experiment_id="test_exp",
-            resume=True
+            sample_perturbations, experiment_id="test_exp", resume=True
         )
 
         # Should only process the 5 that weren't evaluated
@@ -210,17 +212,23 @@ class TestParallelJudgeEvaluator:
         """Test that failed evaluations don't block the batch."""
         # Only some trajectories exist
         mock_storage._trajectories = {
-            k: v for k, v in sample_trajectories.items()
-            if k in ["perturbed_0", "perturbed_2", "perturbed_4", "perturbed_6", "perturbed_8"]
+            k: v
+            for k, v in sample_trajectories.items()
+            if k
+            in [
+                "perturbed_0",
+                "perturbed_2",
+                "perturbed_4",
+                "perturbed_6",
+                "perturbed_8",
+            ]
         }
 
         config = {"judge_parallelization": 2, "rate_limit_delay_seconds": 0.01}
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
 
         results = evaluator.evaluate_all(
-            sample_perturbations,
-            experiment_id="test_exp",
-            resume=False
+            sample_perturbations, experiment_id="test_exp", resume=False
         )
 
         # Should have results for all (some failed)
@@ -241,15 +249,13 @@ class TestParallelJudgeEvaluator:
         config = {
             "judge_parallelization": 2,
             "checkpoint_batch_size": 5,
-            "rate_limit_delay_seconds": 0.01
+            "rate_limit_delay_seconds": 0.01,
         }
 
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
 
         results = evaluator.evaluate_all(
-            sample_perturbations,
-            experiment_id="test_exp",
-            resume=False
+            sample_perturbations, experiment_id="test_exp", resume=False
         )
 
         # Should have stored all successful evaluations
@@ -265,9 +271,7 @@ class TestParallelJudgeEvaluator:
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
 
         results = evaluator.evaluate_all(
-            sample_perturbations[:1],  # Just one
-            experiment_id="test_exp",
-            resume=False
+            sample_perturbations[:1], experiment_id="test_exp", resume=False  # Just one
         )
 
         # overall_score is 75, so JPS should be 25
@@ -304,19 +308,21 @@ class TestParallelizationBehavior:
             output.reasoning = "Test"
             output.tokens_used = 100
             output.evaluation_time_ms = 100
-            output.to_dict = Mock(return_value={
-                "trajectory_id": trajectory.trajectory_id,
-                "judge_name": "test-judge",
-                "model_id": "test-model",
-                "overall_score": 75.0,
-                "task_success": 1,
-                "completeness": 80.0,
-                "efficiency_errors": 0,
-                "hallucination": 0,
-                "sycophancy": 0,
-                "step_errors": [],
-                "reasoning": "Test"
-            })
+            output.to_dict = Mock(
+                return_value={
+                    "trajectory_id": trajectory.trajectory_id,
+                    "judge_name": "test-judge",
+                    "model_id": "test-model",
+                    "overall_score": 75.0,
+                    "task_success": 1,
+                    "completeness": 80.0,
+                    "efficiency_errors": 0,
+                    "hallucination": 0,
+                    "sycophancy": 0,
+                    "step_errors": [],
+                    "reasoning": "Test",
+                }
+            )
             return output
 
         mock_judge = Mock()
@@ -333,8 +339,15 @@ class TestParallelizationBehavior:
             f"t{i}": {
                 "trajectory_id": f"t{i}",
                 "benchmark": "test",
-                "steps": [{"step_id": "s1", "step_number": 1, "step_type": "planning", "content": "test"}],
-                "ground_truth": {"task_description": "test"}
+                "steps": [
+                    {
+                        "step_id": "s1",
+                        "step_number": 1,
+                        "step_type": "planning",
+                        "content": "test",
+                    }
+                ],
+                "ground_truth": {"task_description": "test"},
             }
             for i in range(6)
         }
@@ -342,10 +355,7 @@ class TestParallelizationBehavior:
         mock_storage.count_judge_outputs = Mock(return_value=0)
         mock_storage.store_judge_output = Mock()
 
-        config = {
-            "judge_parallelization": 2,
-            "rate_limit_delay_seconds": 0.01
-        }
+        config = {"judge_parallelization": 2, "rate_limit_delay_seconds": 0.01}
 
         evaluator = ParallelJudgeEvaluator(mock_judge, mock_storage, config)
         evaluator.evaluate_all(perturbations, "test_exp", resume=False)

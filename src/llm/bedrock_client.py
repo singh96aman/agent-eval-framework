@@ -15,7 +15,6 @@ from typing import Dict, Any, Optional
 import boto3
 from botocore.exceptions import ClientError
 
-
 # Global singleton
 _client_instance: Optional["BedrockClient"] = None
 
@@ -31,8 +30,7 @@ class BedrockClient:
         self.total_time_ms = 0
 
         self.client = boto3.client(
-            service_name='bedrock-runtime',
-            region_name=region_name
+            service_name="bedrock-runtime", region_name=region_name
         )
 
     def invoke(
@@ -40,7 +38,7 @@ class BedrockClient:
         model_id: str,
         prompt: str,
         max_tokens: int = 500,
-        temperature: float = 0.3
+        temperature: float = 0.3,
     ) -> Dict[str, Any]:
         """
         Invoke Bedrock model.
@@ -60,7 +58,7 @@ class BedrockClient:
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}]
+            "messages": [{"role": "user", "content": prompt}],
         }
 
         try:
@@ -68,18 +66,18 @@ class BedrockClient:
                 modelId=model_id,
                 body=json.dumps(request_body),
                 contentType="application/json",
-                accept="application/json"
+                accept="application/json",
             )
 
-            response_body = json.loads(response['body'].read())
-            content = response_body.get('content', [])
+            response_body = json.loads(response["body"].read())
+            content = response_body.get("content", [])
             if not content:
                 raise ValueError("Empty response from LLM")
 
-            response_text = content[0].get('text', '')
-            usage = response_body.get('usage', {})
-            input_tokens = usage.get('input_tokens', 0)
-            output_tokens = usage.get('output_tokens', 0)
+            response_text = content[0].get("text", "")
+            usage = response_body.get("usage", {})
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
             tokens_used = input_tokens + output_tokens
             elapsed_ms = int((time.time() - start_time) * 1000)
 
@@ -101,12 +99,12 @@ class BedrockClient:
                 "tokens_used": tokens_used,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "time_ms": elapsed_ms
+                "time_ms": elapsed_ms,
             }
 
         except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            error_message = e.response.get('Error', {}).get('Message', str(e))
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            error_message = e.response.get("Error", {}).get("Message", str(e))
             raise Exception(f"Bedrock API error ({error_code}): {error_message}")
 
     def get_stats(self) -> Dict[str, Any]:
@@ -115,22 +113,24 @@ class BedrockClient:
             "call_count": self.call_count,
             "total_tokens": self.total_tokens,
             "total_time_ms": self.total_time_ms,
-            "avg_time_ms": self.total_time_ms // self.call_count if self.call_count else 0
+            "avg_time_ms": (
+                self.total_time_ms // self.call_count if self.call_count else 0
+            ),
         }
 
     def print_stats(self):
         """Print cumulative stats."""
         stats = self.get_stats()
-        print(f"\n📊 Bedrock Stats: {stats['call_count']} calls | "
-              f"{stats['total_tokens']} tokens | "
-              f"{stats['total_time_ms']}ms total | "
-              f"{stats['avg_time_ms']}ms avg")
+        print(
+            f"\n📊 Bedrock Stats: {stats['call_count']} calls | "
+            f"{stats['total_tokens']} tokens | "
+            f"{stats['total_time_ms']}ms total | "
+            f"{stats['avg_time_ms']}ms avg"
+        )
 
 
 def get_bedrock_client(
-    region_name: str = "us-east-1",
-    log_calls: bool = False,
-    reset: bool = False
+    region_name: str = "us-east-1", log_calls: bool = False, reset: bool = False
 ) -> BedrockClient:
     """
     Get or create the singleton Bedrock client.

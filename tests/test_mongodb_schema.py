@@ -33,12 +33,15 @@ class MockStorage:
         """Create experiment with progress tracking (counts only!)."""
         self.experiments[experiment_id] = {
             "experiment_id": experiment_id,
-            "progress": data.get("progress", {
-                "trajectories_loaded": 0,
-                "annotations_completed": 0,
-                "evaluations_completed": 0
-            }),
-            **data
+            "progress": data.get(
+                "progress",
+                {
+                    "trajectories_loaded": 0,
+                    "annotations_completed": 0,
+                    "evaluations_completed": 0,
+                },
+            ),
+            **data,
         }
 
     def save_trajectory(self, trajectory_id, experiment_id, **data):
@@ -46,7 +49,7 @@ class MockStorage:
         self.trajectories[trajectory_id] = {
             "trajectory_id": trajectory_id,
             "experiment_id": experiment_id,  # Foreign key!
-            **data
+            **data,
         }
 
     def save_annotation(self, annotation_id, experiment_id, trajectory_id, **data):
@@ -55,7 +58,7 @@ class MockStorage:
             "annotation_id": annotation_id,
             "experiment_id": experiment_id,  # FK
             "trajectory_id": trajectory_id,  # FK
-            **data
+            **data,
         }
 
     def save_evaluation(self, evaluation_id, experiment_id, trajectory_id, **data):
@@ -64,11 +67,12 @@ class MockStorage:
             "evaluation_id": evaluation_id,
             "experiment_id": experiment_id,  # FK
             "trajectory_id": trajectory_id,  # FK
-            **data
+            **data,
         }
 
-    def save_ccg_score(self, ccg_id, experiment_id, trajectory_id,
-                       annotation_id, evaluation_id, **data):
+    def save_ccg_score(
+        self, ccg_id, experiment_id, trajectory_id, annotation_id, evaluation_id, **data
+    ):
         """Save CCG score with all foreign keys."""
         self.ccg_scores[ccg_id] = {
             "ccg_id": ccg_id,
@@ -76,14 +80,13 @@ class MockStorage:
             "trajectory_id": trajectory_id,  # FK
             "annotation_id": annotation_id,  # FK
             "evaluation_id": evaluation_id,  # FK
-            **data
+            **data,
         }
 
     def get_trajectories_by_experiment(self, experiment_id, skip=0, limit=None):
         """Query trajectories by experiment_id (foreign key)."""
         results = [
-            t for t in self.trajectories.values()
-            if t["experiment_id"] == experiment_id
+            t for t in self.trajectories.values() if t["experiment_id"] == experiment_id
         ]
 
         # Apply pagination
@@ -97,18 +100,23 @@ class MockStorage:
     def count_trajectories(self, experiment_id=None):
         """Count trajectories matching criteria."""
         if experiment_id:
-            return len([
-                t for t in self.trajectories.values()
-                if t["experiment_id"] == experiment_id
-            ])
+            return len(
+                [
+                    t
+                    for t in self.trajectories.values()
+                    if t["experiment_id"] == experiment_id
+                ]
+            )
         return len(self.trajectories)
 
     def check_evaluation_cache(self, trajectory_id, judge_model, sample_number=1):
         """Check if evaluation exists in cache."""
         for eval_data in self.judge_evaluations.values():
-            if (eval_data["trajectory_id"] == trajectory_id and
-                eval_data["judge_model"] == judge_model and
-                eval_data.get("sample_number", 1) == sample_number):
+            if (
+                eval_data["trajectory_id"] == trajectory_id
+                and eval_data["judge_model"] == judge_model
+                and eval_data.get("sample_number", 1) == sample_number
+            ):
                 return eval_data
         return None
 
@@ -128,15 +136,14 @@ def test_foreign_key_relationships(storage):
     storage.create_experiment(
         experiment_id,
         name="Test Experiment",
-        progress={
-            "trajectories_loaded": 0  # Count only, no array!
-        }
+        progress={"trajectories_loaded": 0},  # Count only, no array!
     )
 
     # Verify experiment has NO trajectory_refs array
     exp = storage.experiments[experiment_id]
-    assert "trajectory_refs" not in exp, \
-        "❌ experiments should NOT have trajectory_refs array!"
+    assert (
+        "trajectory_refs" not in exp
+    ), "❌ experiments should NOT have trajectory_refs array!"
     assert "progress" in exp
     assert isinstance(exp["progress"]["trajectories_loaded"], int)
 
@@ -146,7 +153,7 @@ def test_foreign_key_relationships(storage):
             f"traj_{i}",
             experiment_id,  # Foreign key!
             benchmark="toolbench",
-            is_perturbed=False
+            is_perturbed=False,
         )
 
     # Update progress (count, not array!)
@@ -176,32 +183,17 @@ def test_pagination_support(storage):
     # Create 25 trajectories
     for i in range(25):
         storage.save_trajectory(
-            f"traj_page_{i}",
-            experiment_id,
-            benchmark="gaia",
-            is_perturbed=False
+            f"traj_page_{i}", experiment_id, benchmark="gaia", is_perturbed=False
         )
 
     # Test pagination
-    page1 = storage.get_trajectories_by_experiment(
-        experiment_id,
-        skip=0,
-        limit=10
-    )
+    page1 = storage.get_trajectories_by_experiment(experiment_id, skip=0, limit=10)
     assert len(page1) == 10
 
-    page2 = storage.get_trajectories_by_experiment(
-        experiment_id,
-        skip=10,
-        limit=10
-    )
+    page2 = storage.get_trajectories_by_experiment(experiment_id, skip=10, limit=10)
     assert len(page2) == 10
 
-    page3 = storage.get_trajectories_by_experiment(
-        experiment_id,
-        skip=20,
-        limit=10
-    )
+    page3 = storage.get_trajectories_by_experiment(experiment_id, skip=20, limit=10)
     assert len(page3) == 5  # Only 5 remaining
 
     # Verify total count
@@ -221,18 +213,11 @@ def test_judge_evaluation_cache(storage):
     storage.create_experiment(experiment_id, name="Cache Test")
 
     storage.save_trajectory(
-        trajectory_id,
-        experiment_id,
-        benchmark="toolbench",
-        is_perturbed=True
+        trajectory_id, experiment_id, benchmark="toolbench", is_perturbed=True
     )
 
     # Check cache - should be miss
-    cached = storage.check_evaluation_cache(
-        trajectory_id,
-        judge_model,
-        sample_number=1
-    )
+    cached = storage.check_evaluation_cache(trajectory_id, judge_model, sample_number=1)
     assert cached is None, "Cache should be empty initially"
 
     # Save evaluation
@@ -243,15 +228,11 @@ def test_judge_evaluation_cache(storage):
         judge_model=judge_model,
         sample_number=1,
         overall_score=85.0,
-        overall_penalty=15.0
+        overall_penalty=15.0,
     )
 
     # Check cache again - should be hit!
-    cached = storage.check_evaluation_cache(
-        trajectory_id,
-        judge_model,
-        sample_number=1
-    )
+    cached = storage.check_evaluation_cache(trajectory_id, judge_model, sample_number=1)
     assert cached is not None, "Cache should return existing evaluation"
     assert cached["overall_score"] == 85.0
     assert cached["judge_model"] == judge_model
@@ -274,7 +255,7 @@ def test_cross_collection_foreign_keys(storage):
         experiment_id,
         benchmark="toolbench",
         is_perturbed=True,
-        perturbation={"type": "planning", "position": "early"}
+        perturbation={"type": "planning", "position": "early"},
     )
 
     # Create annotation with foreign keys
@@ -283,7 +264,7 @@ def test_cross_collection_foreign_keys(storage):
         experiment_id,  # FK to experiments
         trajectory_id,  # FK to trajectories
         annotator="human_researcher",
-        true_criticality_score=110.0
+        true_criticality_score=110.0,
     )
 
     # Create judge evaluation with foreign keys
@@ -294,7 +275,7 @@ def test_cross_collection_foreign_keys(storage):
         judge_model="claude-3.5-sonnet",
         sample_number=1,
         overall_score=85.0,
-        overall_penalty=15.0
+        overall_penalty=15.0,
     )
 
     # Create CCG score with foreign keys
@@ -302,14 +283,14 @@ def test_cross_collection_foreign_keys(storage):
         "ccg_001",
         experiment_id,  # FK to experiments
         trajectory_id,  # FK to trajectories
-        "ann_001",      # FK to annotations
-        "eval_002",     # FK to judge_evaluations
+        "ann_001",  # FK to annotations
+        "eval_002",  # FK to judge_evaluations
         perturbation_type="planning",
         perturbation_position="early",
         judge_model="claude-3.5-sonnet",
         true_criticality_score=110.0,
         judge_penalty_score=15.0,
-        criticality_calibration_gap=-0.86
+        criticality_calibration_gap=-0.86,
     )
 
     # Verify all foreign key queries work
@@ -344,9 +325,7 @@ def test_no_16mb_limit(storage):
 
     experiment_id = "test_exp_scalability"
     storage.create_experiment(
-        experiment_id,
-        name="Scalability Test",
-        progress={"trajectories_loaded": 0}
+        experiment_id, name="Scalability Test", progress={"trajectories_loaded": 0}
     )
 
     # Simulate 1000 trajectories (in real case, could be millions)
@@ -357,12 +336,13 @@ def test_no_16mb_limit(storage):
             f"traj_scale_{i}",
             experiment_id,  # Foreign key!
             benchmark="toolbench",
-            is_perturbed=False
+            is_perturbed=False,
         )
 
     # Update progress with count
-    storage.experiments[experiment_id]["progress"]["trajectories_loaded"] = \
-        num_trajectories
+    storage.experiments[experiment_id]["progress"][
+        "trajectories_loaded"
+    ] = num_trajectories
 
     # Verify experiment document is still small (no array!)
     exp = storage.experiments[experiment_id]
@@ -374,11 +354,7 @@ def test_no_16mb_limit(storage):
     assert count == num_trajectories
 
     # Verify pagination works with large dataset
-    page = storage.get_trajectories_by_experiment(
-        experiment_id,
-        skip=0,
-        limit=100
-    )
+    page = storage.get_trajectories_by_experiment(experiment_id, skip=0, limit=100)
     assert len(page) == 100
 
     print("✅ No 16MB limit - scalability verified")
@@ -398,10 +374,10 @@ def test_schema_format_validation():
         progress={
             "trajectories_loaded": 0,
             "annotations_completed": 0,
-            "evaluations_completed": 0
+            "evaluations_completed": 0,
         },
         status="created",
-        created_at=datetime.utcnow().isoformat()
+        created_at=datetime.utcnow().isoformat(),
     )
 
     storage.save_trajectory(
@@ -410,7 +386,7 @@ def test_schema_format_validation():
         benchmark="toolbench",
         is_perturbed=False,
         steps=[],
-        ground_truth={}
+        ground_truth={},
     )
 
     storage.save_annotation(
@@ -420,7 +396,7 @@ def test_schema_format_validation():
         annotator="test",
         task_success_degradation=1.0,
         subsequent_error_rate=0.5,
-        true_criticality_score=105.0
+        true_criticality_score=105.0,
     )
 
     storage.save_evaluation(
@@ -430,7 +406,7 @@ def test_schema_format_validation():
         judge_model="claude-3.5-sonnet",
         sample_number=1,
         overall_score=80.0,
-        overall_penalty=20.0
+        overall_penalty=20.0,
     )
 
     storage.save_ccg_score(
@@ -441,7 +417,7 @@ def test_schema_format_validation():
         "eval_001",
         true_criticality_score=105.0,
         judge_penalty_score=20.0,
-        criticality_calibration_gap=-0.81
+        criticality_calibration_gap=-0.81,
     )
 
     # Verify schema format

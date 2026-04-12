@@ -18,13 +18,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+
+matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 
 
 @dataclass
 class CalibrationReport:
     """Report from calibration analysis."""
+
     n_samples: int
     spearman_r: float
     spearman_p: float
@@ -45,17 +47,17 @@ class CalibrationReport:
                 "spearman_r": self.spearman_r,
                 "spearman_p": self.spearman_p,
                 "pearson_r": self.pearson_r,
-                "pearson_p": self.pearson_p
+                "pearson_p": self.pearson_p,
             },
             "calibration_error": {
                 "ece": self.ece,
                 "mce": self.mce,
-                "n_bins": self.n_bins
+                "n_bins": self.n_bins,
             },
             "bin_stats": self.bin_stats,
             "bootstrap_ci": self.bootstrap_ci,
             "stratified": self.stratified,
-            "interpretation": self.interpretation
+            "interpretation": self.interpretation,
         }
 
 
@@ -83,13 +85,13 @@ class CalibrationAnalyzer:
         self.config = config
         self.n_bins = config.get("n_bins", 10)
         self.bootstrap_iterations = config.get("bootstrap_iterations", 1000)
-        self.stratify_by = config.get("stratify_by", ["benchmark", "perturbation_type", "position"])
+        self.stratify_by = config.get(
+            "stratify_by", ["benchmark", "perturbation_type", "position"]
+        )
         self.output_dir = Path(config.get("output_dir", "results/rq1"))
 
     def compute_correlation(
-        self,
-        jps_values: np.ndarray,
-        od_values: np.ndarray
+        self, jps_values: np.ndarray, od_values: np.ndarray
     ) -> Dict[str, float]:
         """
         Compute Spearman and Pearson correlations.
@@ -113,14 +115,11 @@ class CalibrationAnalyzer:
             "spearman_r": float(spearman_r),
             "spearman_p": float(spearman_p),
             "pearson_r": float(pearson_r),
-            "pearson_p": float(pearson_p)
+            "pearson_p": float(pearson_p),
         }
 
     def compute_ece_mce(
-        self,
-        jps_values: np.ndarray,
-        od_values: np.ndarray,
-        n_bins: int = 10
+        self, jps_values: np.ndarray, od_values: np.ndarray, n_bins: int = 10
     ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """
         Compute Expected and Maximum Calibration Error.
@@ -156,26 +155,30 @@ class CalibrationAnalyzer:
                 mean_od = float(np.mean(od_values[mask]))
                 error = abs(mean_jps - mean_od)
 
-                bin_stats.append({
-                    "bin": i,
-                    "bin_range": [float(bin_edges[i]), float(bin_edges[i + 1])],
-                    "n_samples": int(n_in_bin),
-                    "mean_jps_normalized": mean_jps,
-                    "mean_od": mean_od,
-                    "calibration_error": error
-                })
+                bin_stats.append(
+                    {
+                        "bin": i,
+                        "bin_range": [float(bin_edges[i]), float(bin_edges[i + 1])],
+                        "n_samples": int(n_in_bin),
+                        "mean_jps_normalized": mean_jps,
+                        "mean_od": mean_od,
+                        "calibration_error": error,
+                    }
+                )
 
                 weighted_errors.append(n_in_bin * error)
                 max_error = max(max_error, error)
             else:
-                bin_stats.append({
-                    "bin": i,
-                    "bin_range": [float(bin_edges[i]), float(bin_edges[i + 1])],
-                    "n_samples": 0,
-                    "mean_jps_normalized": None,
-                    "mean_od": None,
-                    "calibration_error": None
-                })
+                bin_stats.append(
+                    {
+                        "bin": i,
+                        "bin_range": [float(bin_edges[i]), float(bin_edges[i + 1])],
+                        "n_samples": 0,
+                        "mean_jps_normalized": None,
+                        "mean_od": None,
+                        "calibration_error": None,
+                    }
+                )
 
         # ECE = weighted average of calibration errors
         total_samples = len(jps_values)
@@ -188,7 +191,7 @@ class CalibrationAnalyzer:
         jps_values: np.ndarray,
         od_values: np.ndarray,
         n_iterations: int = 1000,
-        ci_level: float = 0.95
+        ci_level: float = 0.95,
     ) -> Dict[str, Tuple[float, float]]:
         """
         Compute bootstrap confidence intervals for correlations.
@@ -236,18 +239,15 @@ class CalibrationAnalyzer:
         return {
             "spearman_r": (
                 spearman_sorted[lower_idx] if spearman_sorted else 0,
-                spearman_sorted[upper_idx - 1] if spearman_sorted else 0
+                spearman_sorted[upper_idx - 1] if spearman_sorted else 0,
             ),
             "pearson_r": (
                 pearson_sorted[lower_idx] if pearson_sorted else 0,
-                pearson_sorted[upper_idx - 1] if pearson_sorted else 0
-            )
+                pearson_sorted[upper_idx - 1] if pearson_sorted else 0,
+            ),
         }
 
-    def stratified_analysis(
-        self,
-        df: pd.DataFrame
-    ) -> Dict[str, Dict[str, Any]]:
+    def stratified_analysis(self, df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         """
         Compute calibration metrics stratified by different dimensions.
 
@@ -285,18 +285,14 @@ class CalibrationAnalyzer:
                     "spearman_p": float(sp_p),
                     "pearson_r": float(pe_r),
                     "mean_jps": float(jps.mean()),
-                    "mean_od": float(od.mean())
+                    "mean_od": float(od.mean()),
                 }
 
             results[dim] = dim_results
 
         return results
 
-    def interpret_results(
-        self,
-        spearman_r: float,
-        ece: float
-    ) -> str:
+    def interpret_results(self, spearman_r: float, ece: float) -> str:
         """
         Generate interpretation of calibration results.
 
@@ -332,9 +328,7 @@ class CalibrationAnalyzer:
             )
 
     def analyze(
-        self,
-        evaluations: List[Dict[str, Any]],
-        perturbations: List[Dict[str, Any]]
+        self, evaluations: List[Dict[str, Any]], perturbations: List[Dict[str, Any]]
     ) -> CalibrationReport:
         """
         Run full calibration analysis.
@@ -354,7 +348,7 @@ class CalibrationAnalyzer:
                     "od": p["od"].get("value", 0),
                     "perturbation_type": p.get("perturbation_type"),
                     "position": p.get("perturbation_position"),
-                    "perturbation_id": p.get("perturbation_id")
+                    "perturbation_id": p.get("perturbation_id"),
                 }
 
         records = []
@@ -364,27 +358,32 @@ class CalibrationAnalyzer:
                 od_info = od_lookup[traj_id]
                 jps = 100 - e.get("overall_score", 50)
 
-                records.append({
-                    "trajectory_id": traj_id,
-                    "perturbation_id": od_info.get("perturbation_id"),
-                    "jps": jps,
-                    "od": od_info["od"],
-                    "perturbation_type": od_info.get("perturbation_type"),
-                    "position": od_info.get("position"),
-                    "benchmark": self._extract_benchmark(traj_id)
-                })
+                records.append(
+                    {
+                        "trajectory_id": traj_id,
+                        "perturbation_id": od_info.get("perturbation_id"),
+                        "jps": jps,
+                        "od": od_info["od"],
+                        "perturbation_type": od_info.get("perturbation_type"),
+                        "position": od_info.get("position"),
+                        "benchmark": self._extract_benchmark(traj_id),
+                    }
+                )
 
         if not records:
             return CalibrationReport(
                 n_samples=0,
-                spearman_r=0, spearman_p=1,
-                pearson_r=0, pearson_p=1,
-                ece=1, mce=1,
+                spearman_r=0,
+                spearman_p=1,
+                pearson_r=0,
+                pearson_p=1,
+                ece=1,
+                mce=1,
                 n_bins=self.n_bins,
                 bin_stats=[],
                 bootstrap_ci={},
                 stratified={},
-                interpretation="No valid samples for calibration analysis."
+                interpretation="No valid samples for calibration analysis.",
             )
 
         df = pd.DataFrame(records)
@@ -395,14 +394,10 @@ class CalibrationAnalyzer:
         corr = self.compute_correlation(jps_values, od_values)
 
         # Compute ECE/MCE
-        ece, mce, bin_stats = self.compute_ece_mce(
-            jps_values, od_values, self.n_bins
-        )
+        ece, mce, bin_stats = self.compute_ece_mce(jps_values, od_values, self.n_bins)
 
         # Bootstrap CIs
-        ci = self.bootstrap_ci(
-            jps_values, od_values, self.bootstrap_iterations
-        )
+        ci = self.bootstrap_ci(jps_values, od_values, self.bootstrap_iterations)
 
         # Stratified analysis
         stratified = self.stratified_analysis(df)
@@ -422,7 +417,7 @@ class CalibrationAnalyzer:
             bin_stats=bin_stats,
             bootstrap_ci=ci,
             stratified=stratified,
-            interpretation=interpretation
+            interpretation=interpretation,
         )
 
     def _extract_benchmark(self, trajectory_id: str) -> str:
@@ -437,9 +432,7 @@ class CalibrationAnalyzer:
         return "unknown"
 
     def plot_calibration_curve(
-        self,
-        bin_stats: List[Dict[str, Any]],
-        output_path: Path
+        self, bin_stats: List[Dict[str, Any]], output_path: Path
     ):
         """
         Generate calibration curve plot.
@@ -461,29 +454,33 @@ class CalibrationAnalyzer:
         fig, ax = plt.subplots(figsize=(8, 8))
 
         # Perfect calibration line
-        ax.plot([0, 1], [0, 1], 'k--', label='Perfect Calibration', alpha=0.7)
+        ax.plot([0, 1], [0, 1], "k--", label="Perfect Calibration", alpha=0.7)
 
         # Scatter with size proportional to bin count
         sizes = [max(50, s * 5) for s in bin_sizes]
         scatter = ax.scatter(
-            jps_means, od_means, s=sizes, alpha=0.7,
-            c=range(len(valid_bins)), cmap='viridis',
-            label='Bin means'
+            jps_means,
+            od_means,
+            s=sizes,
+            alpha=0.7,
+            c=range(len(valid_bins)),
+            cmap="viridis",
+            label="Bin means",
         )
 
         # Connect points
-        ax.plot(jps_means, od_means, 'b-', alpha=0.5)
+        ax.plot(jps_means, od_means, "b-", alpha=0.5)
 
-        ax.set_xlabel('Mean JPS (normalized 0-1)', fontsize=12)
-        ax.set_ylabel('Mean OD (Outcome Degradation)', fontsize=12)
-        ax.set_title('Calibration Curve: JPS vs OD', fontsize=14)
+        ax.set_xlabel("Mean JPS (normalized 0-1)", fontsize=12)
+        ax.set_ylabel("Mean OD (Outcome Degradation)", fontsize=12)
+        ax.set_title("Calibration Curve: JPS vs OD", fontsize=14)
         ax.set_xlim(-0.05, 1.05)
         ax.set_ylim(-0.05, 1.05)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close()
 
         print(f"   Saved calibration curve to {output_path}")
@@ -493,7 +490,7 @@ class CalibrationAnalyzer:
         jps_values: np.ndarray,
         od_values: np.ndarray,
         output_path: Path,
-        spearman_r: float
+        spearman_r: float,
     ):
         """
         Generate JPS vs OD scatter plot.
@@ -512,16 +509,16 @@ class CalibrationAnalyzer:
         z = np.polyfit(jps_values, od_values, 1)
         p = np.poly1d(z)
         x_line = np.linspace(min(jps_values), max(jps_values), 100)
-        ax.plot(x_line, p(x_line), 'r-', alpha=0.7, label=f'Linear fit')
+        ax.plot(x_line, p(x_line), "r-", alpha=0.7, label=f"Linear fit")
 
-        ax.set_xlabel('JPS (Judge Penalty Score)', fontsize=12)
-        ax.set_ylabel('OD (Outcome Degradation)', fontsize=12)
-        ax.set_title(f'JPS vs OD Scatter (Spearman r = {spearman_r:.3f})', fontsize=14)
+        ax.set_xlabel("JPS (Judge Penalty Score)", fontsize=12)
+        ax.set_ylabel("OD (Outcome Degradation)", fontsize=12)
+        ax.set_title(f"JPS vs OD Scatter (Spearman r = {spearman_r:.3f})", fontsize=14)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close()
 
         print(f"   Saved scatter plot to {output_path}")
@@ -530,7 +527,7 @@ class CalibrationAnalyzer:
         self,
         report: CalibrationReport,
         evaluations: List[Dict[str, Any]],
-        perturbations: List[Dict[str, Any]]
+        perturbations: List[Dict[str, Any]],
     ):
         """
         Save all calibration results and generate plots.
@@ -544,7 +541,7 @@ class CalibrationAnalyzer:
 
         # Save statistics JSON
         stats_path = self.output_dir / "statistics.json"
-        with open(stats_path, 'w') as f:
+        with open(stats_path, "w") as f:
             json.dump(report.to_dict(), f, indent=2)
         print(f"   Saved statistics to {stats_path}")
 
@@ -556,15 +553,16 @@ class CalibrationAnalyzer:
         if report.n_samples > 0:
             # Calibration curve
             self.plot_calibration_curve(
-                report.bin_stats,
-                self.output_dir / "calibration_curve.png"
+                report.bin_stats, self.output_dir / "calibration_curve.png"
             )
 
             # Scatter plot - rebuild data
             od_lookup = {}
             for p in perturbations:
                 if p.get("od"):
-                    od_lookup[p.get("perturbed_trajectory_id")] = p["od"].get("value", 0)
+                    od_lookup[p.get("perturbed_trajectory_id")] = p["od"].get(
+                        "value", 0
+                    )
 
             jps_list = []
             od_list = []
@@ -579,7 +577,7 @@ class CalibrationAnalyzer:
                     np.array(jps_list),
                     np.array(od_list),
                     self.output_dir / "jps_vs_od_scatter.png",
-                    report.spearman_r
+                    report.spearman_r,
                 )
 
     def _write_findings(self, report: CalibrationReport, output_path: Path):
@@ -606,10 +604,12 @@ class CalibrationAnalyzer:
         for metric, (low, high) in report.bootstrap_ci.items():
             lines.append(f"- **{metric}**: [{low:.3f}, {high:.3f}]")
 
-        lines.extend([
-            "",
-            "## Stratified Analysis",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Stratified Analysis",
+            ]
+        )
 
         for dim, groups in report.stratified.items():
             lines.append(f"\n### By {dim.replace('_', ' ').title()}")
@@ -621,12 +621,14 @@ class CalibrationAnalyzer:
                     f"{stats['mean_jps']:.1f} | {stats['mean_od']:.3f} |"
                 )
 
-        lines.extend([
-            "",
-            "## Calibration Bins",
-            "| Bin | Range | N | Mean JPS | Mean OD | Error |",
-            "|-----|-------|---|----------|---------|-------|",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Calibration Bins",
+                "| Bin | Range | N | Mean JPS | Mean OD | Error |",
+                "|-----|-------|---|----------|---------|-------|",
+            ]
+        )
 
         for b in report.bin_stats:
             if b["mean_jps_normalized"] is not None:
@@ -636,7 +638,7 @@ class CalibrationAnalyzer:
                     f"{b['mean_od']:.3f} | {b['calibration_error']:.3f} |"
                 )
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write("\n".join(lines))
 
         print(f"   Saved findings to {output_path}")

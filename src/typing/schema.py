@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 class StepRole(Enum):
     """Role classification for trajectory steps."""
+
     PLANNING = "planning"
     TOOL_CALL = "tool_call"
     OBSERVATION = "observation"
@@ -23,6 +24,7 @@ class StepRole(Enum):
 
 class ArtifactType(Enum):
     """Type of artifact produced by a step."""
+
     SEARCH_RESULTS = "search_results"
     FILEPATH = "filepath"
     PATCH = "patch"
@@ -36,6 +38,7 @@ class ArtifactType(Enum):
 
 class DependencyType(Enum):
     """Type of dependency between steps."""
+
     USES_OBSERVATION_FROM = "uses_observation_from"
     USES_EXTRACTED_VALUE_FROM = "uses_extracted_value_from"
     FOLLOWS_PLAN_FROM = "follows_plan_from"
@@ -44,6 +47,7 @@ class DependencyType(Enum):
 
 class ValueType(Enum):
     """Type of value in perturbable slots and extractions."""
+
     # Tool argument types
     FILEPATH = "filepath"
     LINE_NUMBER = "line_number"
@@ -87,6 +91,7 @@ class ProvenanceField:
         source: How the value was derived ("heuristic", "llm", "human")
         confidence: Confidence score (0-1) or None if not applicable
     """
+
     value: Union[bool, float, int, str]
     source: str  # "heuristic" | "llm" | "human"
     confidence: Optional[float] = None
@@ -116,6 +121,7 @@ class ExtractionProvenance:
         source_tool_name: Tool that produced the source value
         confidence: Confidence score (0-1)
     """
+
     extraction_method: str  # "regex_numeric", "regex_filepath", "pattern_match"
     evidence_in_content: bool
     source_tool_name: Optional[str] = None
@@ -145,10 +151,13 @@ class DependencyEdge:
         reason: Human-readable explanation
         evidence: Grounded evidence for this dependency (artifact name, file path, etc.)
     """
+
     type: str  # DependencyType value
     source_step: int
     reason: str
-    evidence: Optional[str] = None  # e.g., "artifact:api_response_3", "file:/src/main.py"
+    evidence: Optional[str] = (
+        None  # e.g., "artifact:api_response_3", "file:/src/main.py"
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -174,6 +183,7 @@ class Artifact:
         name: Identifier for the artifact
         artifact_type: Type of artifact (search_results, filepath, etc.)
     """
+
     name: str
     artifact_type: str  # ArtifactType value
 
@@ -199,10 +209,13 @@ class PerturbableSlot:
         current_value: The current value at this slot
         allowed_perturbation_types: List of perturbation categories
     """
+
     slot: str
     value_type: str  # ValueType value
     current_value: Any
-    allowed_perturbation_types: List[str]  # ["placebo", "data_reference", "parameter", "tool_selection", "structural"]
+    allowed_perturbation_types: List[
+        str
+    ]  # ["placebo", "data_reference", "parameter", "tool_selection", "structural"]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -225,6 +238,7 @@ class TypedStep:
     Core fields are filled in Pass 1 (parsing/heuristics).
     Derived fields are filled in Pass 2-3 (heuristics).
     """
+
     # === Identity (from raw, renamed) ===
     step_index: int  # Original position in trajectory (1-indexed)
     raw_text: str
@@ -305,15 +319,17 @@ class TypedStep:
         # Add extraction provenance if present
         if self.extraction_provenance:
             result["extraction_provenance"] = self.extraction_provenance.to_dict()
-        result.update({
-            "depends_on_steps": self.depends_on_steps,
-            "dependency_edges": [e.to_dict() for e in self.dependency_edges],
-            "transitive_depends_on": self.transitive_depends_on,
-            "entities": self.entities,
-            "produced_artifacts": [a.to_dict() for a in self.produced_artifacts],
-            "consumed_artifacts": self.consumed_artifacts,
-            "perturbable_slots": [s.to_dict() for s in self.perturbable_slots],
-        })
+        result.update(
+            {
+                "depends_on_steps": self.depends_on_steps,
+                "dependency_edges": [e.to_dict() for e in self.dependency_edges],
+                "transitive_depends_on": self.transitive_depends_on,
+                "entities": self.entities,
+                "produced_artifacts": [a.to_dict() for a in self.produced_artifacts],
+                "consumed_artifacts": self.consumed_artifacts,
+                "perturbable_slots": [s.to_dict() for s in self.perturbable_slots],
+            }
+        )
         # Add derived fields if present
         if self.critical_path_score:
             result["critical_path_score"] = self.critical_path_score.to_dict()
@@ -361,15 +377,35 @@ class TypedStep:
                 data[field_name] = ProvenanceField.from_dict(data[field_name])
         # Filter to known fields only
         known_fields = {
-            "step_index", "raw_text", "canonical_step_id", "display_step_index",
-            "step_role", "is_terminal_step",
-            "produces_final_answer", "produces_patch", "tool_name", "tool_arguments",
-            "observation", "normalized_operation", "extracted_value", "value_type",
-            "source_step", "source_description", "extraction_provenance",
-            "depends_on_steps", "dependency_edges", "transitive_depends_on",
-            "entities", "produced_artifacts", "consumed_artifacts",
-            "perturbable_slots", "critical_path_score", "affects_final_answer",
-            "affects_patch", "affects_tool_execution", "recoverable_if_wrong",
+            "step_index",
+            "raw_text",
+            "canonical_step_id",
+            "display_step_index",
+            "step_role",
+            "is_terminal_step",
+            "produces_final_answer",
+            "produces_patch",
+            "tool_name",
+            "tool_arguments",
+            "observation",
+            "normalized_operation",
+            "extracted_value",
+            "value_type",
+            "source_step",
+            "source_description",
+            "extraction_provenance",
+            "depends_on_steps",
+            "dependency_edges",
+            "transitive_depends_on",
+            "entities",
+            "produced_artifacts",
+            "consumed_artifacts",
+            "perturbable_slots",
+            "critical_path_score",
+            "affects_final_answer",
+            "affects_patch",
+            "affects_tool_execution",
+            "recoverable_if_wrong",
             "observable_if_wrong",
         }
         data = {k: v for k, v in data.items() if k in known_fields}
@@ -383,6 +419,7 @@ class TypedTrajectory:
 
     Contains trajectory-level metadata and a list of typed steps.
     """
+
     # === Identity (from raw) ===
     trajectory_id: str
     benchmark: str
@@ -439,10 +476,22 @@ class TypedTrajectory:
         data["steps"] = [TypedStep.from_dict(s) for s in data.get("steps", [])]
         # Filter out MongoDB-specific fields not in the schema
         known_fields = {
-            "trajectory_id", "benchmark", "task_id", "task_text", "expected_answer",
-            "domain", "difficulty", "num_steps", "environment_type",
-            "ground_truth_available", "baseline_outcome", "has_objective_verifier",
-            "can_replay", "can_regenerate_downstream", "steps", "provenance",
+            "trajectory_id",
+            "benchmark",
+            "task_id",
+            "task_text",
+            "expected_answer",
+            "domain",
+            "difficulty",
+            "num_steps",
+            "environment_type",
+            "ground_truth_available",
+            "baseline_outcome",
+            "has_objective_verifier",
+            "can_replay",
+            "can_regenerate_downstream",
+            "steps",
+            "provenance",
         }
         data = {k: v for k, v in data.items() if k in known_fields}
         return cls(**data)
@@ -464,6 +513,7 @@ class TypedTrajectory:
     def get_critical_steps(self, threshold: float = 0.7) -> List[TypedStep]:
         """Get steps with critical_path_score above threshold."""
         return [
-            step for step in self.steps
+            step
+            for step in self.steps
             if step.critical_path_score and step.critical_path_score.value >= threshold
         ]

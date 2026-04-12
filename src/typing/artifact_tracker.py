@@ -29,10 +29,23 @@ class ArtifactTracker:
 
     # Read-only tools should NOT produce artifacts (they only observe)
     READ_ONLY_TOOLS = {
-        "view", "file_view", "read", "open", "cat",
-        "search", "find", "list", "ls", "tree",
-        "grep", "rg", "ag",  # Search tools
-        "head", "tail", "less", "more",
+        "view",
+        "file_view",
+        "read",
+        "open",
+        "cat",
+        "search",
+        "find",
+        "list",
+        "ls",
+        "tree",
+        "grep",
+        "rg",
+        "ag",  # Search tools
+        "head",
+        "tail",
+        "less",
+        "more",
     }
 
     # Tool name patterns -> artifact type mappings
@@ -45,7 +58,6 @@ class ArtifactTracker:
         "patch": ArtifactType.PATCH,
         "write": ArtifactType.PATCH,
         "file_edit": ArtifactType.PATCH,
-
         # Run tools
         "bash": ArtifactType.TEXT,
         "run": ArtifactType.TEXT,
@@ -119,26 +131,28 @@ class ArtifactTracker:
 
         # Skip artifact production for read-only tools
         # Read-only operations only observe data, they don't produce artifacts
-        is_read_only = any(
-            ro_tool in tool_name for ro_tool in self.READ_ONLY_TOOLS
-        )
+        is_read_only = any(ro_tool in tool_name for ro_tool in self.READ_ONLY_TOOLS)
         if is_read_only:
             # Read-only tools don't produce artifacts (they only observe)
             return artifacts
 
         # 1. Check produces_patch flag first (authoritative for patch artifacts)
         if step.get("produces_patch"):
-            artifacts.append(Artifact(
-                name=f"patch_{step_index}",
-                artifact_type=ArtifactType.PATCH.value,
-            ).to_dict())
+            artifacts.append(
+                Artifact(
+                    name=f"patch_{step_index}",
+                    artifact_type=ArtifactType.PATCH.value,
+                ).to_dict()
+            )
 
         # 2. Tool-based artifact production (only for non-patch tools)
         if not artifacts:
             for pattern, artifact_type in self.TOOL_TO_ARTIFACT.items():
                 if pattern in tool_name:
                     # Skip PATCH type here since we use produces_patch flag above
-                    if artifact_type == ArtifactType.PATCH and not step.get("produces_patch"):
+                    if artifact_type == ArtifactType.PATCH and not step.get(
+                        "produces_patch"
+                    ):
                         continue
                     artifact = Artifact(
                         name=f"{artifact_type.value}_{step_index}",
@@ -149,59 +163,73 @@ class ArtifactTracker:
 
         # 3. API response for tool calls with output
         if not artifacts and step_role == "tool_call" and tool_output:
-            artifacts.append(Artifact(
-                name=f"api_response_{step_index}",
-                artifact_type=ArtifactType.API_RESPONSE.value,
-            ).to_dict())
+            artifacts.append(
+                Artifact(
+                    name=f"api_response_{step_index}",
+                    artifact_type=ArtifactType.API_RESPONSE.value,
+                ).to_dict()
+            )
 
         # 4. File path extraction (only for non-read-only tools that produce files)
         if "path" in tool_args or "file" in tool_args:
             path_val = tool_args.get("path") or tool_args.get("file")
             # Only add filepath artifact if this is a write/edit operation
             if path_val and step.get("produces_patch"):
-                artifacts.append(Artifact(
-                    name=f"filepath_{step_index}",
-                    artifact_type=ArtifactType.FILEPATH.value,
-                ).to_dict())
+                artifacts.append(
+                    Artifact(
+                        name=f"filepath_{step_index}",
+                        artifact_type=ArtifactType.FILEPATH.value,
+                    ).to_dict()
+                )
 
         # Line number extraction
         if self._line_re.search(content):
-            artifacts.append(Artifact(
-                name=f"line_number_{step_index}",
-                artifact_type=ArtifactType.LINE_NUMBER.value,
-            ).to_dict())
+            artifacts.append(
+                Artifact(
+                    name=f"line_number_{step_index}",
+                    artifact_type=ArtifactType.LINE_NUMBER.value,
+                ).to_dict()
+            )
 
         # Numeric answer (extraction steps)
         if step_role == "extraction" and step.get("extracted_value") is not None:
             val_type = step.get("value_type", "")
             if val_type in ("integer", "float"):
-                artifacts.append(Artifact(
-                    name=f"numeric_answer_{step_index}",
-                    artifact_type=ArtifactType.NUMERIC_ANSWER.value,
-                ).to_dict())
+                artifacts.append(
+                    Artifact(
+                        name=f"numeric_answer_{step_index}",
+                        artifact_type=ArtifactType.NUMERIC_ANSWER.value,
+                    ).to_dict()
+                )
 
         # Diagnosis (reasoning about bugs)
         if step_role in ("reasoning", "extraction"):
             diagnosis_patterns = ["bug", "issue", "problem", "error", "fix", "cause"]
             if any(p in content.lower() for p in diagnosis_patterns):
-                artifacts.append(Artifact(
-                    name=f"diagnosis_{step_index}",
-                    artifact_type=ArtifactType.DIAGNOSIS.value,
-                ).to_dict())
+                artifacts.append(
+                    Artifact(
+                        name=f"diagnosis_{step_index}",
+                        artifact_type=ArtifactType.DIAGNOSIS.value,
+                    ).to_dict()
+                )
 
         # Final answer production
         if step.get("produces_final_answer"):
-            artifacts.append(Artifact(
-                name=f"final_answer_{step_index}",
-                artifact_type=ArtifactType.TEXT.value,
-            ).to_dict())
+            artifacts.append(
+                Artifact(
+                    name=f"final_answer_{step_index}",
+                    artifact_type=ArtifactType.TEXT.value,
+                ).to_dict()
+            )
 
         # Default: if tool produced output, create generic artifact
         if not artifacts and tool_output:
-            artifacts.append(Artifact(
-                name=f"output_{step_index}",
-                artifact_type=ArtifactType.TEXT.value,
-            ).to_dict())
+            artifacts.append(
+                Artifact(
+                    name=f"output_{step_index}",
+                    artifact_type=ArtifactType.TEXT.value,
+                ).to_dict()
+            )
 
         return artifacts
 
@@ -230,7 +258,9 @@ class ArtifactTracker:
 
         # 1. Consume artifacts from explicit dependencies
         for dep_index in depends_on:
-            dep_step = next((s for s in all_steps if s["step_index"] == dep_index), None)
+            dep_step = next(
+                (s for s in all_steps if s["step_index"] == dep_index), None
+            )
             if dep_step:
                 for artifact in dep_step.get("produced_artifacts", []):
                     consumed.add(artifact["name"])

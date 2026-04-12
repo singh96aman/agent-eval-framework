@@ -8,7 +8,7 @@ with stratification across conditions, benchmarks, and quality tiers.
 import json
 import random
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from datetime import datetime
 from pathlib import Path
 
@@ -31,20 +31,23 @@ class StratifiedAnnotationSampler:
     """
 
     CONDITIONS = [
-        ("planning", "early"), ("planning", "middle"), ("planning", "late"),
-        ("tool_selection", "early"), ("tool_selection", "middle"), ("tool_selection", "late"),
-        ("parameter", "early"), ("parameter", "middle"), ("parameter", "late"),
-        ("data_reference", "middle"), ("data_reference", "late"),
+        ("planning", "early"),
+        ("planning", "middle"),
+        ("planning", "late"),
+        ("tool_selection", "early"),
+        ("tool_selection", "middle"),
+        ("tool_selection", "late"),
+        ("parameter", "early"),
+        ("parameter", "middle"),
+        ("parameter", "late"),
+        ("data_reference", "middle"),
+        ("data_reference", "late"),
     ]
 
     BENCHMARKS = ["toolbench", "gaia", "swebench"]
     QUALITY_TIERS = ["high", "medium", "low"]
 
-    def __init__(
-        self,
-        perturbations: List[Dict],
-        random_seed: int = 42
-    ):
+    def __init__(self, perturbations: List[Dict], random_seed: int = 42):
         """
         Initialize sampler with perturbations.
 
@@ -54,8 +57,7 @@ class StratifiedAnnotationSampler:
         """
         # Filter to primary perturbations only
         self.perturbations = [
-            p for p in perturbations
-            if p.get("is_primary_for_experiment", False)
+            p for p in perturbations if p.get("is_primary_for_experiment", False)
         ]
         self.random_seed = random_seed
         random.seed(random_seed)
@@ -110,21 +112,18 @@ class StratifiedAnnotationSampler:
             List of perturbation dicts to annotate
         """
         # Make a copy of the index to avoid modifying original
-        working_index = {
-            key: list(perts)
-            for key, perts in self.index.items()
-        }
+        working_index = {key: list(perts) for key, perts in self.index.items()}
 
         selected = []
         samples_per_condition = total // len(self.CONDITIONS)  # 9
 
-        print(f"\nSampling {total} perturbations ({samples_per_condition} per condition)...")
+        print(
+            f"\nSampling {total} perturbations ({samples_per_condition} per condition)..."
+        )
 
         for condition in self.CONDITIONS:
             condition_samples = self._sample_for_condition(
-                condition,
-                samples_per_condition,
-                working_index
+                condition, samples_per_condition, working_index
             )
             selected.extend(condition_samples)
             print(f"  {condition[0]}_{condition[1]}: {len(condition_samples)} samples")
@@ -135,17 +134,16 @@ class StratifiedAnnotationSampler:
             if extra:
                 selected.append(extra)
             else:
-                print(f"  Warning: Only found {len(selected)} samples (target: {total})")
+                print(
+                    f"  Warning: Only found {len(selected)} samples (target: {total})"
+                )
                 break
 
         # Truncate if we somehow got more
         return selected[:total]
 
     def _sample_for_condition(
-        self,
-        condition: tuple,
-        target: int,
-        working_index: Dict
+        self, condition: tuple, target: int, working_index: Dict
     ) -> List[Dict]:
         """
         Sample for a single condition with benchmark/tier stratification.
@@ -236,11 +234,7 @@ class StratifiedAnnotationSampler:
 
         return "unknown"
 
-    def export_for_annotation(
-        self,
-        selected: List[Dict],
-        output_path: str
-    ):
+    def export_for_annotation(self, selected: List[Dict], output_path: str):
         """
         Export selected samples to JSON for annotation interface.
 
@@ -256,47 +250,46 @@ class StratifiedAnnotationSampler:
         export_data = []
 
         for i, p in enumerate(selected):
-            export_data.append({
-                "annotation_id": i + 1,
-                "perturbation_id": p.get("perturbation_id"),
-                "original_trajectory_id": p.get("original_trajectory_id"),
-                "perturbed_trajectory_id": p.get("perturbed_trajectory_id"),
-                "perturbation_type": p.get("perturbation_type"),
-                "perturbation_position": p.get("perturbation_position"),
-                "perturbed_step_number": p.get("perturbed_step_number"),
-                "quality_tier": p.get("quality_tier"),
-                "quality_score": p.get("quality_score"),
-                "benchmark": self._get_benchmark(p),
-                # Include step content for annotation
-                "original_step_content": p.get("original_step_content"),
-                "perturbed_step_content": p.get("perturbed_step_content"),
-                "perturbation_metadata": p.get("perturbation_metadata", {}),
-                # Annotation fields (to be filled by human)
-                "annotation": {
-                    "task_success_degradation": None,  # 0 or 1
-                    "subsequent_error_rate": None,  # 0-3
-                    "criticality_rating": None,  # 1-5
-                    "confidence": None,  # 1-3
-                    "notes": None,
-                    "annotated_at": None,
-                    "annotator_id": None
+            export_data.append(
+                {
+                    "annotation_id": i + 1,
+                    "perturbation_id": p.get("perturbation_id"),
+                    "original_trajectory_id": p.get("original_trajectory_id"),
+                    "perturbed_trajectory_id": p.get("perturbed_trajectory_id"),
+                    "perturbation_type": p.get("perturbation_type"),
+                    "perturbation_position": p.get("perturbation_position"),
+                    "perturbed_step_number": p.get("perturbed_step_number"),
+                    "quality_tier": p.get("quality_tier"),
+                    "quality_score": p.get("quality_score"),
+                    "benchmark": self._get_benchmark(p),
+                    # Include step content for annotation
+                    "original_step_content": p.get("original_step_content"),
+                    "perturbed_step_content": p.get("perturbed_step_content"),
+                    "perturbation_metadata": p.get("perturbation_metadata", {}),
+                    # Annotation fields (to be filled by human)
+                    "annotation": {
+                        "task_success_degradation": None,  # 0 or 1
+                        "subsequent_error_rate": None,  # 0-3
+                        "criticality_rating": None,  # 1-5
+                        "confidence": None,  # 1-3
+                        "notes": None,
+                        "annotated_at": None,
+                        "annotator_id": None,
+                    },
                 }
-            })
+            )
 
         # Ensure output directory exists
         output_dir = Path(output_path).parent
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(export_data, f, indent=2)
 
         print(f"\nExported {len(export_data)} samples to {output_path}")
 
     def flag_in_mongodb(
-        self,
-        selected: List[Dict],
-        storage: MongoDBStorage,
-        experiment_id: str
+        self, selected: List[Dict], storage: MongoDBStorage, experiment_id: str
     ) -> int:
         """
         Flag selected perturbations in MongoDB for annotation.
@@ -316,22 +309,22 @@ class StratifiedAnnotationSampler:
         perturbation_ids = [p.get("perturbation_id") for p in selected]
 
         # First, clear any previous annotation flags for this experiment
-        storage.db['perturbations'].update_many(
+        storage.db["perturbations"].update_many(
             {"experiment_id": experiment_id},
-            {"$set": {"selected_for_annotation": False}}
+            {"$set": {"selected_for_annotation": False}},
         )
 
         # Flag selected perturbations
         for pert_id in perturbation_ids:
-            result = storage.db['perturbations'].update_one(
+            result = storage.db["perturbations"].update_one(
                 {"perturbation_id": pert_id},
                 {
                     "$set": {
                         "selected_for_annotation": True,
                         "annotation_experiment_id": experiment_id,
-                        "selected_at": datetime.utcnow()
+                        "selected_at": datetime.utcnow(),
                     }
-                }
+                },
             )
             if result.modified_count > 0:
                 flagged_count += 1
@@ -356,7 +349,7 @@ class StratifiedAnnotationSampler:
             "by_quality_tier": defaultdict(int),
             "by_condition_benchmark": defaultdict(int),
             "by_type": defaultdict(int),
-            "by_position": defaultdict(int)
+            "by_position": defaultdict(int),
         }
 
         for p in selected:
@@ -374,7 +367,9 @@ class StratifiedAnnotationSampler:
             report["by_position"][pos] += 1
 
         # Convert defaultdicts to regular dicts
-        return {k: dict(v) if isinstance(v, defaultdict) else v for k, v in report.items()}
+        return {
+            k: dict(v) if isinstance(v, defaultdict) else v for k, v in report.items()
+        }
 
     def print_distribution_report(self, selected: List[Dict]):
         """
@@ -420,7 +415,7 @@ def load_annotations_from_file(path: str) -> List[Dict]:
     Returns:
         List of annotation dicts
     """
-    with open(path, 'r') as f:
+    with open(path, "r") as f:
         return json.load(f)
 
 
@@ -473,7 +468,9 @@ def validate_annotations(annotations: List[Dict]) -> Dict:
             issues.append(f"Invalid SER ({ser}) for {ann.get('perturbation_id')}")
         if not (1 <= crit <= 5):
             valid = False
-            issues.append(f"Invalid criticality ({crit}) for {ann.get('perturbation_id')}")
+            issues.append(
+                f"Invalid criticality ({crit}) for {ann.get('perturbation_id')}"
+            )
 
         if valid:
             complete += 1
@@ -485,5 +482,5 @@ def validate_annotations(annotations: List[Dict]) -> Dict:
         "complete": complete,
         "incomplete": incomplete,
         "invalid": invalid,
-        "issues": issues[:10]  # First 10 issues
+        "issues": issues[:10],  # First 10 issues
     }
