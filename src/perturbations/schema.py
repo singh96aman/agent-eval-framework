@@ -5,6 +5,7 @@ Defines PerturbationRecord, enums for class/family/type,
 and supporting dataclasses per 3_Requirements_ControlledPerturbations.MD.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -57,7 +58,7 @@ class PerturbationType(Enum):
     WRONG_TOOL_FAMILY = "wrong_tool_family"  # coarse-grained
 
     # Structural types (coarse-grained)
-    SKIPPED_PREREQUISITE = "skipped_prerequisite"
+    # NOTE: SKIPPED_PREREQUISITE removed - changes trajectory length, trivially detectable
     WRONG_PLAN = "wrong_plan"
     WRONG_BRANCH = "wrong_branch"
     HALLUCINATED_DEPENDENCY = "hallucinated_dependency"
@@ -128,7 +129,6 @@ VALID_TYPES_BY_FAMILY = {
         PerturbationType.WRONG_TOOL_FAMILY,  # coarse-grained
     ],
     PerturbationFamily.STRUCTURAL: [
-        PerturbationType.SKIPPED_PREREQUISITE,
         PerturbationType.WRONG_PLAN,
         PerturbationType.WRONG_BRANCH,
         PerturbationType.HALLUCINATED_DEPENDENCY,
@@ -182,6 +182,11 @@ class PerturbationRecord:
     qc_checks_passed: List[str] = field(default_factory=list)
     qc_checks_failed: List[str] = field(default_factory=list)
 
+    # === LLM generation tracking (for audit/debugging) ===
+    raw_llm_response: Optional[str] = None  # Full raw LLM response
+    llm_parse_success: Optional[bool] = None  # Whether JSON parsing succeeded
+    llm_prompt_name: Optional[str] = None  # e.g., "WRONG_PARAMETER_PROMPT_V1"
+
     @classmethod
     def create(
         cls,
@@ -196,10 +201,43 @@ class PerturbationRecord:
         mutation_method: str,
         expected_impact: int = 0,
         notes: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> "PerturbationRecord":
-        """Factory method to create a new PerturbationRecord with auto-generated ID and timestamp."""
+        """Factory method to create a new PerturbationRecord with auto-generated ID.
+
+        Args:
+            config: Optional experiment config. If provided, uses new ID scheme:
+                    {experiment_id}_{trajectory_id}_step_{step_idx}_{type}_{b64(generator_config)}
+                    If not provided, uses legacy hash-based ID.
+        """
+        if config:
+            # New ID scheme with config encoding
+            from src.utils import generate_perturbation_id
+            experiment_id = config["experiment"]["id"]
+            generator_config = (
+                config.get("phases", {})
+                .get("perturb", {})
+                .get("generators", {})
+                .get(perturbation_class.value, {})
+            )
+            perturbation_id = generate_perturbation_id(
+                experiment_id=experiment_id,
+                trajectory_id=original_trajectory_id,
+                step_idx=target_step_index,
+                perturbation_type=perturbation_type.value,
+                generator_config=generator_config,
+            )
+        else:
+            # Legacy ID scheme (fallback)
+            id_components = (
+                f"{original_trajectory_id}_{perturbation_type.value}_"
+                f"{target_step_index}_{target_slot}"
+            )
+            content_hash = hashlib.md5(id_components.encode()).hexdigest()[:8]
+            perturbation_id = f"pert_{original_trajectory_id}_{content_hash}"
+
         return cls(
-            perturbation_id=f"pert_{original_trajectory_id}_{uuid.uuid4().hex[:8]}",
+            perturbation_id=perturbation_id,
             original_trajectory_id=original_trajectory_id,
             generation_timestamp=datetime.utcnow().isoformat() + "Z",
             perturbation_class=perturbation_class.value,
@@ -240,6 +278,9 @@ class PerturbationRecord:
             "reviewed_at": self.reviewed_at,
             "qc_checks_passed": self.qc_checks_passed,
             "qc_checks_failed": self.qc_checks_failed,
+            "raw_llm_response": self.raw_llm_response,
+            "llm_parse_success": self.llm_parse_success,
+            "llm_prompt_name": self.llm_prompt_name,
         }
 
     @classmethod

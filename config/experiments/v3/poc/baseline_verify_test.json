@@ -1,0 +1,140 @@
+{
+  "schema": "3.0.0",
+
+  "experiment": {
+    "id": "baseline_verify_test",
+    "name": "Baseline Verification Test",
+    "description": "Small test of baseline verification",
+    "random_seed": 42,
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    },
+    "targets": {
+      "total_perturbations": 30,
+      "per_trajectory": { "target": 3 },
+      "by_class": {
+        "placebo": 0.20,
+        "fine_grained": 0.50,
+        "coarse_grained": 0.30
+      }
+    },
+    "datasets": {
+      "toolbench": {
+        "enabled": true,
+        "source": "local",
+        "path": "data/toolbench/data",
+        "split": "train",
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 50,
+          "require_task_success": true,
+          "require_grader_aligned": true
+        }
+      },
+      "swebench": { "enabled": false }
+    },
+    "output": {
+      "mongodb": {
+        "collection": "perturbed_trajectories",
+        "index_collection": "perturbation_index"
+      },
+      "results": {
+        "dir": "results/baseline_verify_test",
+        "checkpoints": true
+      }
+    }
+  },
+
+  "phases": {
+    "load": {
+      "enabled": true,
+      "baseline_verify": true,
+      "baseline_verify_model": {
+        "name": "claude-sonnet-4",
+        "provider": "bedrock",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 1500,
+        "temperature": 0.0
+      },
+      "baseline_verify_prompts": {
+        "system": "SINGLE_TRAJECTORY_SYSTEM_V2",
+        "user": "SINGLE_TRAJECTORY_USER_V2"
+      },
+      "baseline_verify_parallelism": 4,
+      "baseline_verify_min_score": 95,
+      "sampling": {
+        "seed": 42,
+        "targets": {
+          "toolbench": 50
+        }
+      }
+    },
+
+    "perturb": {
+      "enabled": true,
+      "parallelism": 4,
+      "llm": {
+        "provider": "bedrock",
+        "region": "us-east-1",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 2000,
+        "temperature": 0.3,
+        "use_for": []
+      },
+      "generators": {
+        "placebo": {
+          "types": ["formatting", "synonym"],
+          "llm_required": []
+        },
+        "fine_grained": {
+          "types": ["wrong_value", "off_by_one"],
+          "llm_required": []
+        },
+        "coarse_grained": {
+          "types": ["false_terminal", "premature_termination"],
+          "llm_required": []
+        }
+      }
+    },
+
+    "evaluation_unit": {
+      "enabled": true,
+      "blinding": {
+        "algorithm": "hash_based",
+        "seed_source": "experiment.random_seed",
+        "verify_balance": true,
+        "balance_range": [0.35, 0.65]
+      }
+    },
+
+    "judge": {
+      "enabled": true,
+      "version": "v1",
+      "models": [{
+        "name": "claude-sonnet-4",
+        "provider": "bedrock",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 1500,
+        "temperature": 0.0
+      }],
+      "mode": "blinded_pair",
+      "prompts": {
+        "single_trajectory": {
+          "system": "SINGLE_TRAJECTORY_SYSTEM_V2",
+          "user": "SINGLE_TRAJECTORY_USER_V2"
+        }
+      },
+      "parallelism": 4,
+      "filter": {
+        "annotated_only": false
+      }
+    },
+
+    "compute": {
+      "enabled": true,
+      "version": "v1",
+      "targets": ["judge_eval"]
+    }
+  }
+}

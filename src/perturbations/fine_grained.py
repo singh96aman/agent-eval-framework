@@ -31,6 +31,11 @@ from src.typing.schema import (
     PerturbableSlot,
     ValueType,
 )
+from src.perturbations.llm_generator import (
+    LLMPerturbationGenerator,
+    LLMMutationResult,
+    get_llm_generator,
+)
 
 
 class BaseFineGrainedGenerator(ABC):
@@ -46,14 +51,51 @@ class BaseFineGrainedGenerator(ABC):
     # Perturbation types this generator can produce
     supported_types: List[PerturbationType]
 
-    def __init__(self, random_seed: Optional[int] = None):
+    def __init__(
+        self,
+        random_seed: Optional[int] = None,
+        use_llm: bool = True,
+        llm_generator: Optional[LLMPerturbationGenerator] = None,
+    ):
         """
-        Initialize generator with optional random seed.
+        Initialize generator with optional random seed and LLM generator.
 
         Args:
             random_seed: Seed for reproducibility
+            use_llm: Whether to use LLM for mutations (replaces artifact-producing heuristics)
+            llm_generator: Optional pre-configured LLM generator instance
         """
         self.random = random.Random(random_seed)
+        self.use_llm = use_llm
+        self._llm_generator = llm_generator
+        # Track LLM metadata for last mutation
+        self._last_llm_result: Optional[LLMMutationResult] = None
+
+    @property
+    def llm_generator(self) -> Optional[LLMPerturbationGenerator]:
+        """Lazy initialization of LLM generator."""
+        if self.use_llm and self._llm_generator is None:
+            self._llm_generator = get_llm_generator()
+        return self._llm_generator
+
+    def _char_transposition(self, value: str) -> Optional[Tuple[str, str]]:
+        """
+        Apply character transposition mutation.
+
+        Swaps two adjacent characters at a random position.
+
+        Args:
+            value: String value to mutate
+
+        Returns:
+            Tuple of (mutated_value, "char_transposition") or None if too short
+        """
+        if len(value) < 2:
+            return None
+        chars = list(value)
+        idx = self.random.randint(0, len(chars) - 2)
+        chars[idx], chars[idx + 1] = chars[idx + 1], chars[idx]
+        return ("".join(chars), "char_transposition")
 
     @abstractmethod
     def generate(
@@ -122,7 +164,18 @@ class BaseFineGrainedGenerator(ABC):
         try:
             int_val = int(value)
         except (ValueError, TypeError):
-            return (str(value) + "_mutated", "fallback_append")
+            # Use LLM instead of artifact-producing fallback
+            if self.use_llm and self.llm_generator:
+                result = self.llm_generator.generate_value_mutation(
+                    original_value=value,
+                    value_type="integer",
+                    context="Integer parameter that could not be parsed",
+                )
+                if result and result.parse_success:
+                    self._last_llm_result = result
+                    return (result.mutated_value, f"llm_{result.mutation_type}")
+            # Non-LLM fallback: return None to skip this mutation
+            return (None, "skip_unparseable")
 
         strategy = self.random.choice(
             ["offset_1", "offset_2", "offset_10", "digit_swap"]
@@ -474,7 +527,18 @@ class BaseFineGrainedGenerator(ABC):
                     "change_year",
                 )
 
-        return (date_str + "_wrong", "append_wrong")
+        # Use LLM for non-ISO format dates instead of artifact
+        if self.use_llm and self.llm_generator:
+            result = self.llm_generator.generate_wrong_date(
+                original_date=date_str,
+                date_format="unknown",
+                context="Date that does not match ISO format",
+            )
+            if result and result.parse_success:
+                self._last_llm_result = result
+                return (result.mutated_value, f"llm_{result.mutation_type}")
+        # Non-LLM fallback: skip mutation
+        return (None, "skip_unparseable_date")
 
     def _mutate_boolean(self, value: Any) -> Tuple[Any, str]:
         """Mutate boolean value (flip)."""
@@ -490,9 +554,24 @@ class BaseFineGrainedGenerator(ABC):
     def _mutate_generic(self, value: Any) -> Tuple[Any, str]:
         """Generic mutation for unknown types."""
         str_val = str(value)
-        if str_val:
-            return (str_val + "_mutated", "generic_append")
-        return ("_mutated", "generic_empty")
+        if not str_val:
+            return (None, "skip_empty_value")
+
+        # Use LLM for generic mutations instead of artifact
+        if self.use_llm and self.llm_generator:
+            result = self.llm_generator.generate_value_mutation(
+                original_value=str_val,
+                value_type="unknown",
+                context="Generic value requiring mutation",
+            )
+            if result and result.parse_success:
+                self._last_llm_result = result
+                return (result.mutated_value, f"llm_{result.mutation_type}")
+        # Non-LLM fallback: apply simple character transposition
+        result = self._char_transposition(str_val)
+        if result:
+            return result
+        return (None, "skip_short_value")
 
     def _filter_eligible_slots(
         self,
@@ -1000,9 +1079,22 @@ class ParameterGenerator(BaseFineGrainedGenerator):
 
         if value_type in (ValueType.STRING.value, "string"):
             str_val = str(value)
-            # Append common wrong suffixes
-            suffixes = ["_old", "_v1", "_backup", "_test", "_wrong"]
-            return (str_val + self.random.choice(suffixes), "wrong_suffix")
+            # Use LLM instead of artifact-producing suffixes
+            if self.use_llm and self.llm_generator:
+                result = self.llm_generator.generate_wrong_identifier(
+                    original_id=str_val,
+                    id_type="string_parameter",
+                    context="Parameter value that needs a plausible wrong value",
+                )
+                if result and result.parse_success:
+                    self._last_llm_result = result
+                    return (result.mutated_value, f"llm_{result.mutation_type}")
+            # Non-LLM fallback: use character transposition instead of suffixes
+            result = self._char_transposition(str_val)
+            if result:
+                return result
+            # Single char: duplicate it
+            return (str_val + str_val, "char_duplicate")
 
         return self.mutate_value(value, value_type)
 
@@ -1255,6 +1347,7 @@ def get_fine_grained_generator(
     perturbation_family: PerturbationFamily,
     perturbation_type: Optional[PerturbationType] = None,
     random_seed: Optional[int] = None,
+    llm_client: Optional[Any] = None,
 ) -> BaseFineGrainedGenerator:
     """
     Factory function to get the appropriate fine-grained generator.
@@ -1263,6 +1356,7 @@ def get_fine_grained_generator(
         perturbation_family: The perturbation family
         perturbation_type: Optional specific type (for validation)
         random_seed: Random seed for reproducibility
+        llm_client: Optional LLM client for generating semantic perturbations
 
     Returns:
         Appropriate generator instance
@@ -1283,7 +1377,14 @@ def get_fine_grained_generator(
         )
 
     generator_class = generators[perturbation_family]
-    generator = generator_class(random_seed)
+
+    # Pass LLM generator if client is provided (enables LLM-based mutations)
+    llm_generator = None
+    if llm_client is not None:
+        from src.perturbations.llm_generator import LLMPerturbationGenerator
+        llm_generator = LLMPerturbationGenerator()
+
+    generator = generator_class(random_seed, llm_generator=llm_generator)
 
     # Validate perturbation type if specified
     if perturbation_type is not None:

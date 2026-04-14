@@ -22,6 +22,7 @@ Usage:
     # Create outcome record
     record = OutcomeRecord.create(
         evaluation_unit_id="eval::gaia_122::001",
+        model_name="gpt-4o",
         replay_tier=3,
         evidence_method=EvidenceMethod.FINAL_ANSWER_GRADING,
         baseline=baseline_outcome,

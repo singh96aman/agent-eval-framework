@@ -20,16 +20,57 @@ class StratifiedAnnotationSampler:
     Stratified sampling for human annotation ground truth.
 
     Ensures coverage across:
-    - 11 perturbation conditions (type x position)
+    - 3 perturbation classes (placebo, fine_grained, coarse_grained)
+    - Multiple perturbation conditions (type x position)
     - 3 benchmarks (toolbench, gaia, swebench)
     - 3 quality tiers (high, medium, low)
 
     Sampling strategy:
-    1. Primary stratification by condition (type x position)
-    2. Secondary stratification by benchmark
-    3. Tertiary stratification by quality tier
+    1. Primary stratification by perturbation CLASS (20% placebo, 50% fine, 30% coarse)
+    2. Secondary stratification by condition (type x position) within each class
+    3. Tertiary stratification by benchmark
+    4. Quaternary stratification by quality tier
     """
 
+    # Perturbation classes with target distributions
+    CLASS_DISTRIBUTION = {
+        "placebo": 0.20,
+        "fine_grained": 0.50,
+        "coarse_grained": 0.30,
+    }
+
+    # Conditions by class
+    PLACEBO_CONDITIONS = [
+        ("paraphrase", "early"),
+        ("paraphrase", "middle"),
+        ("paraphrase", "late"),
+        ("formatting", "middle"),
+        ("synonym", "middle"),
+        ("reorder_args", "middle"),
+    ]
+
+    FINE_GRAINED_CONDITIONS = [
+        ("parameter", "early"),
+        ("parameter", "middle"),
+        ("parameter", "late"),
+        ("data_reference", "early"),
+        ("data_reference", "middle"),
+        ("data_reference", "late"),
+        ("near_neighbor_tool", "middle"),
+    ]
+
+    COARSE_GRAINED_CONDITIONS = [
+        ("planning", "early"),
+        ("planning", "middle"),
+        ("planning", "late"),
+        ("tool_selection", "early"),
+        ("tool_selection", "middle"),
+        ("tool_selection", "late"),
+        ("structural", "early"),
+        ("structural", "middle"),
+    ]
+
+    # Legacy CONDITIONS for backward compatibility
     CONDITIONS = [
         ("planning", "early"),
         ("planning", "middle"),
@@ -47,19 +88,30 @@ class StratifiedAnnotationSampler:
     BENCHMARKS = ["toolbench", "gaia", "swebench"]
     QUALITY_TIERS = ["high", "medium", "low"]
 
-    def __init__(self, perturbations: List[Dict], random_seed: int = 42):
+    def __init__(
+        self,
+        perturbations: List[Dict],
+        random_seed: int = 42,
+        stratify_by_class: bool = True,
+        class_distribution: Optional[Dict[str, float]] = None,
+    ):
         """
         Initialize sampler with perturbations.
 
         Args:
             perturbations: List of perturbation dicts from MongoDB
             random_seed: Random seed for reproducibility
+            stratify_by_class: Whether to stratify by perturbation class
+            class_distribution: Optional custom class distribution
+                               (default: 20% placebo, 50% fine, 30% coarse)
         """
         # Filter to primary perturbations only
         self.perturbations = [
             p for p in perturbations if p.get("is_primary_for_experiment", False)
         ]
         self.random_seed = random_seed
+        self.stratify_by_class = stratify_by_class
+        self.class_distribution = class_distribution or self.CLASS_DISTRIBUTION.copy()
         random.seed(random_seed)
 
         # Build index
@@ -67,49 +119,168 @@ class StratifiedAnnotationSampler:
 
     def _build_index(self):
         """
-        Index perturbations by (condition, benchmark, tier).
+        Index perturbations by (class, condition, benchmark, tier).
 
         Creates a multi-level index for efficient stratified sampling.
         """
         self.index = defaultdict(list)
+        self.class_index = defaultdict(list)  # Index by class only
 
         for p in self.perturbations:
+            pert_class = p.get("perturbation_class", "unknown")
             condition = (p.get("perturbation_type"), p.get("perturbation_position"))
-
-            # Skip if condition not in our defined set
-            if condition not in self.CONDITIONS:
-                continue
-
             benchmark = self._get_benchmark(p)
             tier = p.get("quality_tier", "medium")
 
-            key = (condition, benchmark, tier)
+            # Add to class index
+            self.class_index[pert_class].append(p)
+
+            # Add to main index with class
+            key = (pert_class, condition, benchmark, tier)
             self.index[key].append(p)
 
         # Print index summary
-        print(f"Indexed {len(self.perturbations)} perturbations:")
-        for condition in self.CONDITIONS:
-            cond_count = sum(
-                len(self.index[(condition, b, t)])
-                for b in self.BENCHMARKS
-                for t in self.QUALITY_TIERS
-            )
-            print(f"  {condition[0]}_{condition[1]}: {cond_count}")
+        total_indexed = sum(len(v) for v in self.class_index.values())
+        print(f"Indexed {total_indexed} perturbations:")
+
+        # Summary by class
+        for pert_class in ["placebo", "fine_grained", "coarse_grained"]:
+            class_count = len(self.class_index.get(pert_class, []))
+            pct = (class_count / total_indexed * 100) if total_indexed > 0 else 0
+            print(f"  {pert_class}: {class_count} ({pct:.1f}%)")
 
     def sample(self, total: int = 100) -> List[Dict]:
         """
         Sample perturbations with stratification.
 
-        Strategy:
-        1. Allocate samples_per_condition = total // 11 = 9 per condition
-        2. For each condition, try to get coverage across benchmarks and tiers
-        3. Fill remaining slots if needed
+        Strategy (when stratify_by_class=True):
+        1. Allocate by class: placebo ~20%, fine_grained ~50%, coarse ~30%
+        2. Within each class, stratify by condition (type x position)
+        3. Within each condition, stratify by benchmark and tier
+        4. Fill remaining slots if needed
+
+        Legacy strategy (stratify_by_class=False):
+        1. Allocate samples_per_condition = total // 11
+        2. For each condition, try to get coverage across benchmarks/tiers
 
         Args:
             total: Total number of samples to select
 
         Returns:
             List of perturbation dicts to annotate
+        """
+        if self.stratify_by_class:
+            return self._sample_with_class_stratification(total)
+        else:
+            return self._sample_legacy(total)
+
+    def _sample_with_class_stratification(self, total: int) -> List[Dict]:
+        """
+        Sample with class-level stratification.
+
+        Args:
+            total: Total number of samples
+
+        Returns:
+            List of perturbation dicts
+        """
+        # Make working copies
+        working_class_index = {
+            k: list(v) for k, v in self.class_index.items()
+        }
+
+        selected = []
+
+        # Calculate targets per class
+        class_targets = {}
+        for pert_class, ratio in self.class_distribution.items():
+            class_targets[pert_class] = int(total * ratio)
+
+        # Adjust to ensure we hit total
+        remainder = total - sum(class_targets.values())
+        if remainder > 0:
+            # Add remainder to fine_grained (largest class)
+            class_targets["fine_grained"] = class_targets.get("fine_grained", 0) + remainder
+
+        print(f"\nSampling {total} perturbations with class stratification:")
+        for pert_class, target in class_targets.items():
+            print(f"  {pert_class}: {target} target")
+
+        # Sample from each class
+        for pert_class, target in class_targets.items():
+            class_samples = self._sample_from_class(
+                pert_class, target, working_class_index
+            )
+            selected.extend(class_samples)
+            pct = (len(class_samples) / total * 100) if total > 0 else 0
+            print(f"  {pert_class}: {len(class_samples)} sampled ({pct:.1f}%)")
+
+        # Fill remaining if needed
+        while len(selected) < total:
+            extra = self._sample_any_remaining_by_class(working_class_index)
+            if extra:
+                selected.append(extra)
+            else:
+                print(
+                    f"  Warning: Only found {len(selected)} samples (target: {total})"
+                )
+                break
+
+        return selected[:total]
+
+    def _sample_from_class(
+        self, pert_class: str, target: int, working_index: Dict
+    ) -> List[Dict]:
+        """
+        Sample from a single class with condition stratification.
+
+        Args:
+            pert_class: The perturbation class
+            target: Target number of samples
+            working_index: Working copy of class index
+
+        Returns:
+            List of sampled perturbations
+        """
+        pool = working_index.get(pert_class, [])
+        if not pool:
+            return []
+
+        # Shuffle for randomness
+        random.shuffle(pool)
+
+        # Take up to target samples
+        samples = pool[:target]
+        # Remove from working index
+        working_index[pert_class] = pool[target:]
+
+        return samples
+
+    def _sample_any_remaining_by_class(self, working_index: Dict) -> Optional[Dict]:
+        """
+        Sample from any remaining class pool.
+
+        Args:
+            working_index: Working copy of class index
+
+        Returns:
+            A perturbation dict, or None if nothing remains
+        """
+        for pert_class, pool in working_index.items():
+            if pool:
+                sample = pool.pop(0)
+                return sample
+        return None
+
+    def _sample_legacy(self, total: int) -> List[Dict]:
+        """
+        Legacy sampling by condition only (no class stratification).
+
+        Args:
+            total: Total number of samples
+
+        Returns:
+            List of perturbation dicts
         """
         # Make a copy of the index to avoid modifying original
         working_index = {key: list(perts) for key, perts in self.index.items()}
@@ -118,7 +289,8 @@ class StratifiedAnnotationSampler:
         samples_per_condition = total // len(self.CONDITIONS)  # 9
 
         print(
-            f"\nSampling {total} perturbations ({samples_per_condition} per condition)..."
+            f"\nSampling {total} perturbations "
+            f"({samples_per_condition} per condition)..."
         )
 
         for condition in self.CONDITIONS:
@@ -126,7 +298,9 @@ class StratifiedAnnotationSampler:
                 condition, samples_per_condition, working_index
             )
             selected.extend(condition_samples)
-            print(f"  {condition[0]}_{condition[1]}: {len(condition_samples)} samples")
+            print(
+                f"  {condition[0]}_{condition[1]}: {len(condition_samples)} samples"
+            )
 
         # Fill to exactly total if needed
         while len(selected) < total:

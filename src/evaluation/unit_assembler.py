@@ -25,9 +25,9 @@ from typing import Any, Dict, List, Optional
 from src.evaluation.capabilities import compute_capabilities
 from src.evaluation.ids import (
     generate_canonical_step_id,
-    generate_evaluation_unit_id,
     generate_trajectory_variant_id,
 )
+from src.utils import generate_evaluation_unit_id
 from src.evaluation.schema import (
     BaselineData,
     BlindingAssignment,
@@ -369,9 +369,15 @@ def assemble_evaluation_unit(
     )
 
     # Generate IDs
-    evaluation_unit_id = generate_evaluation_unit_id(
-        source_trajectory_id, perturbation_index
+    # Get perturbation_id from record or perturbation_data
+    perturbation_id = perturbation_record.get(
+        "perturbation_id", perturbation_data.get("perturbation_id", f"pert_{perturbation_index:03d}")
     )
+    # Use the trajectory_id from perturbation record (may have config encoding)
+    trajectory_id = perturbation_record.get(
+        "original_trajectory_id", source_trajectory_id
+    )
+    evaluation_unit_id = generate_evaluation_unit_id(trajectory_id, perturbation_id)
     baseline_variant_id = generate_trajectory_variant_id(source_trajectory_id, "base")
     perturbed_variant_id = generate_trajectory_variant_id(
         source_trajectory_id, "pert", perturbation_index

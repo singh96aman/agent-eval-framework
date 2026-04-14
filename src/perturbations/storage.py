@@ -103,15 +103,20 @@ class PerturbationStorage:
         experiment_id: str,
     ) -> int:
         """
-        Save multiple perturbed trajectories to MongoDB.
+        Save multiple perturbed trajectories to MongoDB using upsert.
+
+        Uses perturbation_id as the unique key - re-running will update
+        existing records instead of creating duplicates.
 
         Args:
             perturbed_trajectories: List of perturbed trajectory dicts
             experiment_id: Experiment identifier
 
         Returns:
-            Number of documents inserted
+            Number of documents upserted (inserted + updated)
         """
+        from pymongo import UpdateOne
+
         collection = self._get_collection()
         if collection is None:
             return 0
@@ -119,17 +124,36 @@ class PerturbationStorage:
         if not perturbed_trajectories:
             return 0
 
-        # Add experiment metadata to each
-        docs = []
+        # Build upsert operations keyed on perturbation_id
+        operations = []
         timestamp = datetime.utcnow().isoformat() + "Z"
         for pt in perturbed_trajectories:
             doc = pt.copy()
             doc["experiment_id"] = experiment_id
             doc["stored_at"] = timestamp
-            docs.append(doc)
 
-        result = collection.insert_many(docs)
-        return len(result.inserted_ids)
+            # Use perturbation_id as unique key for upsert
+            perturbation_id = doc.get("perturbation_id")
+            if not perturbation_id:
+                # Fallback to nested record if top-level missing
+                perturbation_id = doc.get("perturbation_record", {}).get(
+                    "perturbation_id"
+                )
+
+            if perturbation_id:
+                operations.append(
+                    UpdateOne(
+                        {"perturbation_id": perturbation_id},
+                        {"$set": doc},
+                        upsert=True,
+                    )
+                )
+
+        if not operations:
+            return 0
+
+        result = collection.bulk_write(operations)
+        return result.upserted_count + result.modified_count
 
     def save_index(
         self,

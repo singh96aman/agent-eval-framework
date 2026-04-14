@@ -75,35 +75,56 @@ class BaseGrader(ABC):
         pass
 
     def extract_final_answer(self, trajectory: Dict[str, Any]) -> str:
-        """Extract final answer from trajectory."""
+        """Extract final answer from trajectory.
+
+        For ToolBench format, extracts the 'final_answer' from the
+        Finish action's Action Input JSON.
+        """
+        import json as json_module
         steps = trajectory.get("steps", [])
         if not steps:
             return ""
 
         # Work backwards through steps
         for step in reversed(steps):
-            # Support both old (step_type/content) and new (step_role/raw_text) schemas
-            step_type = step.get("step_type") or step.get("step_role", "")
             content = step.get("content") or step.get("raw_text", "")
+            tool_name = step.get("tool_name", "")
 
-            # Check for final assistant response
-            if step_type in ("assistant", "response", "final_response", "reasoning"):
-                if content and len(content.strip()) > 0:
+            # ToolBench format: Look for Finish action with final_answer
+            if tool_name and "finish" in tool_name.lower():
+                # Try to extract final_answer from tool_input
+                tool_input = step.get("tool_input")
+                if isinstance(tool_input, dict):
+                    final_answer = tool_input.get("final_answer")
+                    if final_answer:
+                        return str(final_answer)
+
+                # Try parsing from metadata
+                metadata = step.get("metadata", {})
+                action_input = metadata.get("action_input", "")
+                if action_input:
+                    try:
+                        parsed = json_module.loads(action_input)
+                        final_answer = parsed.get("final_answer")
+                        if final_answer:
+                            return str(final_answer)
+                    except (json_module.JSONDecodeError, TypeError):
+                        pass
+
+            # Check for reasoning content (not tool output)
+            step_type = step.get("step_type") or step.get("step_role", "")
+            if step_type in ("reasoning", "assistant", "response", "final_response"):
+                # Prefer thought/reasoning over raw API output
+                if content and not content.strip().startswith("{"):
                     return content
 
-            # Check for tool output
-            tool_output = step.get("tool_output") or step.get("observation", "")
-            if tool_output and len(tool_output.strip()) > 0:
-                return tool_output
-
-        # Fallback: last step content
+        # Fallback: last step content (excluding raw JSON)
         last_step = steps[-1]
-        content = (
-            last_step.get("content")
-            or last_step.get("raw_text")
-            or last_step.get("tool_output")
-            or last_step.get("observation", "")
-        )
+        content = last_step.get("content") or last_step.get("raw_text", "")
+        if content and not content.strip().startswith("{"):
+            return content
+
+        # Very last fallback
         return content if content else ""
 
     def get_expected_answer(self, trajectory: Dict[str, Any]) -> Optional[str]:
@@ -335,19 +356,38 @@ class HeuristicGrader(BaseGrader):
         return count
 
     def _count_api_errors(self, trajectory: Dict[str, Any]) -> int:
-        """Count API errors in trajectory."""
+        """Count API errors in trajectory.
+
+        Handles common API response patterns where {"error": ""} means success.
+        """
         count = 0
+        # Error patterns that indicate actual failures (not just field names)
+        error_patterns = ["404", "500", "timeout", "rate limit", "connection refused"]
+
         for step in trajectory.get("steps", []):
-            content = str(step.get("content") or step.get("raw_text", "")).lower()
             tool_output = str(
                 step.get("tool_output") or step.get("observation", "")
-            ).lower()
-            for text in [content, tool_output]:
-                if any(
-                    err in text
-                    for err in ["error", "404", "500", "timeout", "rate limit"]
-                ):
-                    count += 1
+            )
+
+            # Try to parse as JSON to check error field properly
+            if tool_output.strip().startswith("{"):
+                try:
+                    import json
+                    parsed = json.loads(tool_output)
+                    # Check if "error" field has actual error content
+                    error_val = parsed.get("error", None)
+                    if error_val and str(error_val).strip():
+                        # Non-empty error field = real error
+                        count += 1
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Fallback: check for error patterns in raw text
+            text_lower = tool_output.lower()
+            if any(err in text_lower for err in error_patterns):
+                count += 1
+
         return count
 
     def grade(
