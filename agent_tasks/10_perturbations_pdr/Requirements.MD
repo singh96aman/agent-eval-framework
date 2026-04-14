@@ -2,9 +2,10 @@
 
 ## Background
 
-**Experiment:** dual_mode_v3  
-**Date:** 2026-04-13  
-**Status:** PDR Hierarchy NOT Verified
+**Previous Experiment:** dual_mode_v3  
+**Current Experiment:** dual_mode_v4  
+**Date:** 2026-04-14  
+**Status:** Running dual_mode_v4 with improved coarse-grained detection
 
 ### Current Results (Clean Baselines Only)
 
@@ -21,6 +22,16 @@ Placebo FP (<10%) < Fine-grained PDR < Coarse-grained PDR
 
 **Problem:** Coarse-grained PDR is 0%, lower than fine-grained. This inverts the expected hierarchy.
 
+### dual_mode_v4 Fixes Applied
+
+1. **WRONG_PLAN_PROMPT_V3**: More aggressive prompt that creates OBVIOUSLY wrong plans
+2. **Type Weights**: Prioritize rule-based coarse-grained types over LLM-generated:
+   - false_terminal: 30%
+   - premature_termination: 30%
+   - wrong_tool_family: 25%
+   - wrong_plan: 15%
+3. **MongoDB Atlas**: All queries now use MONGODB_URI from .env
+
 ---
 
 ## Phase 1: Investigation
@@ -30,14 +41,14 @@ Placebo FP (<10%) < Fine-grained PDR < Coarse-grained PDR
 **Goal:** Understand what wrong_plan perturbations were actually generated.
 
 ```bash
-# Start MongoDB if needed
-mongod --dbpath ~/data/db --fork --logpath ~/data/db/mongo.log
-
-# Query coarse-grained perturbations
+# Query coarse-grained perturbations (uses MONGODB_URI from .env)
 python -c "
+import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
-client = MongoClient('localhost', 27017)
-db = client['agent_judge_experiment']
+load_dotenv()
+client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017'))
+db = client[os.getenv('MONGODB_DATABASE', 'agent_judge_experiment')]
 
 perturbs = list(db['perturbed_trajectories'].find(
     {'experiment_id': 'dual_mode_v3', 'perturbation.class': 'coarse_grained'},
@@ -72,9 +83,12 @@ for i, p in enumerate(perturbs):
 
 ```bash
 python -c "
+import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
-client = MongoClient('localhost', 27017)
-db = client['agent_judge_experiment']
+load_dotenv()
+client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017'))
+db = client[os.getenv('MONGODB_DATABASE', 'agent_judge_experiment')]
 
 # Get coarse-grained evaluation units
 units = list(db['evaluation_units'].find(
@@ -112,9 +126,12 @@ for unit in units[:5]:
 
 ```bash
 python -c "
+import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
-client = MongoClient('localhost', 27017)
-db = client['agent_judge_experiment']
+load_dotenv()
+client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017'))
+db = client[os.getenv('MONGODB_DATABASE', 'agent_judge_experiment')]
 
 # Get all perturbations with class validation
 perturbs = list(db['perturbed_trajectories'].find(
@@ -158,9 +175,12 @@ for cls, counts in stats.items():
 
 ```bash
 python -c "
+import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
-client = MongoClient('localhost', 27017)
-db = client['agent_judge_experiment']
+load_dotenv()
+client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017'))
+db = client[os.getenv('MONGODB_DATABASE', 'agent_judge_experiment')]
 
 # Get coarse-grained by type
 pipeline = [

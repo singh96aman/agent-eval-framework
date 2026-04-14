@@ -111,6 +111,9 @@ def run_load_phase(config: Dict, db, verbose: bool = True):
     load_config = config.get("phases", {}).get("load", {})
     sampling = load_config.get("sampling", {})
 
+    # Get version for caching
+    version = load_config.get("version", "v1")
+
     # Check if baseline verification is enabled
     baseline_verify = load_config.get("baseline_verify", False)
 
@@ -120,6 +123,7 @@ def run_load_phase(config: Dict, db, verbose: bool = True):
     print("\n" + "=" * 70)
     print("PHASE: LOAD")
     print("=" * 70)
+    print(f"\nLoad phase version: {version}")
 
     # Setup judge for baseline verification if enabled
     judge = None
@@ -172,127 +176,196 @@ def run_load_phase(config: Dict, db, verbose: bool = True):
     all_trajectories = []
     benchmark_counts = {}
     verification_stats = {}
+    cached_counts = {}
 
     # Load ToolBench
     if datasets.get("toolbench", {}).get("enabled"):
         tb_config = datasets["toolbench"]
         tb_target = sampling.get("targets", {}).get("toolbench", 400)
 
-        # If baseline_verify, load extra candidates (expect ~10% pass rate)
-        load_multiplier = 15 if baseline_verify else 1
-        load_count = tb_target * load_multiplier
+        # Check for cached trajectories
+        cached_tb = db["trajectories"].count_documents({
+            "experiment_id": experiment_id,
+            "benchmark": "toolbench"
+        })
 
         print(f"\nLoading ToolBench trajectories...")
-        print(f"  Target: {tb_target}, Loading: {load_count} candidates")
+        print(f"  Target: {tb_target}")
 
-        filters = tb_config.get("filters", {})
-        trajectories = load_toolbench_trajectories(
-            local_path=tb_config.get("path", "data/toolbench/data"),
-            max_trajectories=load_count,
-            min_steps=filters.get("min_steps", 3),
-            max_steps=filters.get("max_steps", 50),
-            filter_successful=filters.get("require_task_success", True),
-            require_grader_aligned=filters.get("require_grader_aligned", False),
-        )
+        if cached_tb >= tb_target:
+            # Use cached trajectories
+            print(f"  Found {cached_tb} cached trajectories, skipping load")
+            cached_trajs = list(db["trajectories"].find({
+                "experiment_id": experiment_id,
+                "benchmark": "toolbench"
+            }))
+            all_trajectories.extend(cached_trajs)
+            benchmark_counts["toolbench"] = len(cached_trajs)
+            cached_counts["toolbench"] = cached_tb
+        else:
+            # Need to load more
+            needed = tb_target - cached_tb
+            print(f"  Found {cached_tb} cached, need {needed} more")
 
-        print(f"  Loaded: {len(trajectories)} candidates")
+            # If baseline_verify, load extra candidates (expect ~10% pass rate)
+            load_multiplier = 15 if baseline_verify else 1
+            load_count = needed * load_multiplier
 
-        # Convert to dicts for verification
-        traj_dicts = [t.to_dict() if hasattr(t, "to_dict") else t for t in trajectories]
+            print(f"  Loading: {load_count} candidates")
 
-        # Baseline verify if enabled
-        if baseline_verify and judge:
-            print(f"  Verifying with Claude (parallelism={load_config.get('baseline_verify_parallelism', 4)})...")
-            verified_trajs, stats = verify_trajectories_batch(
-                trajectories=traj_dicts,
-                judge=judge,
-                prompts=verify_prompts,
-                parallelism=load_config.get("baseline_verify_parallelism", 4),
-                target_count=tb_target,
-                verbose=verbose,
-                min_score=verify_min_score,
+            filters = tb_config.get("filters", {})
+            trajectories = load_toolbench_trajectories(
+                local_path=tb_config.get("path", "data/toolbench/data"),
+                max_trajectories=load_count,
+                min_steps=filters.get("min_steps", 3),
+                max_steps=filters.get("max_steps", 50),
+                filter_successful=filters.get("require_task_success", True),
+                require_grader_aligned=filters.get("require_grader_aligned", False),
             )
-            verification_stats["toolbench"] = stats
-            print(f"  Verified: {len(verified_trajs)}/{stats['total_processed']} ({stats['pass_rate']:.1%} pass rate)")
-            traj_dicts = verified_trajs
 
-        # Reassign IDs (include experiment_id for uniqueness)
-        for i, traj in enumerate(traj_dicts):
-            base_id = id_gen.trajectory_id("toolbench", i)
-            traj["trajectory_id"] = f"{experiment_id}_{base_id}"
-        benchmark_counts["toolbench"] = len(traj_dicts)
-        all_trajectories.extend(traj_dicts)
+            print(f"  Loaded: {len(trajectories)} candidates")
+
+            # Convert to dicts for verification
+            traj_dicts = [t.to_dict() if hasattr(t, "to_dict") else t for t in trajectories]
+
+            # Baseline verify if enabled
+            if baseline_verify and judge:
+                print(f"  Verifying with Claude (parallelism={load_config.get('baseline_verify_parallelism', 4)})...")
+                verified_trajs, stats = verify_trajectories_batch(
+                    trajectories=traj_dicts,
+                    judge=judge,
+                    prompts=verify_prompts,
+                    parallelism=load_config.get("baseline_verify_parallelism", 4),
+                    target_count=needed,
+                    verbose=verbose,
+                    min_score=verify_min_score,
+                )
+                verification_stats["toolbench"] = stats
+                print(f"  Verified: {len(verified_trajs)}/{stats['total_processed']} ({stats['pass_rate']:.1%} pass rate)")
+                traj_dicts = verified_trajs
+
+            # Reassign IDs (include experiment_id for uniqueness)
+            for i, traj in enumerate(traj_dicts):
+                base_id = id_gen.trajectory_id("toolbench", cached_tb + i)
+                traj["trajectory_id"] = f"{experiment_id}_{base_id}"
+                traj["version"] = version  # Add version field
+            benchmark_counts["toolbench"] = len(traj_dicts)
+            cached_counts["toolbench"] = cached_tb
+            all_trajectories.extend(traj_dicts)
 
     # Load SWE-bench
     if datasets.get("swebench", {}).get("enabled"):
         sw_config = datasets["swebench"]
         sw_target = sampling.get("targets", {}).get("swebench", 100)
 
-        # If baseline_verify, load extra candidates
-        load_multiplier = 15 if baseline_verify else 1
-        load_count = sw_target * load_multiplier
+        # Check for cached trajectories
+        cached_sw = db["trajectories"].count_documents({
+            "experiment_id": experiment_id,
+            "benchmark": "swebench"
+        })
 
         print(f"\nLoading SWE-bench trajectories...")
-        print(f"  Target: {sw_target}, Loading: {load_count} candidates")
+        print(f"  Target: {sw_target}")
 
-        sw_filters = sw_config.get("filters", {})
-        trajectories = load_swebench_trajectories(
-            split=sw_config.get("split", "tool"),
-            max_trajectories=load_count,
-            min_steps=sw_filters.get("min_steps", 3),
-            max_steps=sw_filters.get("max_steps", 50),
-            filter_successful=sw_filters.get("require_task_success", True),
-        )
+        if cached_sw >= sw_target:
+            # Use cached trajectories
+            print(f"  Found {cached_sw} cached trajectories, skipping load")
+            cached_trajs = list(db["trajectories"].find({
+                "experiment_id": experiment_id,
+                "benchmark": "swebench"
+            }))
+            all_trajectories.extend(cached_trajs)
+            benchmark_counts["swebench"] = len(cached_trajs)
+            cached_counts["swebench"] = cached_sw
+        else:
+            # Need to load more
+            needed = sw_target - cached_sw
+            print(f"  Found {cached_sw} cached, need {needed} more")
 
-        print(f"  Loaded: {len(trajectories)} candidates")
+            # If baseline_verify, load extra candidates
+            load_multiplier = 15 if baseline_verify else 1
+            load_count = needed * load_multiplier
 
-        # Convert to dicts for verification
-        traj_dicts = [t.to_dict() if hasattr(t, "to_dict") else t for t in trajectories]
+            print(f"  Loading: {load_count} candidates")
 
-        # Baseline verify if enabled
-        if baseline_verify and judge:
-            print(f"  Verifying with Claude (parallelism={load_config.get('baseline_verify_parallelism', 4)})...")
-            verified_trajs, stats = verify_trajectories_batch(
-                trajectories=traj_dicts,
-                judge=judge,
-                prompts=verify_prompts,
-                parallelism=load_config.get("baseline_verify_parallelism", 4),
-                target_count=sw_target,
-                verbose=verbose,
-                min_score=verify_min_score,
+            sw_filters = sw_config.get("filters", {})
+            trajectories = load_swebench_trajectories(
+                split=sw_config.get("split", "tool"),
+                max_trajectories=load_count,
+                min_steps=sw_filters.get("min_steps", 3),
+                max_steps=sw_filters.get("max_steps", 50),
+                filter_successful=sw_filters.get("require_task_success", True),
             )
-            verification_stats["swebench"] = stats
-            print(f"  Verified: {len(verified_trajs)}/{stats['total_processed']} ({stats['pass_rate']:.1%} pass rate)")
-            traj_dicts = verified_trajs
 
-        # Reassign IDs (include experiment_id for uniqueness)
-        for i, traj in enumerate(traj_dicts):
-            base_id = id_gen.trajectory_id("swebench", i)
-            traj["trajectory_id"] = f"{experiment_id}_{base_id}"
-        benchmark_counts["swebench"] = len(traj_dicts)
-        all_trajectories.extend(traj_dicts)
+            print(f"  Loaded: {len(trajectories)} candidates")
 
-    # Store in MongoDB
-    print(f"\nStoring {len(all_trajectories)} trajectories in MongoDB...")
-    collection = db["trajectories"]
+            # Convert to dicts for verification
+            traj_dicts = [t.to_dict() if hasattr(t, "to_dict") else t for t in trajectories]
 
-    stored = 0
-    for traj in all_trajectories:
-        doc = traj.to_dict() if hasattr(traj, "to_dict") else traj
-        doc["experiment_id"] = experiment_id
-        doc["stored_at"] = datetime.utcnow().isoformat() + "Z"
+            # Baseline verify if enabled
+            if baseline_verify and judge:
+                print(f"  Verifying with Claude (parallelism={load_config.get('baseline_verify_parallelism', 4)})...")
+                verified_trajs, stats = verify_trajectories_batch(
+                    trajectories=traj_dicts,
+                    judge=judge,
+                    prompts=verify_prompts,
+                    parallelism=load_config.get("baseline_verify_parallelism", 4),
+                    target_count=needed,
+                    verbose=verbose,
+                    min_score=verify_min_score,
+                )
+                verification_stats["swebench"] = stats
+                print(f"  Verified: {len(verified_trajs)}/{stats['total_processed']} ({stats['pass_rate']:.1%} pass rate)")
+                traj_dicts = verified_trajs
 
-        # Upsert by trajectory_id
-        traj_id = doc.get("trajectory_id")
-        if traj_id:
-            collection.update_one(
-                {"trajectory_id": traj_id, "experiment_id": experiment_id},
-                {"$set": doc},
-                upsert=True,
-            )
-            stored += 1
+            # Reassign IDs (include experiment_id for uniqueness)
+            for i, traj in enumerate(traj_dicts):
+                base_id = id_gen.trajectory_id("swebench", cached_sw + i)
+                traj["trajectory_id"] = f"{experiment_id}_{base_id}"
+                traj["version"] = version  # Add version field
+            benchmark_counts["swebench"] = len(traj_dicts)
+            cached_counts["swebench"] = cached_sw
+            all_trajectories.extend(traj_dicts)
 
-    print(f"  Stored: {stored} trajectories")
+    # Store in MongoDB (only new trajectories, not cached ones)
+    new_trajectories = [t for t in all_trajectories if isinstance(t, dict) and "version" in t]
+    cached_trajectories = [t for t in all_trajectories if isinstance(t, dict) and "version" not in t]
+
+    if new_trajectories:
+        print(f"\nStoring {len(new_trajectories)} new trajectories in MongoDB...")
+        collection = db["trajectories"]
+
+        stored = 0
+        for traj in new_trajectories:
+            doc = traj.to_dict() if hasattr(traj, "to_dict") else traj
+            doc["experiment_id"] = experiment_id
+            doc["stored_at"] = datetime.utcnow().isoformat() + "Z"
+            if "version" not in doc:
+                doc["version"] = version
+
+            # Upsert by trajectory_id
+            traj_id = doc.get("trajectory_id")
+            if traj_id:
+                collection.update_one(
+                    {"trajectory_id": traj_id, "experiment_id": experiment_id},
+                    {"$set": doc},
+                    upsert=True,
+                )
+                stored += 1
+
+        print(f"  Stored: {stored} trajectories")
+    else:
+        print(f"\nNo new trajectories to store (all cached)")
+
+    # Summary
+    total_cached = sum(cached_counts.values()) if cached_counts else 0
+    total_new = len(new_trajectories)
+    total = len(all_trajectories)
+
+    print(f"\nLoad summary (version={version}):")
+    print(f"  Cached: {total_cached}")
+    print(f"  Newly loaded: {total_new}")
+    print(f"  Total: {total}")
     print(f"  By benchmark: {benchmark_counts}")
 
     if verification_stats:
@@ -312,14 +385,29 @@ def run_typing_phase(config: Dict, db, verbose: bool = True):
     from src.data.schema import Trajectory
 
     experiment_id = config["experiment"]["id"]
+    # No version field for typing - it's a transformation, not a generation
 
     print("\n" + "=" * 70)
     print("PHASE: TYPING")
     print("=" * 70)
 
+    # Check for cached typed trajectories
+    typed_collection = db["typed_trajectories"]
+    cached_count = typed_collection.count_documents({"experiment_id": experiment_id})
+
     # Load trajectories from MongoDB
-    print("\nLoading trajectories from MongoDB...")
     collection = db["trajectories"]
+    total_trajectories = collection.count_documents({"experiment_id": experiment_id})
+
+    print(f"\nTrajectories: {total_trajectories}")
+    print(f"Typed (cached): {cached_count}")
+
+    if cached_count >= total_trajectories and total_trajectories > 0:
+        print(f"All {cached_count} trajectories already typed, skipping")
+        print("\nTyping phase complete.")
+        return
+
+    print(f"\nLoading trajectories from MongoDB...")
     docs = list(collection.find({"experiment_id": experiment_id}))
     print(f"  Found: {len(docs)} trajectories")
 
@@ -327,11 +415,27 @@ def run_typing_phase(config: Dict, db, verbose: bool = True):
         print("No trajectories found. Run load phase first.")
         return
 
+    # Get already typed trajectory IDs
+    typed_ids = set(doc["trajectory_id"] for doc in typed_collection.find(
+        {"experiment_id": experiment_id},
+        {"trajectory_id": 1}
+    ))
+    print(f"  Already typed: {len(typed_ids)}")
+
+    # Filter to untyped trajectories
+    untyped_docs = [doc for doc in docs if doc.get("trajectory_id") not in typed_ids]
+    print(f"  Need to type: {len(untyped_docs)}")
+
+    if not untyped_docs:
+        print("All trajectories already typed.")
+        print("\nTyping phase complete.")
+        return
+
     # Clean MongoDB-specific fields
     def clean_doc(doc):
         return {k: v for k, v in doc.items()
                 if k not in ("_id", "experiment_id", "stored_at")}
-    cleaned_docs = [clean_doc(doc) for doc in docs]
+    cleaned_docs = [clean_doc(doc) for doc in untyped_docs]
 
     # Type trajectories
     print("\nTyping trajectories...")
@@ -340,7 +444,6 @@ def run_typing_phase(config: Dict, db, verbose: bool = True):
 
     # Store typed trajectories
     print("\nStoring typed trajectories...")
-    typed_collection = db["typed_trajectories"]
 
     stored = 0
     for typed_traj in typed_trajectories:
@@ -357,6 +460,10 @@ def run_typing_phase(config: Dict, db, verbose: bool = True):
         stored += 1
 
     print(f"  Stored: {stored} typed trajectories")
+    print(f"\nTyping summary:")
+    print(f"  Cached: {len(typed_ids)}")
+    print(f"  Newly typed: {stored}")
+    print(f"  Total: {len(typed_ids) + stored}")
     print("\nTyping phase complete.")
 
 
@@ -374,10 +481,54 @@ def run_perturb_phase(config: Dict, db, verbose: bool = True):
     experiment_id = config["experiment"]["id"]
     phase_config = config.get("phases", {}).get("perturb", {})
     targets = config["experiment"].get("targets", {})
+    version = phase_config.get("version", "v1")
 
     print("\n" + "=" * 70)
     print("PHASE: PERTURB")
     print("=" * 70)
+    print(f"Version: {version}")
+
+    # Check for cached perturbations
+    perturb_collection = db["perturbed_trajectories"]
+    cached_count = perturb_collection.count_documents({"experiment_id": experiment_id})
+    total_target = targets.get("total_perturbations", 1500)
+
+    print(f"\nCaching check:")
+    print(f"  Cached perturbations: {cached_count}")
+    print(f"  Target: {total_target}")
+
+    if cached_count >= total_target:
+        print(f"\nFound {cached_count} cached perturbations >= target {total_target}")
+        print("Skipping perturbation generation, using cached data.")
+
+        # Still need to ensure evaluation units exist
+        eu_collection = db["evaluation_units"]
+        eu_count = eu_collection.count_documents({"experiment_id": experiment_id})
+        if eu_count >= cached_count:
+            print(f"  Evaluation units: {eu_count} (already created)")
+            print("\nPerturb phase complete (cached).")
+            return
+        else:
+            print(f"  Evaluation units: {eu_count} (need to create more)")
+            # Load cached perturbations to create evaluation units
+            cached_docs = list(perturb_collection.find({"experiment_id": experiment_id}))
+            from src.perturbations.schema import PerturbationRecord
+            all_results = []
+            for doc in cached_docs:
+                record = PerturbationRecord.from_dict(doc["perturbation_record"])
+                from src.typing.schema import TypedTrajectory
+                perturbed_traj = TypedTrajectory.from_dict(doc["perturbed_trajectory"])
+                all_results.append((record, perturbed_traj))
+
+            # Get balanced records (all cached are already balanced)
+            balanced_records = [r for r, _ in all_results]
+            print(f"\nCreating evaluation units from {len(balanced_records)} cached perturbations...")
+            _create_evaluation_units(config, db, balanced_records, all_results, verbose)
+            print("\nPerturb phase complete (cached).")
+            return
+
+    needed = total_target - cached_count
+    print(f"  Need to generate: {needed} more perturbations")
 
     # Load typed trajectories
     print("\nLoading typed trajectories from MongoDB...")
@@ -394,7 +545,6 @@ def run_perturb_phase(config: Dict, db, verbose: bool = True):
     # Config
     parallelism = phase_config.get("parallelism", 4)
     per_trajectory = targets.get("per_trajectory", {}).get("target", 3)
-    total_target = targets.get("total_perturbations", 1500)
     class_weights = targets.get("by_class", {})
     random_seed = config["experiment"].get("random_seed", 42)
 
@@ -441,6 +591,7 @@ def run_perturb_phase(config: Dict, db, verbose: bool = True):
                 "perturbed_trajectory": perturbed_traj.to_dict(),
                 "experiment_id": experiment_id,
                 "stored_at": timestamp,
+                "version": version,
             }
 
             # Run class validation if enabled
@@ -676,6 +827,9 @@ def run_judge_phase(config: Dict, db, verbose: bool = True):
     print("PHASE: JUDGE")
     print("=" * 70)
 
+    base_version = judge_config.get("version", "v1")
+    print(f"Version: {base_version}")
+
     # Load evaluation units
     print("\nLoading evaluation units from MongoDB...")
     collection = db["evaluation_units"]
@@ -691,6 +845,30 @@ def run_judge_phase(config: Dict, db, verbose: bool = True):
         print("No evaluation units found.")
         return
 
+    # Get modes to run (support both "mode" and "modes" config keys)
+    modes = judge_config.get("modes", [judge_config.get("mode", "single_trajectory")])
+    if isinstance(modes, str):
+        modes = [modes]
+
+    # Check for cached judge outputs per mode
+    judge_collection = db["judge_eval_outputs"]
+    print(f"\nCaching check for {len(modes)} modes:")
+    all_cached = True
+    for mode in modes:
+        version = f"{base_version}_{mode}"
+        cached = judge_collection.count_documents({
+            "experiment_id": experiment_id,
+            "version": version
+        })
+        print(f"  {mode}: {cached}/{len(docs)} cached")
+        if cached < len(docs):
+            all_cached = False
+
+    if all_cached:
+        print(f"\nAll modes fully cached. Skipping judge evaluation.")
+        print("\nJudge phase complete (cached).")
+        return
+
     # Get judge model config
     models = judge_config.get("models", [])
     if not models:
@@ -699,13 +877,7 @@ def run_judge_phase(config: Dict, db, verbose: bool = True):
 
     model_config = models[0]  # Use first model
 
-    # Get modes to run (support both "mode" and "modes" config keys)
-    modes = judge_config.get("modes", [judge_config.get("mode", "single_trajectory")])
-    if isinstance(modes, str):
-        modes = [modes]
-
     parallelism = judge_config.get("parallelism", 4)
-    base_version = judge_config.get("version", "v1")
 
     print(f"\nRunning judge: {model_config['name']}")
     print(f"Modes: {modes}")
@@ -819,10 +991,12 @@ def run_compute_phase(config: Dict, db, verbose: bool = True):
     """Compute metrics from judge evaluations."""
     experiment_id = config["experiment"]["id"]
     compute_config = config.get("phases", {}).get("compute", {})
+    version = compute_config.get("version", "v1")
 
     print("\n" + "=" * 70)
     print("PHASE: COMPUTE")
     print("=" * 70)
+    print(f"Version: {version}")
 
     # Load evaluation units
     eu_collection = db["evaluation_units"]
