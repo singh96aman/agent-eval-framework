@@ -119,7 +119,9 @@ def verify_trajectory_with_claude(
         parsed = json.loads(raw.strip())
         task_would_succeed = parsed.get("task_would_succeed", False)
         error_detected = parsed.get("error_detected", True)  # Default to True (fail-safe)
-        overall_score = parsed.get("overall_score", 0)
+        # Handle None explicitly (JSON can have null values)
+        overall_score = parsed.get("overall_score")
+        overall_score = int(overall_score) if overall_score is not None else 0
         why_would_fail = parsed.get("why_would_fail")
     except json.JSONDecodeError:
         # If parsing fails, treat as failed

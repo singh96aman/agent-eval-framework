@@ -184,6 +184,7 @@ class LoadPhaseConfig(BaseModel):
     """Load phase configuration."""
 
     enabled: bool = True
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
     sampling: Optional[SamplingConfig] = None
     quality_gates: Optional[Dict[str, QualityGateConfig]] = None
 
@@ -248,6 +249,7 @@ class PerturbPhaseConfig(BaseModel):
     """Perturb phase configuration."""
 
     enabled: bool = True
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
     parallelism: int = 4
     llm: Optional[LLMConfig] = None
     prompts: Optional[Dict[str, str]] = None
@@ -272,6 +274,7 @@ class EvaluationUnitPhaseConfig(BaseModel):
     """Evaluation unit phase configuration."""
 
     enabled: bool = True
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
     blinding: Optional[BlindingConfig] = None
     quality_gates: Optional[Dict[str, QualityGateConfig]] = None
 

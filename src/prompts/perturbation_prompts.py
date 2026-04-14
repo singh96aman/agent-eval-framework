@@ -91,6 +91,38 @@ REQUIREMENTS:
 Generate ONLY the wrong plan text. No explanation, no JSON, just the plan."""
 
 
+# V3: Creates OBVIOUSLY WRONG plans that are clearly task-blocking
+WRONG_PLAN_PROMPT_V3 = """You are generating test data for AI judge evaluation.
+Create a WRONG plan that makes the task IMPOSSIBLE to complete.
+
+TASK: {task_description}
+
+ORIGINAL CORRECT PLAN:
+{original_plan}
+
+Create a plan that will DEFINITELY FAIL. Choose ONE:
+
+1. COMPLETELY WRONG GOAL (most severe)
+   - Plan for a DIFFERENT task entirely
+   - Example: Task asks for "Italian restaurants" -> Plan searches for "Italian language courses"
+
+2. CRITICAL MISSING STEP (severe)
+   - Remove a step without which the task CANNOT complete
+   - Example: Remove authentication before API call -> API will reject
+
+3. WRONG DATA SOURCE (severe)
+   - Use completely wrong tool/API for the data needed
+   - Example: Use weather API when stock prices needed
+
+REQUIREMENTS:
+- The plan MUST be broken - an expert should say "this will not work"
+- Do NOT make it just "slower" - it must FAIL completely
+- Keep similar length/format to original (3-5 steps)
+- Do NOT explain why it's wrong - just output the bad plan
+
+Output ONLY the wrong plan text, nothing else."""
+
+
 # =============================================================================
 # Fine-Grained LLM Mutation Prompts
 # =============================================================================
@@ -187,6 +219,7 @@ PERTURBATION_PROMPTS = {
     # Coarse-grained
     "WRONG_PLAN_PROMPT_V1": WRONG_PLAN_PROMPT_V1,
     "WRONG_PLAN_PROMPT_V2": WRONG_PLAN_PROMPT_V2,
+    "WRONG_PLAN_PROMPT_V3": WRONG_PLAN_PROMPT_V3,
     # Fine-grained LLM mutations
     "WRONG_PARAMETER_PROMPT_V1": WRONG_PARAMETER_PROMPT_V1,
     "VALUE_MUTATION_PROMPT_V1": VALUE_MUTATION_PROMPT_V1,

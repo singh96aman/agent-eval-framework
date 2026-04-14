@@ -129,6 +129,7 @@ class Trajectory:
     domain: Optional[str] = None
     complexity: Optional[str] = None
     provenance: Optional["SamplingProvenance"] = None
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
 
     def __len__(self) -> int:
         """Return number of steps in trajectory."""
@@ -175,6 +176,8 @@ class Trajectory:
         }
         if self.provenance:
             result["provenance"] = self.provenance.to_dict()
+        if self.version:
+            result["version"] = self.version
         return result
 
     @classmethod
@@ -183,9 +186,10 @@ class Trajectory:
         data = data.copy()
         data["steps"] = [Step.from_dict(s) for s in data["steps"]]
         data["ground_truth"] = GroundTruth.from_dict(data["ground_truth"])
-        # Handle backward compatibility for old files without domain/complexity/provenance
+        # Handle backward compatibility for old files without domain/complexity/provenance/version
         data.setdefault("domain", None)
         data.setdefault("complexity", None)
+        data.setdefault("version", None)
         if "provenance" in data and data["provenance"]:
             data["provenance"] = SamplingProvenance.from_dict(data["provenance"])
         else:

@@ -320,10 +320,11 @@ class EvaluationUnit:
     # === Evaluation Configuration ===
     replay_tier: Optional[int]
     blinding: BlindingAssignment
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "evaluation_unit_id": self.evaluation_unit_id,
             "experiment_id": self.experiment_id,
             "created_at": self.created_at,
@@ -338,6 +339,9 @@ class EvaluationUnit:
             "replay_tier": self.replay_tier,
             "blinding": self.blinding.to_dict(),
         }
+        if self.version:
+            result["version"] = self.version
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EvaluationUnit":
@@ -358,6 +362,7 @@ class EvaluationUnit:
             ),
             replay_tier=data.get("replay_tier"),
             blinding=BlindingAssignment.from_dict(data["blinding"]),
+            version=data.get("version"),
         )
 
     def get_baseline_trajectory_id(self) -> str:

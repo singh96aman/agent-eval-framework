@@ -103,10 +103,11 @@ class JudgeOutput:
     timestamp: datetime = field(default_factory=datetime.utcnow)
     evaluation_time_ms: Optional[int] = None
     tokens_used: Optional[int] = None
+    version: Optional[str] = None  # Version for caching (e.g., "v1")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for MongoDB storage."""
-        return {
+        result = {
             "trajectory_id": self.trajectory_id,
             "judge_name": self.judge_name,
             "model_id": self.model_id,
@@ -122,6 +123,9 @@ class JudgeOutput:
             "evaluation_time_ms": self.evaluation_time_ms,
             "tokens_used": self.tokens_used,
         }
+        if self.version:
+            result["version"] = self.version
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "JudgeOutput":
@@ -152,6 +156,7 @@ class JudgeOutput:
             timestamp=data.get("timestamp", datetime.utcnow()),
             evaluation_time_ms=data.get("evaluation_time_ms"),
             tokens_used=data.get("tokens_used"),
+            version=data.get("version"),
         )
 
 
