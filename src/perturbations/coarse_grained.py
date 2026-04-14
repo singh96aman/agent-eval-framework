@@ -5,7 +5,6 @@ These generators inject STRUCTURAL DECISION errors that fundamentally alter
 the trajectory's approach. They test whether judges recognize high-level failures.
 
 Perturbation types:
-- SKIPPED_PREREQUISITE: Delete a critical step
 - WRONG_PLAN: Generate a plausible but inferior plan via LLM
 - FALSE_TERMINAL: Mark an incomplete step as terminal
 - PREMATURE_TERMINATION: Truncate trajectory early
@@ -29,12 +28,9 @@ from src.perturbations.schema import (
     PerturbationType,
     PerturbationRecord,
 )
+from src.llm import DEFAULT_MODEL_ID
 
 # Note: ToolSimilarityMatcher imported dynamically in WrongToolFamilyGenerator
-
-
-# Default model ID for LLM calls
-DEFAULT_MODEL_ID = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
 
 
 class BaseCoarseGrainedGenerator(ABC):
@@ -89,148 +85,6 @@ class BaseCoarseGrainedGenerator(ABC):
         pass
 
 
-class SkippedPrerequisiteGenerator(BaseCoarseGrainedGenerator):
-    """
-    Deletes a critical step from the trajectory.
-
-    Strategy:
-    1. Find steps with high critical_path_score (>0.7)
-    2. Delete the step
-    3. Update subsequent step indices
-    4. Record which step was removed
-    """
-
-    def __init__(
-        self,
-        random_seed: Optional[int] = None,
-        llm_client=None,
-        critical_path_threshold: float = 0.7,
-    ):
-        super().__init__(random_seed, llm_client)
-        self.critical_path_threshold = critical_path_threshold
-
-    @property
-    def perturbation_family(self) -> PerturbationFamily:
-        return PerturbationFamily.STRUCTURAL
-
-    @property
-    def perturbation_type(self) -> PerturbationType:
-        return PerturbationType.SKIPPED_PREREQUISITE
-
-    def generate(
-        self,
-        typed_trajectory: TypedTrajectory,
-    ) -> Optional[Tuple[PerturbationRecord, TypedTrajectory]]:
-        """
-        Delete a critical step from the trajectory.
-
-        Returns:
-            (record, modified_trajectory) or None if no critical step found
-        """
-        # Find critical steps
-        critical_steps = self._find_critical_steps(typed_trajectory)
-
-        if not critical_steps:
-            return None
-
-        # Choose a step to delete
-        step_to_delete = self.random.choice(critical_steps)
-        deleted_index = step_to_delete.step_index
-
-        # Create modified trajectory
-        modified_trajectory = deepcopy(typed_trajectory)
-
-        # Remove the step
-        modified_trajectory.steps = [
-            s for s in modified_trajectory.steps if s.step_index != deleted_index
-        ]
-
-        # Update step indices for subsequent steps
-        for step in modified_trajectory.steps:
-            if step.step_index > deleted_index:
-                step.step_index -= 1
-
-            # Update depends_on_steps references
-            step.depends_on_steps = [
-                (idx - 1 if idx > deleted_index else idx)
-                for idx in step.depends_on_steps
-                if idx != deleted_index
-            ]
-
-            # Update dependency edges
-            new_edges = []
-            for edge in step.dependency_edges:
-                if edge.source_step == deleted_index:
-                    continue  # Remove dependency to deleted step
-                new_edge = DependencyEdge(
-                    type=edge.type,
-                    source_step=(
-                        edge.source_step - 1
-                        if edge.source_step > deleted_index
-                        else edge.source_step
-                    ),
-                    reason=edge.reason,
-                    evidence=edge.evidence,
-                )
-                new_edges.append(new_edge)
-            step.dependency_edges = new_edges
-
-            # Update transitive dependencies
-            step.transitive_depends_on = [
-                (idx - 1 if idx > deleted_index else idx)
-                for idx in step.transitive_depends_on
-                if idx != deleted_index
-            ]
-
-        # Update num_steps
-        modified_trajectory.num_steps = len(modified_trajectory.steps)
-
-        # Create perturbation record
-        critical_score = (
-            step_to_delete.critical_path_score.value
-            if step_to_delete.critical_path_score
-            else 0.0
-        )
-
-        record = PerturbationRecord.create(
-            original_trajectory_id=typed_trajectory.trajectory_id,
-            perturbation_class=PerturbationClass.COARSE_GRAINED,
-            perturbation_family=self.perturbation_family,
-            perturbation_type=self.perturbation_type,
-            target_step_index=deleted_index,
-            target_slot="step",
-            original_value=step_to_delete.to_dict(),
-            perturbed_value=None,  # Step was deleted
-            mutation_method="critical_step_deletion",
-            expected_impact=3,  # Critical impact
-            notes=f"Deleted step {deleted_index} with critical_path_score={critical_score:.2f}",
-        )
-
-        return (record, modified_trajectory)
-
-    def _find_critical_steps(self, trajectory: TypedTrajectory) -> List[TypedStep]:
-        """
-        Find steps with high critical_path_score.
-
-        Excludes:
-        - Terminal steps (can't delete the final answer)
-        - Steps without critical_path_score
-        """
-        critical_steps = []
-
-        for step in trajectory.steps:
-            # Skip terminal steps
-            if step.is_terminal_step:
-                continue
-
-            # Check critical_path_score
-            if step.critical_path_score:
-                if step.critical_path_score.value >= self.critical_path_threshold:
-                    critical_steps.append(step)
-
-        return critical_steps
-
-
 class WrongPlanGenerator(BaseCoarseGrainedGenerator):
     """
     Uses Claude LLM to generate a plausible but inferior plan.
@@ -248,9 +102,11 @@ class WrongPlanGenerator(BaseCoarseGrainedGenerator):
         random_seed: Optional[int] = None,
         llm_client=None,
         model_id: str = DEFAULT_MODEL_ID,
+        prompt_template: Optional[str] = None,
     ):
         super().__init__(random_seed, llm_client)
         self.model_id = model_id
+        self.prompt_template = prompt_template
 
     @property
     def perturbation_family(self) -> PerturbationFamily:
@@ -349,7 +205,17 @@ class WrongPlanGenerator(BaseCoarseGrainedGenerator):
         task_text: str,
     ) -> str:
         """Generate inferior plan using LLM."""
-        prompt = f"""You are helping generate test data for evaluating AI judges.
+        # Use prompt from config if provided, otherwise use default
+        if self.prompt_template:
+            from src.prompts.registry import get_prompt
+            prompt_text = get_prompt(self.prompt_template)
+            prompt = prompt_text.format(
+                task_description=task_text,
+                original_plan=original_plan,
+            )
+        else:
+            # Fallback to hardcoded default (V1 behavior)
+            prompt = f"""You are helping generate test data for evaluating AI judges.
 
 Given the original task and the agent's good plan, generate a PLAUSIBLE but INFERIOR alternative plan.
 
@@ -358,12 +224,6 @@ The inferior plan should:
 2. Address the task superficially but miss the core objective
 3. Be the kind of mistake a less experienced agent might make
 4. NOT be obviously wrong or nonsensical
-
-Examples of inferior planning:
-- "Fix the test to pass" instead of "Find the root cause of the bug"
-- "Search for a quick answer" instead of "Verify through multiple sources"
-- "Use the first result" instead of "Compare options and select best"
-- "Make minimal changes" instead of "Refactor for correctness"
 
 TASK: {task_text}
 
@@ -962,6 +822,7 @@ def get_coarse_grained_generator(
     perturbation_type: PerturbationType,
     random_seed: Optional[int] = None,
     llm_client=None,
+    prompt_template: Optional[str] = None,
     **kwargs,
 ) -> BaseCoarseGrainedGenerator:
     """
@@ -994,11 +855,8 @@ def get_coarse_grained_generator(
         )
 
     # Map (family, type) to generator class
+    # NOTE: SKIPPED_PREREQUISITE removed - changes trajectory length, trivially detectable
     generator_map = {
-        (
-            PerturbationFamily.STRUCTURAL,
-            PerturbationType.SKIPPED_PREREQUISITE,
-        ): SkippedPrerequisiteGenerator,
         (
             PerturbationFamily.STRUCTURAL,
             PerturbationType.WRONG_PLAN,
@@ -1027,6 +885,14 @@ def get_coarse_grained_generator(
         )
 
     generator_class = generator_map[key]
+    # Pass prompt_template only to WrongPlanGenerator
+    if generator_class == WrongPlanGenerator and prompt_template:
+        return generator_class(
+            random_seed=random_seed,
+            llm_client=llm_client,
+            prompt_template=prompt_template,
+            **kwargs
+        )
     return generator_class(random_seed=random_seed, llm_client=llm_client, **kwargs)
 
 

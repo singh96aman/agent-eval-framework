@@ -362,12 +362,41 @@ def format_trajectory_for_judge(trajectory, format_style: str = "standard") -> s
     return "\n".join(lines)
 
 
+def _extract_task_text(unit: Dict[str, Any], trajectory: Dict[str, Any]) -> str:
+    """
+    Extract task text from unit or trajectory, checking multiple fields.
+
+    Lookup order:
+    1. unit.task_text
+    2. unit.task_description
+    3. trajectory.task_text
+    4. trajectory.task
+    5. trajectory.task_description
+    6. trajectory.ground_truth.task_description
+
+    Args:
+        unit: Evaluation unit dict
+        trajectory: Trajectory dict (used as fallback)
+
+    Returns:
+        Task text string (empty string if not found)
+    """
+    return (
+        unit.get("task_text")
+        or unit.get("task_description")
+        or trajectory.get("task_text")
+        or trajectory.get("task")
+        or trajectory.get("task_description")
+        or trajectory.get("ground_truth", {}).get("task_description", "")
+    )
+
+
 def build_view_for_single_trajectory(
     unit: Dict[str, Any], trajectory: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Build view dictionary for single trajectory evaluation."""
     return {
-        "task_text": unit.get("task_text", unit.get("task_description", "")),
+        "task_text": _extract_task_text(unit, trajectory),
         "formatted_trajectory": format_trajectory_for_judge(trajectory),
     }
 
@@ -377,7 +406,7 @@ def build_view_for_blinded_pair(
 ) -> Dict[str, Any]:
     """Build view dictionary for blinded pair evaluation."""
     return {
-        "task_text": unit.get("task_text", unit.get("task_description", "")),
+        "task_text": _extract_task_text(unit, trajectory_a),
         "formatted_trajectory_a": format_trajectory_for_judge(trajectory_a),
         "formatted_trajectory_b": format_trajectory_for_judge(trajectory_b),
     }

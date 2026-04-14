@@ -413,19 +413,8 @@ class TestFineGrainedGenerators:
 class TestCoarseGrainedGenerators:
     """Tests for coarse-grained perturbation generators."""
 
-    def test_skipped_prerequisite_generator(self, sample_typed_trajectory):
-        """Test skipped prerequisite generator."""
-        from src.perturbations.coarse_grained import SkippedPrerequisiteGenerator
-
-        generator = SkippedPrerequisiteGenerator(random_seed=42)
-        result = generator.generate(sample_typed_trajectory)
-
-        # May return None if no valid prerequisite to skip
-        if result:
-            record, perturbed_traj = result
-            assert record.perturbation_class == "coarse_grained"
-            assert record.perturbation_family == "structural"
-            assert record.perturbation_type == "skipped_prerequisite"
+    # NOTE: test_skipped_prerequisite_generator removed - class was dead code
+    # (changes trajectory length, trivially detectable by judges)
 
     def test_false_terminal_generator(self, sample_typed_trajectory):
         """Test false terminal generator."""
@@ -459,9 +448,11 @@ class TestCoarseGrainedGenerators:
         """Test coarse-grained generator factory."""
         from src.perturbations.coarse_grained import get_coarse_grained_generator
 
+        # SKIPPED_PREREQUISITE was removed (changes trajectory length, trivially detectable)
+        # Test with WRONG_PLAN instead
         generator = get_coarse_grained_generator(
             PerturbationFamily.STRUCTURAL,
-            PerturbationType.SKIPPED_PREREQUISITE,
+            PerturbationType.WRONG_PLAN,
         )
         assert generator is not None
 
