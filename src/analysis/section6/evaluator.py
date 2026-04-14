@@ -243,13 +243,28 @@ class Section6Evaluator:
                     localization_near = localization_distance <= 1
 
         # Type identification (only if detected and not placebo)
+        # Compare at both type level and family level for flexibility
         type_correct = None
         if detected and not is_placebo:
             predicted_type = judge_output.predicted_error_type
             if predicted_type:
-                mapped_family = map_error_type_to_family(predicted_type)
-                if mapped_family:
-                    type_correct = mapped_family == ground_truth.perturbation_family
+                predicted_lower = predicted_type.lower()
+                gt_type_lower = ground_truth.perturbation_type.lower()
+                gt_family_lower = ground_truth.perturbation_family.lower()
+
+                # Option 1: Direct type match (judge predicts exact type)
+                if predicted_lower == gt_type_lower:
+                    type_correct = True
+                # Option 2: Family-level match (judge predicts at family level)
+                elif predicted_lower == gt_family_lower:
+                    type_correct = True
+                # Option 3: Judge type maps to ground truth family
+                else:
+                    mapped_family = map_error_type_to_family(predicted_type)
+                    if mapped_family:
+                        type_correct = mapped_family.lower() == gt_family_lower
+                    else:
+                        type_correct = False
 
         # Critical error detection
         is_critical_detected = None

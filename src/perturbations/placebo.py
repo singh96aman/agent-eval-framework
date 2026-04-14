@@ -16,7 +16,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from src.llm import get_bedrock_client
+from src.llm import get_bedrock_client, DEFAULT_MODEL_ID
 from src.perturbations.schema import (
     PerturbationClass,
     PerturbationFamily,
@@ -25,8 +25,8 @@ from src.perturbations.schema import (
 )
 from src.typing.schema import TypedStep
 
-# Model ID for Claude on Bedrock
-CLAUDE_MODEL_ID = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+# Use centralized model config
+CLAUDE_MODEL_ID = DEFAULT_MODEL_ID
 
 
 class BasePlaceboGenerator(ABC):
@@ -385,6 +385,19 @@ class PlaceboSynonymGenerator(BasePlaceboGenerator):
     Only swaps common synonyms in thought text (not in tool arguments).
     """
 
+    # Protected tokens that must not be modified (ReAct format markers)
+    PROTECTED_TOKENS: List[str] = [
+        "Action:",
+        "Action Input:",
+        "Observation:",
+        "Thought:",
+        "Final Answer:",
+        "Finish",
+        "Tool:",
+        "Tool Input:",
+        "Tool Output:",
+    ]
+
     # Common synonym pairs for agent contexts
     SYNONYM_PAIRS: List[Tuple[str, str]] = [
         ("retrieve", "fetch"),
@@ -467,6 +480,24 @@ class PlaceboSynonymGenerator(BasePlaceboGenerator):
         changes: List[str] = []
         result = text
 
+        # Find protected token positions (ranges where substitution is forbidden)
+        protected_ranges: List[Tuple[int, int]] = []
+        for token in self.PROTECTED_TOKENS:
+            pos = 0
+            while True:
+                idx = text.find(token, pos)
+                if idx == -1:
+                    break
+                protected_ranges.append((idx, idx + len(token)))
+                pos = idx + 1
+
+        def is_protected(start: int, end: int) -> bool:
+            """Check if position overlaps with any protected range."""
+            for pstart, pend in protected_ranges:
+                if start < pend and end > pstart:
+                    return True
+            return False
+
         # Find word boundaries and positions
         word_positions: List[Tuple[int, int, str]] = []
 
@@ -475,6 +506,10 @@ class PlaceboSynonymGenerator(BasePlaceboGenerator):
 
         # Process in reverse order to maintain positions
         for start, end, word in reversed(word_positions):
+            # Skip words inside protected tokens
+            if is_protected(start, end):
+                continue
+
             word_lower = word.lower()
             if word_lower in self.synonym_map:
                 replacement = self.synonym_map[word_lower]

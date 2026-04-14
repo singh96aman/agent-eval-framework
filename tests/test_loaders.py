@@ -2,10 +2,11 @@
 Tests for dataset loaders (ToolBench and GAIA).
 """
 
+import builtins
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from src.data.loaders import (
     load_toolbench_trajectories,
     load_gaia_trajectories,
@@ -137,10 +138,8 @@ class TestToolBenchLoader:
         trajectories = load_toolbench_trajectories(max_trajectories=3)
         assert len(trajectories) <= 3
 
-    @patch("src.data.loaders.json.load")
-    @patch("builtins.open", create=True)
     @patch("pathlib.Path.exists")
-    def test_missing_directory(self, mock_exists, mock_open, mock_json_load):
+    def test_missing_directory(self, mock_exists):
         """Test handling when local file doesn't exist and HF fails."""
         # Mock local file doesn't exist
         mock_exists.return_value = False

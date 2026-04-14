@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
+from src.utils import generate_annotation_id
+
 # Load environment variables from .env
 from dotenv import load_dotenv
 
@@ -248,9 +250,10 @@ def save_annotation(unit: Dict, responses: Dict) -> bool:
         )
 
     # Create annotation record
+    evaluation_unit_id = unit["evaluation_unit_id"]
     record = AnnotationRecord(
-        annotation_id=f"ann_{unit['evaluation_unit_id']}_{ANNOTATOR_ID}_{int(time.time())}",
-        evaluation_unit_id=unit["evaluation_unit_id"],
+        annotation_id=generate_annotation_id(evaluation_unit_id, ANNOTATOR_ID),
+        evaluation_unit_id=evaluation_unit_id,
         annotator_id=ANNOTATOR_ID,
         annotation_mode="detectability",
         created_at=datetime.utcnow().isoformat() + "Z",

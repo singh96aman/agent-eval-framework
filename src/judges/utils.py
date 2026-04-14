@@ -45,6 +45,7 @@ from src.judges.prompts import (
     build_evaluation_prompt,
     build_unit_prompt,
     build_view_for_single_trajectory,
+    build_view_for_blinded_pair,
 )
 
 # =============================================================================
@@ -778,6 +779,7 @@ def save_judge_outputs_to_mongodb(
     outputs: List[Section5JudgeOutput],
     storage,
     experiment_id: str,
+    version: Optional[str] = None,
 ) -> int:
     """Save judge outputs to MongoDB."""
     collection = storage.db["judge_eval_outputs"]
@@ -785,11 +787,15 @@ def save_judge_outputs_to_mongodb(
     collection.create_index("evaluation_unit_id")
     collection.create_index("experiment_id")
     collection.create_index("judge_output_id")
+    if version:
+        collection.create_index("version")
 
     saved = 0
     for output in outputs:
         doc = output.to_dict()
         doc["experiment_id"] = experiment_id
+        if version:
+            doc["version"] = version
 
         collection.update_one(
             {"judge_output_id": output.judge_output_id},
@@ -832,9 +838,17 @@ def load_judge_outputs_from_mongodb(
 class UnitJudgeRunner:
     """Runner for judge evaluations on evaluation units."""
 
-    def __init__(self, judge: Judge, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        judge: Judge,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[str] = None,
+        prompts: Optional[Dict[str, Dict[str, str]]] = None,
+    ):
         self.judge = judge
         self.config = config or {}
+        self.version = version  # Version identifier for output isolation
+        self.prompts = prompts  # Prompt names from config (e.g., {"system": "X", "user": "Y"})
 
         self.prompt_template_id = self.config.get(
             "prompt_template_id", "single_trajectory_v1"
@@ -864,7 +878,17 @@ class UnitJudgeRunner:
                 )
 
         view = build_view_for_single_trajectory(unit, trajectory)
-        system_prompt, user_prompt = build_unit_prompt(view, "single_trajectory")
+
+        # Use prompts from config if provided, otherwise fallback to defaults
+        if self.prompts:
+            from src.prompts.registry import get_prompt
+            from src.judges.prompts import _render_template
+            system_name = self.prompts.get("system", "SINGLE_TRAJECTORY_SYSTEM_V1")
+            user_name = self.prompts.get("user", "SINGLE_TRAJECTORY_USER_V1")
+            system_prompt = get_prompt(system_name)
+            user_prompt = _render_template(get_prompt(user_name), view)
+        else:
+            system_prompt, user_prompt = build_unit_prompt(view, "single_trajectory")
 
         judge_config = JudgeConfig(
             prompt_template_id=self.prompt_template_id,
@@ -879,7 +903,8 @@ class UnitJudgeRunner:
             trajectory_variant_ids=[trajectory.get("trajectory_id", "")],
         )
 
-        judge_output_id = f"judge_{unit.get('evaluation_unit_id', 'unknown')}_{self.judge.name}_{sample_index}"
+        base_id = f"judge_{unit.get('evaluation_unit_id', 'unknown')}_{self.judge.name}_{sample_index}"
+        judge_output_id = f"{self.version}_{base_id}" if self.version else base_id
 
         raw_response = self._call_judge(system_prompt, user_prompt)
 
@@ -898,6 +923,82 @@ class UnitJudgeRunner:
                 output.localization.predicted_error_step, trajectory
             )
             output.localization.predicted_error_step_canonical = canonical_id
+
+        return output
+
+    def run_blinded_pair(
+        self,
+        unit: Dict[str, Any],
+        sample_index: int = 0,
+    ) -> Section5JudgeOutput:
+        """Evaluate a blinded pair (baseline vs perturbed) for an evaluation unit."""
+        blinding = unit.get("blinding", {})
+        trajectory_a = blinding.get("trajectory_a")
+        trajectory_b = blinding.get("trajectory_b")
+
+        if trajectory_a is None or trajectory_b is None:
+            raise ValueError("Blinded pair evaluation requires trajectory_a and trajectory_b")
+
+        view = build_view_for_blinded_pair(unit, trajectory_a, trajectory_b)
+
+        # Use prompts from config if provided, otherwise fallback to defaults
+        if self.prompts:
+            from src.prompts.registry import get_prompt
+            from src.judges.prompts import _render_template
+            system_name = self.prompts.get("system", "BLINDED_PAIR_SYSTEM_V3")
+            user_name = self.prompts.get("user", "BLINDED_PAIR_USER_V3")
+            system_prompt = get_prompt(system_name)
+            user_prompt = _render_template(get_prompt(user_name), view)
+        else:
+            system_prompt, user_prompt = build_unit_prompt(view, "blinded_pair")
+
+        judge_config = JudgeConfig(
+            prompt_template_id="blinded_pair_v1",
+            temperature=self.temperature,
+            seed=self.seed,
+            max_tokens=self.max_tokens,
+            sample_index=sample_index,
+        )
+
+        input_view = InputView(
+            view_file=unit.get("view_file", ""),
+            trajectory_variant_ids=[
+                trajectory_a.get("trajectory_id", ""),
+                trajectory_b.get("trajectory_id", ""),
+            ],
+        )
+
+        base_id = f"judge_{unit.get('evaluation_unit_id', 'unknown')}_{self.judge.name}_{sample_index}"
+        judge_output_id = f"{self.version}_{base_id}" if self.version else base_id
+
+        raw_response = self._call_judge(system_prompt, user_prompt)
+
+        output = parse_judge_response(
+            raw_text=raw_response,
+            mode="blinded_pair",
+            evaluation_unit_id=unit.get("evaluation_unit_id", ""),
+            judge_model=self.judge.model_id,
+            config=judge_config,
+            input_view=input_view,
+            judge_output_id=judge_output_id,
+        )
+
+        # Map error step to canonical (if detected in either trajectory)
+        if output.localization and output.localization.predicted_error_step:
+            # Determine which trajectory had the error
+            error_trajectory = output.pair_comparison.error_trajectory if output.pair_comparison else None
+            if error_trajectory == "A":
+                traj = trajectory_a
+            elif error_trajectory == "B":
+                traj = trajectory_b
+            else:
+                traj = None
+
+            if traj:
+                canonical_id = map_step_to_canonical(
+                    output.localization.predicted_error_step, traj
+                )
+                output.localization.predicted_error_step_canonical = canonical_id
 
         return output
 
@@ -928,7 +1029,12 @@ class UnitJudgeRunner:
         completed_ids = set()
         if resume:
             if use_mongodb:
-                existing = load_judge_outputs_from_mongodb(experiment_id, storage)
+                # Filter by version if specified for proper resume
+                filters = {"version": self.version} if self.version else None
+                print(f"  Version filter: {self.version} -> filters={filters}")
+                existing = load_judge_outputs_from_mongodb(
+                    experiment_id, storage, filters=filters
+                )
                 completed_ids = set(o.evaluation_unit_id for o in existing)
             else:
                 checkpoint = load_checkpoint(output_dir, self.judge.name, mode)
@@ -956,6 +1062,10 @@ class UnitJudgeRunner:
                         output = self.run_single_trajectory(
                             unit, sample_index=sample_idx
                         )
+                    elif mode == "blinded_pair":
+                        output = self.run_blinded_pair(
+                            unit, sample_index=sample_idx
+                        )
                     else:
                         raise ValueError(f"Invalid mode: {mode}")
 
@@ -964,7 +1074,9 @@ class UnitJudgeRunner:
                         print(f"  Warning: Validation errors for {unit_id}: {errors}")
 
                     if use_mongodb:
-                        save_judge_outputs_to_mongodb([output], storage, experiment_id)
+                        save_judge_outputs_to_mongodb(
+                            [output], storage, experiment_id, version=self.version
+                        )
                     else:
                         save_judge_output(output, output_dir)
                     outputs.append(output)

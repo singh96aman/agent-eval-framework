@@ -20,7 +20,7 @@ import random
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.typing.schema import (
     TypedTrajectory,
@@ -76,6 +76,7 @@ class PerturbationGeneratorV2:
         random_seed: Optional[int] = None,
         llm_client=None,
         enable_qc: bool = True,
+        config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the generator.
@@ -84,11 +85,13 @@ class PerturbationGeneratorV2:
             random_seed: Random seed for reproducibility
             llm_client: Optional LLM client for Claude-based generators
             enable_qc: Whether to run QC validation
+            config: Optional experiment config for new ID scheme
         """
         self.random_seed = random_seed
         self.random = random.Random(random_seed)
         self.llm_client = llm_client
         self.enable_qc = enable_qc
+        self.config = config
 
         # Initialize QC
         self.qc = PerturbationQC() if enable_qc else None
@@ -96,6 +99,26 @@ class PerturbationGeneratorV2:
         # Track generation statistics
         self.stats = defaultdict(int)
         self.index = PerturbationIndex()
+
+    def _regenerate_id(self, record: PerturbationRecord) -> PerturbationRecord:
+        """Regenerate perturbation_id using new config-based scheme."""
+        if self.config:
+            from src.utils import generate_perturbation_id
+            experiment_id = self.config["experiment"]["id"]
+            generator_config = (
+                self.config.get("phases", {})
+                .get("perturb", {})
+                .get("generators", {})
+                .get(record.perturbation_class, {})
+            )
+            record.perturbation_id = generate_perturbation_id(
+                experiment_id=experiment_id,
+                trajectory_id=record.original_trajectory_id,
+                step_idx=record.target_step_index,
+                perturbation_type=record.perturbation_type,
+                generator_config=generator_config,
+            )
+        return record
 
     def generate_for_trajectory(
         self,
@@ -472,6 +495,9 @@ class PerturbationGeneratorV2:
         if record is None:
             return None
 
+        # Regenerate ID using new scheme
+        record = self._regenerate_id(record)
+
         # Create perturbed trajectory
         perturbed_traj = self._apply_step_perturbation(
             trajectory, step.step_index, record
@@ -512,12 +538,15 @@ class PerturbationGeneratorV2:
             return None
 
         generator = get_fine_grained_generator(
-            family, ptype, random_seed=self.random_seed
+            family, ptype, random_seed=self.random_seed, llm_client=self.llm_client
         )
         record = generator.generate(step, trajectory.trajectory_id, trajectory)
 
         if record is None:
             return None
+
+        # Regenerate ID using new scheme
+        record = self._regenerate_id(record)
 
         # Create perturbed trajectory
         perturbed_traj = self._apply_step_perturbation(
@@ -535,12 +564,8 @@ class PerturbationGeneratorV2:
         family = self.random.choice(candidate.eligible_families)
 
         if family == PerturbationFamily.STRUCTURAL:
-            ptype = self.random.choice(
-                [
-                    PerturbationType.SKIPPED_PREREQUISITE,
-                    PerturbationType.WRONG_PLAN,
-                ]
-            )
+            # NOTE: SKIPPED_PREREQUISITE removed - changes trajectory length
+            ptype = PerturbationType.WRONG_PLAN
         elif family == PerturbationFamily.TERMINAL_FLAG:
             ptype = self.random.choice(
                 [
@@ -553,14 +578,32 @@ class PerturbationGeneratorV2:
         else:
             return None
 
+        # Get prompt from config if available
+        prompt_template = None
+        if self.config and ptype == PerturbationType.WRONG_PLAN:
+            prompts = (
+                self.config.get("phases", {})
+                .get("perturb", {})
+                .get("generators", {})
+                .get("coarse_grained", {})
+                .get("prompts", {})
+            )
+            prompt_template = prompts.get("wrong_plan")
+
         generator = get_coarse_grained_generator(
             family,
             ptype,
             random_seed=self.random_seed,
             llm_client=self.llm_client,
+            prompt_template=prompt_template,
         )
 
         result = generator.generate(trajectory)
+        if result:
+            record, perturbed_traj = result
+            # Regenerate ID using new scheme
+            record = self._regenerate_id(record)
+            return record, perturbed_traj
         return result
 
     def _apply_step_perturbation(
@@ -629,6 +672,9 @@ def generate_perturbations_for_batch(
     random_seed: Optional[int] = None,
     llm_client=None,
     verbose: bool = False,
+    parallelism: int = 1,
+    on_batch_save: Optional[Callable[[List[Tuple[PerturbationRecord, TypedTrajectory]]], None]] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Tuple[PerturbationRecord, TypedTrajectory]], PerturbationIndex]:
     """
     Generate perturbations for a batch of trajectories.
@@ -639,38 +685,76 @@ def generate_perturbations_for_batch(
         random_seed: Random seed for reproducibility
         llm_client: Optional LLM client
         verbose: Whether to print progress
+        parallelism: Number of parallel workers (default 1 = sequential)
+        on_batch_save: Optional callback to save perturbations after each batch.
+                       Called with list of (record, perturbed_trajectory) tuples.
+        config: Optional experiment config for new ID scheme
 
     Returns:
         Tuple of (list of (record, perturbed_trajectory), PerturbationIndex)
     """
-    generator = PerturbationGeneratorV2(
-        random_seed=random_seed,
-        llm_client=llm_client,
-    )
+    from src.utils.parallel import parallel_map_with_index, ParallelConfig
 
+    index = PerturbationIndex()
     all_results = []
+    # Map trajectory_id to trajectory for callback use
+    traj_by_id = {t.trajectory_id: t for t in trajectories}
 
-    for i, trajectory in enumerate(trajectories):
-        if verbose and (i + 1) % 50 == 0:
-            print(f"Processing trajectory {i + 1}/{len(trajectories)}")
-
-        results = generator.generate_for_trajectory(
+    def process_trajectory(idx: int, trajectory: TypedTrajectory):
+        """Process a single trajectory."""
+        # Each call gets unique seed for reproducibility
+        thread_seed = (random_seed or 42) + idx if random_seed else None
+        generator = PerturbationGeneratorV2(
+            random_seed=thread_seed,
+            llm_client=llm_client,
+            config=config,
+        )
+        return generator.generate_for_trajectory(
             trajectory,
             target_count=target_per_trajectory,
         )
 
-        for record, perturbed_traj in results:
-            all_results.append((record, perturbed_traj))
+    def handle_batch_complete(batch_results):
+        """Handle batch completion - save incrementally."""
+        batch_perturbations = []
+        for (idx, trajectory), result, error in batch_results:
+            if error or not result:
+                continue
+            # result is (idx, actual_result) from indexed_func wrapper
+            _, actual_result = result
+            for record, perturbed_traj in actual_result:
+                batch_perturbations.append((record, perturbed_traj))
+                # Also update index
+                index.add_perturbation(
+                    record,
+                    trajectory.benchmark,
+                    f"data/perturbed/{trajectory.benchmark}_perturbed.json",
+                )
 
-            # Add to index
-            generator.index.add_perturbation(
-                record,
-                trajectory.benchmark,
-                f"data/perturbed/{trajectory.benchmark}_perturbed.json",
-            )
+        if batch_perturbations:
+            all_results.extend(batch_perturbations)
+            if on_batch_save:
+                on_batch_save(batch_perturbations)
+                if verbose:
+                    print(f"    Saved {len(batch_perturbations)} perturbations")
+
+    parallel_config = ParallelConfig(
+        workers=parallelism,
+        batch_size=50,
+        rate_limit_delay=0.1,
+        verbose=verbose,
+        on_batch_complete=handle_batch_complete,
+    )
+
+    parallel_map_with_index(
+        process_trajectory,
+        trajectories,
+        config=parallel_config,
+        desc="Generating perturbations",
+    )
 
     if verbose:
         print("\nGeneration complete:")
-        print(generator.index.get_distribution_report())
+        print(index.get_distribution_report())
 
-    return all_results, generator.index
+    return all_results, index

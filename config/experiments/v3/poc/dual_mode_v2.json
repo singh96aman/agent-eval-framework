@@ -1,0 +1,174 @@
+{
+  "schema": "3.0.0",
+
+  "experiment": {
+    "id": "dual_mode_v2",
+    "name": "Dual Mode Evaluation Study with Class Validation",
+    "description": "Compare single_trajectory vs blinded_pair evaluation with LLM class validation",
+    "random_seed": 42,
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    },
+    "targets": {
+      "total_perturbations": 30,
+      "per_trajectory": { "target": 3 },
+      "by_class": {
+        "placebo": 0.20,
+        "fine_grained": 0.50,
+        "coarse_grained": 0.30
+      }
+    },
+    "datasets": {
+      "toolbench": {
+        "enabled": true,
+        "source": "local",
+        "path": "data/toolbench/data",
+        "split": "train",
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 50,
+          "require_task_success": true,
+          "require_grader_aligned": true
+        }
+      },
+      "swebench": { "enabled": false }
+    },
+    "output": {
+      "mongodb": {
+        "collection": "perturbed_trajectories",
+        "index_collection": "perturbation_index"
+      },
+      "results": {
+        "dir": "results/dual_mode_v2",
+        "checkpoints": true
+      }
+    }
+  },
+
+  "phases": {
+    "load": {
+      "enabled": true,
+      "baseline_verify": true,
+      "baseline_verify_model": {
+        "name": "claude-sonnet-4",
+        "provider": "bedrock",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 1500,
+        "temperature": 0.0
+      },
+      "baseline_verify_prompts": {
+        "system": "SINGLE_TRAJECTORY_SYSTEM_V2",
+        "user": "SINGLE_TRAJECTORY_USER_V2"
+      },
+      "baseline_verify_parallelism": 4,
+      "baseline_verify_min_score": 98,
+      "sampling": {
+        "seed": 42,
+        "targets": {
+          "toolbench": 50
+        }
+      },
+      "quality_gates": {
+        "trajectory_count": { "min": 10 },
+        "grader_pass_rate": { "min": 0.30 },
+        "baseline_verify_pass_rate": { "min": 0.05 }
+      }
+    },
+
+    "perturb": {
+      "enabled": true,
+      "parallelism": 4,
+      "llm": {
+        "provider": "bedrock",
+        "region": "us-east-1",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 2000,
+        "temperature": 0.3,
+        "use_for": ["value_mutation", "wrong_plan"]
+      },
+      "generators": {
+        "placebo": {
+          "types": ["formatting", "synonym"],
+          "llm_required": []
+        },
+        "fine_grained": {
+          "types": ["wrong_value", "off_by_one", "threshold_shift", "query_drift"],
+          "llm_required": ["value_mutation"]
+        },
+        "coarse_grained": {
+          "types": ["false_terminal", "premature_termination", "wrong_tool_family"],
+          "llm_required": ["wrong_plan"]
+        }
+      },
+      "class_validation": {
+        "enabled": true,
+        "model": {
+          "provider": "bedrock",
+          "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+          "max_tokens": 500,
+          "temperature": 0.0
+        },
+        "prompt": "You are validating whether a perturbation matches its claimed class.\n\n## Perturbation Classes:\n- **PLACEBO**: Change should be purely cosmetic (formatting, synonyms, paraphrasing). NO semantic change - the trajectory should behave identically.\n- **FINE_GRAINED**: Subtle but real error (wrong parameter value, off-by-one, typo in ID). Small change that could cause task failure.\n- **COARSE_GRAINED**: Major structural error (wrong tool, flawed plan, premature termination). Significant change that would likely cause task failure.\n\n## Perturbation to Validate:\n- Claimed class: {{perturbation_class}}\n- Perturbation type: {{perturbation_type}}\n- Target step: {{step_index}}\n- Original value: {{original_value}}\n- Perturbed value: {{perturbed_value}}\n- Mutation method: {{mutation_method}}\n\n## Question:\nDoes this perturbation match its claimed class?\n\nRespond with JSON only:\n{\"class_matches\": 0 or 1, \"reasoning\": \"brief explanation\"}",
+        "min_match_rate": 0.90
+      },
+      "quality_gates": {
+        "no_synthetic_markers": { "max_rate": 0.0 },
+        "no_structural_corruption": { "max_rate": 0.0 },
+        "json_validity": { "min_rate": 1.0 },
+        "position_distribution": { "max_last_step_rate": 0.40 },
+        "perturbation_class_validity": { "min_rate": 0.90 }
+      }
+    },
+
+    "evaluation_unit": {
+      "enabled": true,
+      "blinding": {
+        "algorithm": "hash_based",
+        "seed_source": "experiment.random_seed",
+        "verify_balance": true,
+        "balance_range": [0.35, 0.65]
+      },
+      "quality_gates": {
+        "length_preservation": { "require": true },
+        "blinding_balance": { "min": 0.35, "max": 0.65 }
+      }
+    },
+
+    "judge": {
+      "enabled": true,
+      "version": "v1",
+      "models": [{
+        "name": "claude-sonnet-4",
+        "provider": "bedrock",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 1500,
+        "temperature": 0.0
+      }],
+      "modes": ["single_trajectory", "blinded_pair"],
+      "prompts": {
+        "single_trajectory": {
+          "system": "SINGLE_TRAJECTORY_SYSTEM_V2",
+          "user": "SINGLE_TRAJECTORY_USER_V2"
+        },
+        "blinded_pair": {
+          "system": "BLINDED_PAIR_SYSTEM_V3",
+          "user": "BLINDED_PAIR_USER_V3"
+        }
+      },
+      "parallelism": 4,
+      "filter": {
+        "annotated_only": false
+      }
+    },
+
+    "compute": {
+      "enabled": true,
+      "version": "v1",
+      "targets": ["judge_eval"],
+      "quality_gates": {
+        "outcome_variance": { "min_std": 0.1 }
+      }
+    }
+  }
+}

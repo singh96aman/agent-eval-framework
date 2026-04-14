@@ -133,6 +133,7 @@ def dump_data_type(
     data_type: str,
     output_dir: Optional[Path] = None,
     limit: Optional[int] = None,
+    version: Optional[str] = None,
 ) -> Optional[Path]:
     """Dump a single data type to JSON."""
 
@@ -141,6 +142,9 @@ def dump_data_type(
 
     # Query
     query = {"experiment_id": experiment_id}
+    # Add version filter for versioned collections (judge_eval_outputs, metrics)
+    if version and data_type in ("judge_eval_outputs", "metrics"):
+        query["version"] = version
     cursor = collection.find(query)
     if limit:
         cursor = cursor.limit(limit)
@@ -189,6 +193,7 @@ def dump_experiment_data(
     output_dir: Optional[str] = None,
     limit: Optional[int] = None,
     dump_all: bool = False,
+    version: Optional[str] = None,
 ):
     """Dump specified data types for an experiment."""
 
@@ -209,6 +214,8 @@ def dump_experiment_data(
         types_to_dump = data_types
 
     print(f"\nDumping data for experiment: {experiment_id}")
+    if version:
+        print(f"Version filter: {version}")
     print("-" * 50)
 
     output_path = Path(output_dir) if output_dir else None
@@ -221,6 +228,7 @@ def dump_experiment_data(
             data_type=dtype,
             output_dir=output_path,
             limit=limit,
+            version=version,
         )
         if path:
             exported_files.append(path)
@@ -330,6 +338,16 @@ Examples:
         action="store_true",
         help="Show status instead of dumping",
     )
+    parser.add_argument(
+        "--config",
+        "-c",
+        help="Config file path to extract version for filtering",
+    )
+    parser.add_argument(
+        "--version",
+        "-v",
+        help="Version filter (alternative to --config)",
+    )
 
     args = parser.parse_args()
 
@@ -350,12 +368,38 @@ Examples:
         # Remove duplicates while preserving order
         data_types = list(dict.fromkeys(data_types))
 
+    # Extract version from config or use --version arg
+    version = args.version
+    if args.config and not version:
+        config_path = Path(args.config)
+        if not config_path.exists():
+            # Try config/experiments paths
+            for prefix in ["config/experiments/v3/", "config/experiments/"]:
+                test_path = Path(prefix) / args.config
+                if not test_path.suffix:
+                    test_path = test_path.with_suffix(".json")
+                if test_path.exists():
+                    config_path = test_path
+                    break
+        if config_path.exists():
+            with open(config_path) as f:
+                config_data = json.load(f)
+            # Check both judge and compute phases for version
+            phases = config_data.get("phases", {})
+            version = (
+                phases.get("compute", {}).get("version")
+                or phases.get("judge", {}).get("version")
+            )
+            if version:
+                print(f"Loaded version '{version}' from config")
+
     dump_experiment_data(
         experiment_id=args.experiment_id,
         data_types=data_types,
         output_dir=args.output,
         limit=args.limit,
         dump_all=args.all,
+        version=version,
     )
 
 

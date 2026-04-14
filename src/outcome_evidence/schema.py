@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
-import uuid
+
+from src.utils import generate_outcome_id
 
 
 class EvidenceMethod(Enum):
@@ -372,6 +373,7 @@ class OutcomeRecord:
     def create(
         cls,
         evaluation_unit_id: str,
+        model_name: str,
         replay_tier: int,
         evidence_method: EvidenceMethod,
         baseline: BaselineOutcome,
@@ -381,9 +383,22 @@ class OutcomeRecord:
         recovery_details: Optional[RecoveryDetails] = None,
         execution: Optional[ExecutionMetadata] = None,
     ) -> "OutcomeRecord":
-        """Factory method to create a new OutcomeRecord with auto-generated ID and timestamp."""
+        """Factory method to create a new OutcomeRecord with auto-generated ID and timestamp.
+
+        Args:
+            evaluation_unit_id: The evaluation unit this outcome belongs to
+            model_name: Judge model name (e.g., "gpt-4o", "claude-3-opus")
+            replay_tier: 1, 2, or 3
+            evidence_method: How evidence was collected
+            baseline: Baseline trajectory outcome
+            perturbed: Perturbed trajectory outcome
+            metrics: Computed outcome metrics
+            propagation_trace: Optional propagation details (Tier 1-2)
+            recovery_details: Optional recovery cost details (Tier 1)
+            execution: Optional execution metadata
+        """
         return cls(
-            outcome_id=f"outcome_{uuid.uuid4().hex[:12]}",
+            outcome_id=generate_outcome_id(evaluation_unit_id, model_name),
             evaluation_unit_id=evaluation_unit_id,
             created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             replay_tier=replay_tier,

@@ -13,6 +13,254 @@ if TYPE_CHECKING:
     from .schema import SamplingManifest
 import random
 from .schema import Trajectory, Step, StepType, GroundTruth
+from src.outcome_evidence.tier_3.grading import HeuristicGrader
+
+
+def validate_trajectory_success(
+    traj: Trajectory,
+    grader: Optional[HeuristicGrader] = None,
+) -> bool:
+    """
+    Validate trajectory success using BOTH task_success AND grader.
+
+    This ensures sampling and grading criteria are aligned:
+    - task_success: Agent's self-reported success (from dataset)
+    - grader.passed: HeuristicGrader's independent assessment
+
+    Args:
+        traj: Trajectory to validate
+        grader: HeuristicGrader instance (creates default if None)
+
+    Returns:
+        True only if BOTH task_success is True AND grader passes
+    """
+    # Check agent's self-reported success first
+    if not traj.ground_truth.task_success:
+        return False
+
+    # Create default grader if not provided
+    if grader is None:
+        grader = HeuristicGrader()
+
+    # Convert trajectory to dict format expected by grader
+    traj_dict = traj.to_dict()
+
+    # Grade using heuristic grader
+    result = grader.grade(traj_dict)
+
+    return result.passed
+
+
+# =============================================================================
+# Baseline Verification with Claude
+# =============================================================================
+
+
+def verify_trajectory_with_claude(
+    trajectory: Dict[str, Any],
+    judge,
+    prompts: Dict[str, str],
+    min_score: int = 95,
+) -> Dict[str, Any]:
+    """
+    Run Claude verification on a trajectory to check if it would succeed.
+
+    Uses V2 prompts that focus on task success rather than error auditing.
+    Applies strict criteria: task_would_succeed AND NOT error_detected AND score >= min_score
+
+    Args:
+        trajectory: Trajectory dict with 'task' and 'steps' fields
+        judge: ClaudeJudge instance for making LLM calls
+        prompts: Dict with 'system' and 'user' prompt names
+        min_score: Minimum overall_score required to pass (default 95)
+
+    Returns:
+        Dict with keys:
+        - baseline_verified: bool (passes ALL criteria)
+        - baseline_score: int (overall_score from judge)
+        - baseline_error_detected: bool (error_detected from judge)
+        - baseline_task_would_succeed: bool (task_would_succeed from judge)
+        - baseline_reasoning: str (why_would_fail if failed, else None)
+        - baseline_raw_response: str
+        - baseline_verified_at: str (ISO timestamp)
+    """
+    from datetime import datetime
+    from src.prompts.registry import get_prompt
+    from src.judges.prompts import format_trajectory_for_judge
+
+    # Build prompt
+    system_name = prompts.get("system", "SINGLE_TRAJECTORY_SYSTEM_V2")
+    user_name = prompts.get("user", "SINGLE_TRAJECTORY_USER_V2")
+
+    system_prompt = get_prompt(system_name)
+    user_template = get_prompt(user_name)
+
+    # Format trajectory for judge
+    formatted_traj = format_trajectory_for_judge(trajectory)
+
+    # Get task text
+    task_text = trajectory.get("task", trajectory.get("task_description", ""))
+
+    # Render user prompt
+    user_prompt = user_template.replace("{task_text}", task_text)
+    user_prompt = user_prompt.replace("{formatted_trajectory}", formatted_traj)
+
+    # Call Claude - returns {"response": str, "tokens_used": int, "time_ms": int}
+    result = judge._call_llm(system_prompt, user_prompt)
+    response_text = result.get("response", "") if isinstance(result, dict) else str(result)
+
+    # Parse response
+    import re
+
+    raw = re.sub(r"```json\s*", "", response_text)
+    raw = re.sub(r"```\s*", "", raw)
+
+    try:
+        parsed = json.loads(raw.strip())
+        task_would_succeed = parsed.get("task_would_succeed", False)
+        error_detected = parsed.get("error_detected", True)  # Default to True (fail-safe)
+        overall_score = parsed.get("overall_score", 0)
+        why_would_fail = parsed.get("why_would_fail")
+    except json.JSONDecodeError:
+        # If parsing fails, treat as failed
+        task_would_succeed = False
+        error_detected = True
+        overall_score = 0
+        why_would_fail = "Failed to parse judge response"
+
+    # Strict criteria: ALL must pass
+    passes_verification = (
+        task_would_succeed
+        and not error_detected
+        and overall_score >= min_score
+    )
+
+    # Build reasoning for why verification failed
+    if not passes_verification:
+        fail_reasons = []
+        if not task_would_succeed:
+            fail_reasons.append(f"task_would_succeed=False")
+        if error_detected:
+            fail_reasons.append(f"error_detected=True")
+        if overall_score < min_score:
+            fail_reasons.append(f"score={overall_score}<{min_score}")
+        baseline_reasoning = f"Failed: {', '.join(fail_reasons)}"
+        if why_would_fail:
+            baseline_reasoning += f". {why_would_fail}"
+    else:
+        baseline_reasoning = None
+
+    return {
+        "baseline_verified": passes_verification,
+        "baseline_score": overall_score,
+        "baseline_error_detected": error_detected,
+        "baseline_task_would_succeed": task_would_succeed,
+        "baseline_reasoning": baseline_reasoning,
+        "baseline_raw_response": response_text,
+        "baseline_verified_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def verify_trajectories_batch(
+    trajectories: List[Dict[str, Any]],
+    judge,
+    prompts: Dict[str, str],
+    parallelism: int = 4,
+    target_count: Optional[int] = None,
+    verbose: bool = True,
+    min_score: int = 95,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Verify trajectories in parallel, filter to passing ones.
+
+    Args:
+        trajectories: Raw trajectories to verify
+        judge: ClaudeJudge instance
+        prompts: System/user prompt names dict
+        parallelism: Number of parallel workers
+        target_count: Stop after this many pass (None = verify all)
+        verbose: Print progress
+        min_score: Minimum overall_score required to pass (default 95)
+
+    Returns:
+        Tuple of:
+        - List of trajectories with verification fields added (only passing ones)
+        - Stats dict with counts
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
+    verified = []
+    failed = []
+    processed = 0
+    lock = threading.Lock()
+
+    # Convert prompts to dict format if needed
+    prompts_dict = {
+        "system": prompts.get("system", "SINGLE_TRAJECTORY_SYSTEM_V2"),
+        "user": prompts.get("user", "SINGLE_TRAJECTORY_USER_V2"),
+    }
+
+    def verify_one(traj):
+        return verify_trajectory_with_claude(traj, judge, prompts_dict, min_score=min_score)
+
+    with ThreadPoolExecutor(max_workers=parallelism) as executor:
+        # Submit all trajectories
+        futures = {executor.submit(verify_one, traj): traj for traj in trajectories}
+
+        for future in as_completed(futures):
+            traj = futures[future]
+
+            with lock:
+                processed += 1
+
+                # Check if we've hit target
+                if target_count and len(verified) >= target_count:
+                    continue
+
+            try:
+                result = future.result()
+
+                # Update trajectory with verification fields
+                traj_copy = dict(traj)
+                traj_copy.update(result)
+
+                with lock:
+                    if result["baseline_verified"]:
+                        verified.append(traj_copy)
+                        if verbose:
+                            print(
+                                f"  Verified {len(verified)}/{target_count or '?'} "
+                                f"(processed {processed}/{len(trajectories)})"
+                            )
+
+                        # Check target again after adding
+                        if target_count and len(verified) >= target_count:
+                            # Cancel remaining futures
+                            for f in futures:
+                                f.cancel()
+                            break
+                    else:
+                        failed.append(traj_copy)
+
+            except Exception as e:
+                if verbose:
+                    print(f"  Verification error: {e}")
+                # Add to failed with error
+                traj_copy = dict(traj)
+                traj_copy["baseline_verified"] = False
+                traj_copy["baseline_reasoning"] = f"Error: {e}"
+                with lock:
+                    failed.append(traj_copy)
+
+    stats = {
+        "total_processed": processed,
+        "verified_count": len(verified),
+        "failed_count": len(failed),
+        "pass_rate": len(verified) / processed if processed > 0 else 0,
+    }
+
+    return verified, stats
 
 
 def _parse_tool_input(action_input_str: str) -> Optional[Dict[str, Any]]:
@@ -324,6 +572,7 @@ def load_toolbench_trajectories(
     min_steps: int = 1,
     max_steps: int = 100,
     filter_successful: bool = False,
+    require_grader_aligned: bool = False,
     require_parameters_all_positions: bool = False,
     require_tool_diversity: bool = False,
     random_seed: Optional[int] = 42,
@@ -338,7 +587,9 @@ def load_toolbench_trajectories(
         max_trajectories: Maximum number of trajectories to load
         min_steps: Minimum number of steps required
         max_steps: Maximum number of steps allowed
-        filter_successful: Only load successful trajectories
+        filter_successful: Only load successful trajectories (task_success only)
+        require_grader_aligned: Require BOTH task_success AND HeuristicGrader.passed
+            (recommended for Section 3-6 experiments to ensure outcome variance)
         require_parameters_all_positions: Only load trajectories with non-empty
             parameters in early, middle, and late positions (ensures parameter
             perturbations can be applied)
@@ -423,6 +674,9 @@ def load_toolbench_trajectories(
 
     trajectories = []
 
+    # Create grader once for efficiency if require_grader_aligned is True
+    grader = HeuristicGrader() if require_grader_aligned else None
+
     # Convert dataset to our Trajectory schema
     for idx, item in enumerate(dataset):
         try:
@@ -431,7 +685,11 @@ def load_toolbench_trajectories(
                 # Apply filters
                 if len(traj.steps) < min_steps or len(traj.steps) > max_steps:
                     continue
-                if filter_successful and traj.ground_truth.task_success is False:
+                # Use grader-aligned validation (recommended for experiments)
+                if require_grader_aligned and not validate_trajectory_success(traj, grader):
+                    continue
+                # Legacy: task_success only (deprecated, use require_grader_aligned)
+                if filter_successful and not require_grader_aligned and traj.ground_truth.task_success is False:
                     continue
                 if (
                     require_parameters_all_positions

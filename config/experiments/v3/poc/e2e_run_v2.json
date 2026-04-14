@@ -1,0 +1,230 @@
+{
+  "schema": "3.0.0",
+
+  "experiment": {
+    "id": "e2e_run_v2",
+    "name": "Task-Blocking Error Detection",
+    "description": "V3 prompts focusing on task-blocking errors to reduce false positives. Based on investigation of e2e_run_v3_schema showing 93.7% FP rate on placebos.",
+    "random_seed": 42,
+    "storage": {
+      "backend": "mongodb",
+      "database": "agent_judge_experiment"
+    },
+    "targets": {
+      "total_perturbations": 1500,
+      "per_trajectory": {
+        "target": 3
+      },
+      "by_class": {
+        "placebo": 0.20,
+        "fine_grained": 0.50,
+        "coarse_grained": 0.30
+      }
+    },
+    "datasets": {
+      "toolbench": {
+        "enabled": true,
+        "source": "local",
+        "path": "data/toolbench/data",
+        "split": "train",
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 50,
+          "require_task_success": true,
+          "require_grader_aligned": true
+        }
+      },
+      "gaia": {
+        "enabled": false
+      },
+      "swebench": {
+        "enabled": true,
+        "source": "huggingface",
+        "split": "tool",
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 50,
+          "require_task_success": true
+        }
+      }
+    },
+    "output": {
+      "mongodb": {
+        "collection": "perturbed_trajectories",
+        "index_collection": "perturbation_index"
+      },
+      "json": {
+        "dir": "data/perturbed"
+      },
+      "results": {
+        "dir": "results/v2",
+        "checkpoints": true
+      }
+    }
+  },
+
+  "phases": {
+    "load": {
+      "enabled": true,
+      "sampling": {
+        "seed": 42,
+        "targets": {
+          "toolbench": 400,
+          "swebench": 100
+        },
+        "require_grader_aligned": true,
+        "grader": {
+          "type": "HeuristicGrader",
+          "min_pass_rate": 0.30
+        },
+        "filters": {
+          "min_steps": 3,
+          "max_steps": 50,
+          "require_task_success": true,
+          "require_grader_passed": true
+        }
+      },
+      "quality_gates": {
+        "trajectory_count": {"min": 100},
+        "grader_pass_rate": {"min": 0.30}
+      }
+    },
+
+    "perturb": {
+      "enabled": true,
+      "parallelism": 4,
+      "llm": {
+        "provider": "bedrock",
+        "region": "us-east-1",
+        "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+        "max_tokens": 2000,
+        "temperature": 0.3,
+        "use_for": ["paraphrase", "wrong_plan", "wrong_parameter", "value_mutation", "wrong_date", "wrong_identifier"]
+      },
+      "prompts": {
+        "paraphrase": "PARAPHRASE_PROMPT_V1",
+        "wrong_plan": "WRONG_PLAN_PROMPT_V1",
+        "wrong_parameter": "WRONG_PARAMETER_PROMPT_V1",
+        "value_mutation": "VALUE_MUTATION_PROMPT_V1",
+        "wrong_date": "WRONG_DATE_PROMPT_V1",
+        "wrong_identifier": "WRONG_IDENTIFIER_PROMPT_V1"
+      },
+      "generators": {
+        "placebo": {
+          "types": ["paraphrase", "formatting", "synonym", "reorder_args"],
+          "llm_required": ["paraphrase"]
+        },
+        "fine_grained": {
+          "types": ["wrong_value", "off_by_one", "typo_in_id", "threshold_shift", "query_drift", "near_neighbor_tool"],
+          "llm_required": ["wrong_parameter", "value_mutation", "wrong_date", "wrong_identifier"]
+        },
+        "coarse_grained": {
+          "types": ["wrong_plan", "false_terminal", "premature_termination", "wrong_tool_family"],
+          "llm_required": ["wrong_plan"],
+          "excluded": ["skipped_prerequisite"]
+        }
+      },
+      "quality_gates": {
+        "no_synthetic_markers": {"max_rate": 0.0},
+        "no_structural_corruption": {"max_rate": 0.0},
+        "json_validity": {"min_rate": 1.0},
+        "position_distribution": {"max_last_step_rate": 0.40}
+      }
+    },
+
+    "evaluation_unit": {
+      "enabled": true,
+      "blinding": {
+        "algorithm": "hash_based",
+        "seed_source": "experiment.random_seed",
+        "verify_balance": true,
+        "balance_range": [0.45, 0.55]
+      },
+      "quality_gates": {
+        "length_preservation": {"require": true},
+        "blinding_balance": {"min": 0.45, "max": 0.55}
+      }
+    },
+
+    "annotate": {
+      "schema": "detailed",
+      "annotator_id": "researcher",
+      "mode": "blinded_pair",
+      "sample_size": 50,
+      "output_dir": "data/human_labels",
+      "storage_backend": "mongodb",
+      "resume": true,
+      "stratification": {
+        "by_class": {
+          "placebo": 0.20,
+          "fine_grained": 0.50,
+          "coarse_grained": 0.30
+        },
+        "by_position": true,
+        "by_benchmark": true,
+        "tolerance": 0.05
+      }
+    },
+
+    "judge": {
+      "enabled": true,
+      "models": [
+        {
+          "name": "claude-sonnet-4",
+          "provider": "bedrock",
+          "model": "global.anthropic.claude-sonnet-4-20250514-v1:0",
+          "max_tokens": 1500,
+          "temperature": 0.0
+        }
+      ],
+      "mode": "blinded_pair",
+      "prompts": {
+        "single_trajectory": {
+          "system": "SINGLE_TRAJECTORY_SYSTEM_V2",
+          "user": "SINGLE_TRAJECTORY_USER_V2"
+        },
+        "blinded_pair": {
+          "system": "BLINDED_PAIR_SYSTEM_V3",
+          "user": "BLINDED_PAIR_USER_V3"
+        },
+        "labeled_pair": {
+          "system": "LABELED_PAIR_SYSTEM_V1",
+          "user": "LABELED_PAIR_USER_V1"
+        }
+      },
+      "parallelism": 4,
+      "filter": {
+        "annotated_only": false
+      }
+    },
+
+    "compute": {
+      "enabled": true,
+      "targets": ["judge_eval", "outcome_evidence", "aggregate_labels"],
+      "judge_eval": {
+        "judge": "claude-sonnet-4",
+        "mode": "blinded_pair",
+        "samples_per_unit": 1,
+        "parallelization": 2
+      },
+      "outcome_evidence": {
+        "resume": true,
+        "quality_gates": {
+          "outcome_variance": {"min_std": 0.1}
+        }
+      }
+    }
+  },
+
+  "_changelog": {
+    "v2_changes": [
+      "Changed judge prompts from V1/V2 to V3 (task-blocking focus)",
+      "BLINDED_PAIR_SYSTEM_V3: Asks 'would this succeed?' not 'any errors?'",
+      "BLINDED_PAIR_USER_V3: Explicit success/failure questions per trajectory",
+      "SINGLE_TRAJECTORY_SYSTEM_V2: Focus on task success, not audit mode",
+      "Added explicit NOT task-blocking examples (stylistic, formatting)",
+      "Results dir changed to results/v2"
+    ],
+    "rationale": "Investigation of e2e_run_v3_schema showed 93.7% false positive rate on placebos. Judge flagged cosmetic differences as errors. New prompts focus exclusively on whether errors would cause TASK FAILURE."
+  }
+}

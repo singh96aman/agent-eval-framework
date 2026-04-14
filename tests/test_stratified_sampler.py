@@ -17,52 +17,116 @@ from src.annotation.stratified_sampler import (
 )
 
 
+def _get_class_for_type(ptype: str) -> str:
+    """Map perturbation type to class."""
+    if ptype in ("planning", "tool_selection", "structural"):
+        return "coarse_grained"
+    elif ptype in ("parameter", "data_reference", "near_neighbor_tool"):
+        return "fine_grained"
+    elif ptype in ("paraphrase", "formatting", "synonym", "reorder_args"):
+        return "placebo"
+    return "fine_grained"  # default
+
+
 @pytest.fixture
 def sample_perturbations():
     """
-    Create sample perturbations covering all conditions and benchmarks.
+    Create sample perturbations covering all conditions, benchmarks, and classes.
 
-    Creates ~600 perturbations with realistic distribution.
+    Creates ~800 perturbations with realistic distribution:
+    - placebo: ~20%
+    - fine_grained: ~50%
+    - coarse_grained: ~30%
     """
     perturbations = []
     idx = 0
 
-    conditions = [
+    # Coarse-grained conditions (~30%)
+    coarse_conditions = [
         ("planning", "early"),
         ("planning", "middle"),
         ("planning", "late"),
         ("tool_selection", "early"),
         ("tool_selection", "middle"),
         ("tool_selection", "late"),
+    ]
+
+    # Fine-grained conditions (~50%)
+    fine_conditions = [
         ("parameter", "early"),
         ("parameter", "middle"),
         ("parameter", "late"),
+        ("data_reference", "early"),
         ("data_reference", "middle"),
         ("data_reference", "late"),
+    ]
+
+    # Placebo conditions (~20%)
+    placebo_conditions = [
+        ("paraphrase", "early"),
+        ("paraphrase", "middle"),
+        ("paraphrase", "late"),
+        ("formatting", "middle"),
     ]
 
     benchmarks = ["toolbench", "gaia", "swebench"]
     tiers = ["high", "medium", "low"]
 
-    # Create ~55 perturbations per condition (600 total / 11 conditions)
-    for ptype, pos in conditions:
+    # Create coarse-grained (~30%): 4 per combination = 4*6*3*3 = 216
+    for ptype, pos in coarse_conditions:
         for benchmark in benchmarks:
             for tier in tiers:
-                # Create 5-6 perturbations per (condition, benchmark, tier)
-                for i in range(6):
-                    perturbations.append(
-                        {
-                            "perturbation_id": f"pert_{idx}",
-                            "original_trajectory_id": f"{benchmark}_traj_{idx}",
-                            "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
-                            "perturbation_type": ptype,
-                            "perturbation_position": pos,
-                            "quality_tier": tier,
-                            "is_primary_for_experiment": True,
-                            "original_step_content": f"Original content {idx}",
-                            "perturbed_step_content": f"Perturbed content {idx}",
-                        }
-                    )
+                for i in range(4):
+                    perturbations.append({
+                        "perturbation_id": f"pert_{idx}",
+                        "original_trajectory_id": f"{benchmark}_traj_{idx}",
+                        "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
+                        "perturbation_type": ptype,
+                        "perturbation_position": pos,
+                        "perturbation_class": "coarse_grained",
+                        "quality_tier": tier,
+                        "is_primary_for_experiment": True,
+                        "original_step_content": f"Original content {idx}",
+                        "perturbed_step_content": f"Perturbed content {idx}",
+                    })
+                    idx += 1
+
+    # Create fine-grained (~50%): 7 per combination = 7*6*3*3 = 378
+    for ptype, pos in fine_conditions:
+        for benchmark in benchmarks:
+            for tier in tiers:
+                for i in range(7):
+                    perturbations.append({
+                        "perturbation_id": f"pert_{idx}",
+                        "original_trajectory_id": f"{benchmark}_traj_{idx}",
+                        "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
+                        "perturbation_type": ptype,
+                        "perturbation_position": pos,
+                        "perturbation_class": "fine_grained",
+                        "quality_tier": tier,
+                        "is_primary_for_experiment": True,
+                        "original_step_content": f"Original content {idx}",
+                        "perturbed_step_content": f"Perturbed content {idx}",
+                    })
+                    idx += 1
+
+    # Create placebo (~20%): 5 per combination = 5*4*3*3 = 180
+    for ptype, pos in placebo_conditions:
+        for benchmark in benchmarks:
+            for tier in tiers:
+                for i in range(5):
+                    perturbations.append({
+                        "perturbation_id": f"pert_{idx}",
+                        "original_trajectory_id": f"{benchmark}_traj_{idx}",
+                        "perturbed_trajectory_id": f"{benchmark}_perturbed_{idx}",
+                        "perturbation_type": ptype,
+                        "perturbation_position": pos,
+                        "perturbation_class": "placebo",
+                        "quality_tier": tier,
+                        "is_primary_for_experiment": True,
+                        "original_step_content": f"Original content {idx}",
+                        "perturbed_step_content": f"Perturbed content {idx}",
+                    })
                     idx += 1
 
     return perturbations
@@ -78,36 +142,31 @@ class TestStratifiedAnnotationSampler:
 
         assert len(selected) == 100
 
-    def test_all_conditions_covered(self, sample_perturbations):
-        """Verify all 11 conditions have samples."""
+    def test_all_classes_covered(self, sample_perturbations):
+        """Verify all 3 classes have samples with correct distribution."""
         sampler = StratifiedAnnotationSampler(sample_perturbations, random_seed=42)
         selected = sampler.sample(total=100)
 
-        # Count by condition
-        condition_counts = Counter(
-            f"{p['perturbation_type']}_{p['perturbation_position']}" for p in selected
-        )
+        # Count by class
+        class_counts = Counter(p['perturbation_class'] for p in selected)
 
-        expected_conditions = {
-            "planning_early",
-            "planning_middle",
-            "planning_late",
-            "tool_selection_early",
-            "tool_selection_middle",
-            "tool_selection_late",
-            "parameter_early",
-            "parameter_middle",
-            "parameter_late",
-            "data_reference_middle",
-            "data_reference_late",
-        }
+        # All classes should be present
+        assert "placebo" in class_counts
+        assert "fine_grained" in class_counts
+        assert "coarse_grained" in class_counts
 
-        # All conditions should be present
-        assert set(condition_counts.keys()) == expected_conditions
+        # Check distribution is roughly correct (within tolerance)
+        total = len(selected)
+        placebo_pct = class_counts["placebo"] / total
+        fine_pct = class_counts["fine_grained"] / total
+        coarse_pct = class_counts["coarse_grained"] / total
 
-        # Each condition should have samples (roughly 9 each = 100/11)
-        for condition, count in condition_counts.items():
-            assert count >= 5, f"Condition {condition} has only {count} samples"
+        # Placebo ~20% (15-25%)
+        assert 0.15 <= placebo_pct <= 0.25, f"Placebo {placebo_pct:.1%} not in range"
+        # Fine-grained ~50% (45-55%)
+        assert 0.45 <= fine_pct <= 0.55, f"Fine {fine_pct:.1%} not in range"
+        # Coarse-grained ~30% (25-35%)
+        assert 0.25 <= coarse_pct <= 0.35, f"Coarse {coarse_pct:.1%} not in range"
 
     def test_all_benchmarks_represented(self, sample_perturbations):
         """Verify all 3 benchmarks have samples."""

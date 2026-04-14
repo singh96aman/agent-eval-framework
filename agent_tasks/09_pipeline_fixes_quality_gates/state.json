@@ -1,0 +1,62 @@
+{
+  "task_name": "09_pipeline_fixes_quality_gates",
+  "status": "in_progress",
+  "current_requirements": "RequirementsV2.MD",
+  "plan": "PDR Hierarchy Verification with Quality Scoring",
+  "completed_steps": [
+    "Wave 1: Bug Fixes (sampling/grading, taxonomy, A/B randomization, LLM perturbations)",
+    "Wave 2: Quality Gates (pipeline, prompt, perturbation gates)",
+    "Wave 3: Initial validation (previous v8 run - data lost)",
+    "Analysis: Identified need for perturbation quality scoring",
+    "Step 0A: Created src/scoring/class_validator.py (simplified class_matches approach)",
+    "Step 0B: Prompt in config (not hardcoded) at phases.perturb.class_validation.prompt",
+    "Step 0C: Integrated class validation into main.py perturb phase",
+    "Step 0D: Added perturbation_class_validity quality gate",
+    "Step 1: Created dual_mode_v2.json config with class_validation enabled",
+    "Step 2: Load phase passed (24 trajectories)",
+    "Step 3: Perturb phase - class_matches rate 76.3% (below 90% threshold)",
+    "Step 4: Judge phase - fixed 'modes' schema bug, both modes now run",
+    "Step 5: single_trajectory mode: 41/41 complete; blinded_pair: 28/41 (13 parse errors)",
+    "Step 6: Compute phase complete with both modes"
+  ],
+  "pending_steps": [
+    "Next: Improve coarse-grained perturbation generator to create task-blocking errors",
+    "Next: Consider stricter baseline verification to reduce pre-existing error detection"
+  ],
+  "artifacts_created": [
+    "config/experiments/v3/poc/dual_mode_v1.json",
+    "src/quality_gates/pipeline_gates.py",
+    "src/quality_gates/prompt_gates.py",
+    "src/quality_gates/perturbation_gates.py",
+    "src/prompts/judge_prompts.py",
+    "ops/run_quality_gate.py",
+    "tests/test_quality_gates.py",
+    "src/scoring/__init__.py",
+    "src/scoring/class_validator.py",
+    "config/experiments/v3/poc/dual_mode_v2.json",
+    "tests/test_class_validator.py"
+  ],
+  "artifacts_pending": [],
+  "blockers": [],
+  "notes": [
+    "BUG FIXES COMPLETED:",
+    "  1. Fixed output.comparison -> output.pair_comparison typo in utils.py:989",
+    "  2. Fixed modes schema (added 'modes' field to JudgePhaseConfig)",
+    "  3. Fixed compute phase blinded_pair detection logic (map error_trajectory to perturbed)",
+    "",
+    "ROOT CAUSE FINDINGS:",
+    "  1. Placebo FP (27-30%): Pre-existing errors in baseline trajectories, NOT from perturbations",
+    "  2. Coarse-grained 0% detection: 'wrong_plan' perturbations don't actually break task completion",
+    "  3. Judge is CORRECT: fine-grained (wrong_parameter) creates verifiable errors; coarse-grained doesn't",
+    "",
+    "EVIDENCE:",
+    "  - blinded_pair: error_trajectory='neither' for 68% (28/41) - judge says both succeed",
+    "  - fine-grained correctly detected: 'transcription error', 'incorrect values', 'wrong data'",
+    "  - coarse-grained not detected: 'Both trajectories successfully complete the task'",
+    "",
+    "NEXT STEPS:",
+    "  1. Improve coarse-grained generator to create actual task-blocking errors",
+    "  2. Consider stricter baseline verification to filter pre-existing flawed trajectories"
+  ],
+  "last_updated": "2026-04-13T12:00:00Z"
+}
