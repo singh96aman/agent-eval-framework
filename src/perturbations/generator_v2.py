@@ -46,6 +46,15 @@ from src.perturbations.coarse_grained import (
 from src.perturbations.qc import PerturbationQC
 
 
+# Mapping from coarse-grained perturbation type to required family
+COARSE_GRAINED_TYPE_TO_FAMILY = {
+    PerturbationType.WRONG_PLAN: PerturbationFamily.STRUCTURAL,
+    PerturbationType.FALSE_TERMINAL: PerturbationFamily.TERMINAL_FLAG,
+    PerturbationType.PREMATURE_TERMINATION: PerturbationFamily.TERMINAL_FLAG,
+    PerturbationType.WRONG_TOOL_FAMILY: PerturbationFamily.TOOL_SELECTION,
+}
+
+
 @dataclass
 class SlotCandidate:
     """A candidate slot for perturbation with scoring metadata."""
@@ -99,6 +108,31 @@ class PerturbationGeneratorV2:
         # Track generation statistics
         self.stats = defaultdict(int)
         self.index = PerturbationIndex()
+
+    def _get_coarse_grained_type_weights(self) -> Dict[str, float]:
+        """Get coarse-grained type weights from config, with defaults."""
+        default_weights = {
+            "false_terminal": 0.25,
+            "premature_termination": 0.25,
+            "wrong_tool_family": 0.25,
+            "wrong_plan": 0.25,
+        }
+        if not self.config:
+            return default_weights
+
+        type_weights = (
+            self.config.get("phases", {})
+            .get("perturb", {})
+            .get("generators", {})
+            .get("coarse_grained", {})
+            .get("type_weights", {})
+        )
+
+        if type_weights:
+            total = sum(type_weights.values())
+            if total > 0:
+                return {k: v / total for k, v in type_weights.items()}
+        return default_weights
 
     def _regenerate_id(self, record: PerturbationRecord) -> PerturbationRecord:
         """Regenerate perturbation_id using new config-based scheme."""
@@ -264,17 +298,19 @@ class PerturbationGeneratorV2:
         candidates = []
         num_steps = len(trajectory.steps)
 
-        # Terminal flag candidates: non-terminal steps with artifacts
+        # Terminal flag candidates: non-terminal steps with artifacts OR valid role
         for step in trajectory.steps:
             if step.is_terminal_step:
                 continue
 
-            # Check if step can be false terminal
-            if step.produced_artifacts and step.step_role in [
+            # Relaxed criteria: has artifacts OR has valid role (not requiring both)
+            has_artifacts = bool(step.produced_artifacts)
+            has_valid_role = step.step_role in [
                 "reasoning",
                 "extraction",
                 "decision",
-            ]:
+            ]
+            if has_artifacts or has_valid_role:
 
                 position = self._get_position(step.step_index, num_steps)
                 cps = (
@@ -321,6 +357,30 @@ class PerturbationGeneratorV2:
                         critical_path_score=cps,
                         eligible_classes=[PerturbationClass.COARSE_GRAINED],
                         eligible_families=[PerturbationFamily.STRUCTURAL],
+                    )
+                )
+
+        # TOOL_SELECTION candidates: tool_call steps with tool names
+        for step in trajectory.steps:
+            if step.step_role == "tool_call" and step.tool_name:
+                position = self._get_position(step.step_index, num_steps)
+                cps = step.critical_path_score.value if step.critical_path_score else 0.5
+
+                pseudo_slot = PerturbableSlot(
+                    slot="tool_name",
+                    value_type="tool_selection",
+                    current_value={"tool_name": step.tool_name},
+                    allowed_perturbation_types=["tool_selection"],
+                )
+
+                candidates.append(
+                    SlotCandidate(
+                        step_index=step.step_index,
+                        slot=pseudo_slot,
+                        position=position,
+                        critical_path_score=cps,
+                        eligible_classes=[PerturbationClass.COARSE_GRAINED],
+                        eligible_families=[PerturbationFamily.TOOL_SELECTION],
                     )
                 )
 
@@ -560,51 +620,84 @@ class PerturbationGeneratorV2:
         trajectory: TypedTrajectory,
         candidate: SlotCandidate,
     ) -> Optional[Tuple[PerturbationRecord, TypedTrajectory]]:
-        """Generate coarse-grained perturbation."""
-        family = self.random.choice(candidate.eligible_families)
+        """Generate coarse-grained perturbation using type_weights from config."""
+        # Get type weights from config
+        type_weights = self._get_coarse_grained_type_weights()
 
-        if family == PerturbationFamily.STRUCTURAL:
-            # NOTE: SKIPPED_PREREQUISITE removed - changes trajectory length
-            ptype = PerturbationType.WRONG_PLAN
-        elif family == PerturbationFamily.TERMINAL_FLAG:
-            ptype = self.random.choice(
-                [
-                    PerturbationType.FALSE_TERMINAL,
-                    PerturbationType.PREMATURE_TERMINATION,
-                ]
+        # Build list of (type_name, weight) for weighted selection
+        types_and_weights = list(type_weights.items())
+        type_names = [t[0] for t in types_and_weights]
+        weights = [t[1] for t in types_and_weights]
+
+        # Try types in weighted random order until one succeeds
+        tried_types = set()
+        max_attempts = len(type_names)
+
+        for _ in range(max_attempts):
+            # Weighted selection of remaining types
+            available = [
+                (n, w) for n, w in zip(type_names, weights) if n not in tried_types
+            ]
+            if not available:
+                break
+
+            avail_names, avail_weights = zip(*available)
+            total_weight = sum(avail_weights)
+            if total_weight == 0:
+                break
+
+            # Weighted random choice
+            r = self.random.random() * total_weight
+            cumulative = 0
+            selected_type_name = avail_names[0]
+            for name, weight in zip(avail_names, avail_weights):
+                cumulative += weight
+                if r <= cumulative:
+                    selected_type_name = name
+                    break
+
+            tried_types.add(selected_type_name)
+
+            # Map type name to PerturbationType enum
+            try:
+                ptype = PerturbationType(selected_type_name)
+            except ValueError:
+                continue
+
+            # Get family for this type
+            family = COARSE_GRAINED_TYPE_TO_FAMILY.get(ptype)
+            if not family:
+                continue
+
+            # Get prompt from config if available (for WRONG_PLAN)
+            prompt_template = None
+            if self.config and ptype == PerturbationType.WRONG_PLAN:
+                prompts = (
+                    self.config.get("phases", {})
+                    .get("perturb", {})
+                    .get("generators", {})
+                    .get("coarse_grained", {})
+                    .get("prompts", {})
+                )
+                prompt_template = prompts.get("wrong_plan")
+
+            generator = get_coarse_grained_generator(
+                family,
+                ptype,
+                random_seed=self.random_seed,
+                llm_client=self.llm_client,
+                prompt_template=prompt_template,
             )
-        elif family == PerturbationFamily.TOOL_SELECTION:
-            ptype = PerturbationType.WRONG_TOOL_FAMILY
-        else:
-            return None
 
-        # Get prompt from config if available
-        prompt_template = None
-        if self.config and ptype == PerturbationType.WRONG_PLAN:
-            prompts = (
-                self.config.get("phases", {})
-                .get("perturb", {})
-                .get("generators", {})
-                .get("coarse_grained", {})
-                .get("prompts", {})
-            )
-            prompt_template = prompts.get("wrong_plan")
+            result = generator.generate(trajectory)
+            if result:
+                record, perturbed_traj = result
+                # Regenerate ID using new scheme
+                record = self._regenerate_id(record)
+                return record, perturbed_traj
 
-        generator = get_coarse_grained_generator(
-            family,
-            ptype,
-            random_seed=self.random_seed,
-            llm_client=self.llm_client,
-            prompt_template=prompt_template,
-        )
-
-        result = generator.generate(trajectory)
-        if result:
-            record, perturbed_traj = result
-            # Regenerate ID using new scheme
-            record = self._regenerate_id(record)
-            return record, perturbed_traj
-        return result
+        # All types failed
+        return None
 
     def _apply_step_perturbation(
         self,
