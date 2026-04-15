@@ -1,7 +1,8 @@
-# PDR Hierarchy Analysis - dual_mode_v4
+# PDR Hierarchy Analysis - dual_mode_v4 (v2 Generator)
 
 **Date:** 2026-04-14  
 **Experiment:** dual_mode_v4  
+**Generator Version:** v2 (type-weights support added)
 **Status:** Complete
 
 ---
@@ -221,3 +222,57 @@ During this experiment, added versioned caching to all pipeline phases:
 - **Verified working:** Re-run of load phase correctly detected 32 cached trajectories
 
 This will speed up future experiments by avoiding redundant work.
+
+---
+
+## V2 Generator Results (2026-04-14)
+
+### Coarse-Grained Type Distribution
+
+| Type | Count | Expected Weight |
+|------|-------|-----------------|
+| wrong_plan | 23 | 15% |
+| premature_termination | 11 | 30% |
+| false_terminal | 8 | 30% |
+| wrong_tool_family | 4 | 25% |
+
+### PDR by Coarse-Grained Type (blinded_pair)
+
+| Type | Detected | Total | PDR |
+|------|----------|-------|-----|
+| premature_termination | 8 | 11 | **72.7%** |
+| wrong_tool_family | 2 | 4 | **50.0%** |
+| false_terminal | 0 | 8 | 0.0% |
+| wrong_plan | 0 | 23 | 0.0% |
+
+### Summary Metrics (v2)
+
+| Version | Placebo FP | Fine-grained | Coarse-grained | PDR |
+|---------|------------|--------------|----------------|-----|
+| v1_blinded_pair | 0.0% | 36.4% | 21.7% | 26.5% |
+| v1_single_trajectory | 25.0% | 54.5% | 30.4% | 38.2% |
+
+### Key Findings
+
+1. **Coarse-grained PDR improved from 0% to 21.7%** after adding type diversity
+
+2. **Types that change execution are detected:**
+   - `premature_termination` (72.7%): Truncates trajectory - obvious difference
+   - `wrong_tool_family` (50.0%): Changes tool calls - detectable
+
+3. **Types that don't change execution are NOT detected:**
+   - `wrong_plan` (0%): Only changes reasoning text
+   - `false_terminal` (0%): Only changes metadata flag, trajectory content unchanged
+
+4. **Hierarchy check:**
+   - Placebo FP (0%) < Fine-grained (36.4%) ✓
+   - Fine-grained (36.4%) > Coarse-grained overall (21.7%) ✗
+   - BUT execution-changing coarse-grained (66.7%) > Fine-grained (36.4%) ✓
+
+### Interpretation
+
+The judge's detection capability depends on WHETHER THE PERTURBATION CHANGES EXECUTION:
+- Execution-changing perturbations (`premature_termination`, `wrong_tool_family`): HIGH detection
+- Reasoning-only perturbations (`wrong_plan`, `false_terminal`): ZERO detection
+
+This supports the thesis that **LLM judges evaluate execution outcomes, not reasoning quality**.

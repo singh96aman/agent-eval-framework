@@ -403,10 +403,10 @@ class FalseTerminalGenerator(BaseCoarseGrainedGenerator):
         """
         Find steps eligible for false terminal perturbation.
 
-        Criteria per Section 3.4.6:
-        - Has produced_artifacts (plausible partial answer)
+        Relaxed criteria (OR instead of AND for main conditions):
+        - Has produced_artifacts (plausible partial answer) OR
+        - Has valid role (reasoning, extraction, decision)
         - Doesn't end with "..." or incomplete text
-        - Is NOT observation or planning step
         - Is NOT already terminal
         """
         eligible = []
@@ -416,12 +416,11 @@ class FalseTerminalGenerator(BaseCoarseGrainedGenerator):
             if step.is_terminal_step:
                 continue
 
-            # Check role is valid
-            if step.step_role not in self.VALID_ROLES_FOR_FALSE_TERMINAL:
-                continue
+            # Relaxed: Accept valid role OR has artifacts (not requiring both)
+            has_valid_role = step.step_role in self.VALID_ROLES_FOR_FALSE_TERMINAL
+            has_artifacts = bool(step.produced_artifacts)
 
-            # Check has produced artifacts
-            if not step.produced_artifacts:
+            if not (has_valid_role or has_artifacts):
                 continue
 
             # Check content doesn't look incomplete

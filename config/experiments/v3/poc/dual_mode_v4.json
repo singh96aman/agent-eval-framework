@@ -89,7 +89,7 @@
 
     "perturb": {
       "enabled": true,
-      "version": "v1",
+      "version": "v2",
       "parallelism": 4,
       "llm": {
         "provider": "bedrock",
